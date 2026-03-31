@@ -362,3 +362,100 @@ impl AiProvider for OpenAiProvider {
         &self.provider_name
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_chat_response() {
+        let json = r#"{"choices":[{"message":{"content":"Hello!"}}]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.choices.len(), 1);
+        assert_eq!(resp.choices[0].message.content.as_deref(), Some("Hello!"));
+    }
+
+    #[test]
+    fn deserialize_chat_chunk() {
+        let json = r#"{"choices":[{"delta":{"content":"Hi"}}]}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hi"));
+    }
+
+    #[test]
+    fn deserialize_chunk_with_null_content() {
+        let json = r#"{"choices":[{"delta":{}}]}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert!(chunk.choices[0].delta.content.is_none());
+    }
+
+    #[test]
+    fn deserialize_models_response() {
+        let json = r#"{"data":[{"id":"gpt-4o","name":"GPT-4o","context_length":128000}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.len(), 1);
+        assert_eq!(resp.data[0].id, "gpt-4o");
+    }
+
+    #[test]
+    fn deserialize_error_response() {
+        let json = r#"{"error":{"message":"Invalid API key"}}"#;
+        let resp: ApiErrorResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.error.unwrap().message.unwrap(), "Invalid API key");
+    }
+
+    #[test]
+    fn empty_choices_handled() {
+        let json = r#"{"choices":[]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.choices.is_empty());
+    }
+
+    #[test]
+    fn deserialize_chunk_empty_choices() {
+        let json = r#"{"choices":[]}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert!(chunk.choices.is_empty());
+    }
+
+    #[test]
+    fn deserialize_model_entry_without_optional_fields() {
+        let json = r#"{"data":[{"id":"llama3"}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data[0].id, "llama3");
+        assert!(resp.data[0].name.is_none());
+        assert!(resp.data[0].context_length.is_none());
+    }
+
+    #[test]
+    fn deserialize_error_response_with_null_error() {
+        let json = r#"{"error":null}"#;
+        let resp: ApiErrorResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn deserialize_chat_response_null_content() {
+        let json = r#"{"choices":[{"message":{}}]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.choices[0].message.content.is_none());
+    }
+
+    #[test]
+    fn deserialize_multiple_choices() {
+        let json = r#"{"choices":[{"message":{"content":"A"}},{"message":{"content":"B"}}]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.choices.len(), 2);
+        assert_eq!(resp.choices[0].message.content.as_deref(), Some("A"));
+        assert_eq!(resp.choices[1].message.content.as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn deserialize_multiple_model_entries() {
+        let json = r#"{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini","name":"GPT-4o Mini","context_length":16384}]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.len(), 2);
+        assert_eq!(resp.data[1].id, "gpt-4o-mini");
+        assert_eq!(resp.data[1].context_length, Some(16384));
+    }
+}
