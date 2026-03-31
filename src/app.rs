@@ -206,6 +206,7 @@ impl App {
                 "ollama".into(),
                 "openai".into(),
                 "openrouter".into(),
+                "copilot".into(),
             ],
             selected_provider: "claude_code".into(),
             provider_select_index: 0,
@@ -419,6 +420,7 @@ mod tests {
         assert!(app.available_providers.contains(&"ollama".to_string()));
         assert!(app.available_providers.contains(&"openai".to_string()));
         assert!(app.available_providers.contains(&"openrouter".to_string()));
+        assert!(app.available_providers.contains(&"copilot".to_string()));
     }
 
     // ── Conversation::new() ─────────────────────────────────────────────

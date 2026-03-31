@@ -26,7 +26,7 @@ use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use tokio::sync::mpsc;
 
 use ai::provider::{AiProvider, ChatMessage, StreamEvent};
-use ai::{ClaudeCodeProvider, OpenAiProvider};
+use ai::{ClaudeCodeProvider, CopilotProvider, OpenAiProvider};
 use app::{App, AppMode, InputMode};
 use clipboard_manager::ClipboardSource;
 use config::Config;
@@ -43,7 +43,7 @@ struct Cli {
     #[arg(short, long)]
     model: Option<String>,
 
-    /// Provider to use (claude_code, openai, ollama, openrouter)
+    /// Provider to use (claude_code, openai, ollama, openrouter, copilot)
     #[arg(short, long)]
     provider: Option<String>,
 
@@ -197,6 +197,9 @@ fn create_provider(
                 base_url,
                 "OpenRouter".into(),
             )))
+        }
+        "copilot" | "gh" => {
+            Ok(Box::new(CopilotProvider::new()))
         }
         other => {
             // Check custom providers.
@@ -481,13 +484,19 @@ async fn event_loop(
                                         // Add tool results as a user message
                                         app.add_user_message(results);
 
-                                        // Apply context compaction before sending
+                                        // Apply context management based on provider
+                                        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
                                         let context_mgr =
                                             crate::agent::context::ContextManager::new(
-                                                50_000,
+                                                limit,
                                             );
-                                        let compacted = context_mgr.compact_messages(
+
+                                        // First compact tool results, then overall conversation
+                                        let tool_compacted = context_mgr.compact_tool_results(
                                             &app.current_conversation().messages,
+                                        );
+                                        let compacted = context_mgr.compact_messages(
+                                            &tool_compacted,
                                         );
                                         let messages: Vec<ChatMessage> = compacted
                                             .iter()
@@ -850,7 +859,7 @@ async fn handle_normal_mode(
                             "providers", "code", "cwd", "url", "kb", "auto", "status",
                             "export", "rename", "system", "workspace", "run",
                             "pipe", "diff", "test", "build", "git",
-                            "agent", "cd", "summary", "compact", "context",
+                            "agent", "cd", "summary", "compact", "context", "tokens",
                         ];
                         let matches: Vec<&&str> = commands
                             .iter()
@@ -1367,6 +1376,7 @@ Knowledge & Context\n\
   /summary            Summarize current conversation\n\
   /compact            Compact conversation (save tokens)\n\
   /context            Show current AI context window\n\
+  /tokens             Show token usage breakdown\n\
   /kb add <dir>       Add directory to knowledge base\n\
   /kb search <query>  Search knowledge base\n\
   /kb list            List knowledge bases\n\
@@ -1490,13 +1500,15 @@ System\n\
              {} claude_code  - Claude Code (subscription, no API key)\n\
              {} ollama      - Ollama (local, no API key)\n\
              {} openai      - OpenAI (requires OPENAI_API_KEY)\n\
-             {} openrouter  - OpenRouter (requires OPENROUTER_API_KEY)\n\n\
+             {} openrouter  - OpenRouter (requires OPENROUTER_API_KEY)\n\
+             {} copilot     - GitHub Copilot (requires gh CLI with Copilot extension)\n\n\
              Current: {}\n\
              Switch with: /provider <name> or Ctrl+T",
             if current == "claude_code" || current == "claude" { "*" } else { " " },
             if current == "ollama" { "*" } else { " " },
             if current == "openai" { "*" } else { " " },
             if current == "openrouter" { "*" } else { " " },
+            if current == "copilot" || current == "gh" { "*" } else { " " },
             current
         );
         app.add_assistant_message(list);
@@ -1507,7 +1519,7 @@ System\n\
     // /provider — bare command shows current provider.
     if trimmed == "/provider" {
         app.add_assistant_message(format!(
-            "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter",
+            "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter, copilot",
             app.selected_provider
         ));
         app.scroll_offset = 0;
@@ -1519,20 +1531,20 @@ System\n\
         let name = rest.trim();
         if name.is_empty() {
             app.add_assistant_message(format!(
-                "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter",
+                "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter, copilot",
                 app.selected_provider
             ));
             app.scroll_offset = 0;
             return true;
         }
-        let valid = ["claude_code", "claude", "ollama", "openai", "openrouter"];
+        let valid = ["claude_code", "claude", "ollama", "openai", "openrouter", "copilot", "gh"];
         if valid.contains(&name) {
             app.selected_provider = name.to_string();
             app.provider_changed = true;
             app.set_status(format!("Switched to provider: {name}"));
         } else {
             app.add_assistant_message(format!(
-                "Unknown provider: {name}\nAvailable: claude_code, ollama, openai, openrouter"
+                "Unknown provider: {name}\nAvailable: claude_code, ollama, openai, openrouter, copilot"
             ));
         }
         return true;
@@ -2382,9 +2394,17 @@ System\n\
 
     // /compact — manually trigger context compaction.
     if trimmed == "/compact" {
-        let cm = crate::agent::context::ContextManager::new(50_000);
+        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+        let cm = crate::agent::context::ContextManager::new(limit);
         let messages = app.current_conversation().messages.clone();
-        let compacted = cm.compact_messages(&messages);
+
+        // First compact tool results if in agent mode, then overall
+        let after_tools = if app.agent_mode {
+            cm.compact_tool_results(&messages)
+        } else {
+            messages.clone()
+        };
+        let compacted = cm.compact_messages(&after_tools);
 
         let before = messages.len();
         let after = compacted.len();
@@ -2400,13 +2420,40 @@ System\n\
         return true;
     }
 
+    // /tokens — show token usage breakdown.
+    if trimmed == "/tokens" {
+        let conv = app.current_conversation();
+        let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
+        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+        let pct = (total as f64 / limit as f64 * 100.0).min(100.0);
+
+        let mut msg = format!("Token Usage\n{}\n\n", "=".repeat(30));
+        msg.push_str(&format!("Estimated tokens: ~{}\n", total));
+        msg.push_str(&format!("Provider limit:   ~{}\n", limit));
+        msg.push_str(&format!("Usage:            {:.1}%\n\n", pct));
+
+        msg.push_str("Breakdown by message:\n");
+        for (i, (role, content)) in conv.messages.iter().enumerate() {
+            let tokens = crate::agent::context::ContextManager::estimate_tokens(content);
+            msg.push_str(&format!("  {:>3}. [{:>9}] ~{:>6} tokens\n", i + 1, role, tokens));
+        }
+
+        if pct > 70.0 {
+            msg.push_str(&format!("\nWarning: {:.0}% of context used. Consider /compact to save tokens.", pct));
+        }
+
+        app.add_assistant_message(msg);
+        app.scroll_offset = 0;
+        return true;
+    }
+
     // /context — show what context the AI currently has.
     if trimmed == "/context" {
         let conv = app.current_conversation();
         let mut ctx = String::from("Current AI Context:\n\n");
 
         for (i, (role, content)) in conv.messages.iter().enumerate() {
-            let tokens = content.len() / 4 + 1;
+            let tokens = crate::agent::context::ContextManager::estimate_tokens(content);
             let preview: String = content.chars().take(60).collect();
             let ellipsis = if content.len() > 60 { "..." } else { "" };
 
@@ -2414,7 +2461,7 @@ System\n\
                 i + 1, role, tokens, preview, ellipsis));
         }
 
-        let total: usize = conv.messages.iter().map(|(_, c)| c.len() / 4 + 1).sum();
+        let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
         ctx.push_str(&format!("\nTotal: {} messages, ~{} tokens estimated\n", conv.messages.len(), total));
 
         // Show workspace if detected
@@ -2908,9 +2955,21 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         .map(|(_, content)| content.clone())
         .unwrap_or_default();
 
-    let mut messages: Vec<ChatMessage> = app
-        .current_conversation()
-        .messages
+    // Apply context management based on provider
+    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let cm = crate::agent::context::ContextManager::new(limit);
+
+    // First compact tool results if in agent mode
+    let conversation_messages = if app.agent_mode {
+        cm.compact_tool_results(&app.current_conversation().messages)
+    } else {
+        app.current_conversation().messages.clone()
+    };
+
+    // Then compact the overall conversation if needed
+    let final_messages = cm.compact_messages(&conversation_messages);
+
+    let mut messages: Vec<ChatMessage> = final_messages
         .iter()
         .filter_map(|(role, content)| match role.as_str() {
             // Expand @file references in user messages so the AI sees file
@@ -2951,30 +3010,10 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         }
     }
 
-    // Auto-compact if conversation is very long
-    let token_estimate: usize = messages.iter().map(|m| m.content.len() / 4 + 1).sum();
-    if token_estimate > 100_000 {
-        let cm = crate::agent::context::ContextManager::new(80_000);
-        let compacted = cm.compact_messages(&app.current_conversation().messages);
-        // Use compacted messages for the AI call
-        messages = compacted.iter()
-            .filter_map(|(role, content)| match role.as_str() {
-                "user" => Some(ChatMessage::user(content)),
-                "assistant" => Some(ChatMessage::assistant(content)),
-                "system" => Some(ChatMessage::system(content)),
-                _ => None,
-            })
-            .collect();
-        app.set_status("Auto-compacted long conversation for token efficiency");
-    }
-
     // Update total_tokens_used tracker
-    app.total_tokens_used = app
-        .current_conversation()
-        .messages
-        .iter()
-        .map(|(_, c)| c.len() / 4 + 1)
-        .sum();
+    app.total_tokens_used = crate::agent::context::ContextManager::conversation_tokens(
+        &app.current_conversation().messages,
+    );
 
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();
@@ -3005,9 +3044,19 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
         return;
     }
 
+    // Apply context management based on provider
+    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let cm = crate::agent::context::ContextManager::new(limit);
+
+    let conversation_messages = if app.agent_mode {
+        cm.compact_tool_results(&app.current_conversation().messages)
+    } else {
+        app.current_conversation().messages.clone()
+    };
+    let final_messages = cm.compact_messages(&conversation_messages);
+
     // Rebuild messages and re-send (expand @file references in user messages)
-    let messages: Vec<ChatMessage> = app.current_conversation()
-        .messages
+    let messages: Vec<ChatMessage> = final_messages
         .iter()
         .filter_map(|(role, content)| match role.as_str() {
             "user" => {
