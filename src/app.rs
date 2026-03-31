@@ -317,3 +317,752 @@ impl App {
         self.scroll_offset = self.scroll_offset.saturating_sub(3);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── App::new() defaults ─────────────────────────────────────────────
+
+    #[test]
+    fn new_app_defaults() {
+        let app = App::new();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert_eq!(app.input_mode, InputMode::Insert);
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+        assert_eq!(app.conversations.len(), 1);
+        assert_eq!(app.active_conversation, 0);
+        assert!(!app.is_streaming);
+        assert!(!app.should_quit);
+        assert!(app.streaming_response.is_empty());
+        assert!(app.stream_rx.is_none());
+        assert_eq!(app.scroll_offset, 0);
+        assert_eq!(app.selected_model, "sonnet");
+        assert!(!app.available_models.is_empty());
+        assert_eq!(app.model_select_index, 0);
+        assert!(app.status_message.is_none());
+        assert!(!app.show_help);
+        assert!(!app.code_mode);
+        assert!(app.working_dir.is_none());
+        assert_eq!(app.selected_provider, "claude_code");
+        assert!(!app.provider_changed);
+    }
+
+    #[test]
+    fn new_app_has_expected_models() {
+        let app = App::new();
+        assert!(app.available_models.contains(&"opus".to_string()));
+        assert!(app.available_models.contains(&"sonnet".to_string()));
+        assert!(app.available_models.contains(&"haiku".to_string()));
+        assert!(app.available_models.contains(&"gpt-4o".to_string()));
+    }
+
+    #[test]
+    fn new_app_has_expected_providers() {
+        let app = App::new();
+        assert!(app.available_providers.contains(&"claude_code".to_string()));
+        assert!(app.available_providers.contains(&"ollama".to_string()));
+        assert!(app.available_providers.contains(&"openai".to_string()));
+        assert!(app.available_providers.contains(&"openrouter".to_string()));
+    }
+
+    // ── Conversation::new() ─────────────────────────────────────────────
+
+    #[test]
+    fn conversation_new_has_uuid() {
+        let conv = Conversation::new();
+        // UUID v4 has 36 characters with hyphens.
+        assert_eq!(conv.id.len(), 36);
+        assert!(uuid::Uuid::parse_str(&conv.id).is_ok());
+    }
+
+    #[test]
+    fn conversation_new_has_default_title() {
+        let conv = Conversation::new();
+        assert_eq!(conv.title, "New Conversation");
+    }
+
+    #[test]
+    fn conversation_new_has_empty_messages() {
+        let conv = Conversation::new();
+        assert!(conv.messages.is_empty());
+    }
+
+    #[test]
+    fn conversation_new_has_recent_timestamp() {
+        let before = chrono::Utc::now();
+        let conv = Conversation::new();
+        let after = chrono::Utc::now();
+        assert!(conv.created_at >= before);
+        assert!(conv.created_at <= after);
+    }
+
+    #[test]
+    fn two_conversations_have_different_ids() {
+        let a = Conversation::new();
+        let b = Conversation::new();
+        assert_ne!(a.id, b.id);
+    }
+
+    // ── current_conversation() ──────────────────────────────────────────
+
+    #[test]
+    fn current_conversation_returns_first_by_default() {
+        let app = App::new();
+        let conv = app.current_conversation();
+        assert_eq!(conv.title, "New Conversation");
+        assert!(conv.messages.is_empty());
+    }
+
+    #[test]
+    fn current_conversation_tracks_active_index() {
+        let mut app = App::new();
+        app.new_conversation();
+        // active_conversation should now point to the second one.
+        assert_eq!(app.active_conversation, 1);
+        let id = app.current_conversation().id.clone();
+        assert_eq!(app.conversations[1].id, id);
+    }
+
+    // ── new_conversation() ──────────────────────────────────────────────
+
+    #[test]
+    fn new_conversation_increases_count() {
+        let mut app = App::new();
+        assert_eq!(app.conversations.len(), 1);
+        app.new_conversation();
+        assert_eq!(app.conversations.len(), 2);
+        app.new_conversation();
+        assert_eq!(app.conversations.len(), 3);
+    }
+
+    #[test]
+    fn new_conversation_switches_active() {
+        let mut app = App::new();
+        let first_id = app.current_conversation().id.clone();
+        app.new_conversation();
+        let second_id = app.current_conversation().id.clone();
+        assert_ne!(first_id, second_id);
+        assert_eq!(app.active_conversation, 1);
+    }
+
+    #[test]
+    fn new_conversation_resets_state() {
+        let mut app = App::new();
+        app.scroll_offset = 42;
+        app.streaming_response = "partial".into();
+        app.is_streaming = true;
+        app.new_conversation();
+        assert_eq!(app.scroll_offset, 0);
+        assert!(app.streaming_response.is_empty());
+        assert!(!app.is_streaming);
+        assert_eq!(
+            app.status_message,
+            Some("New conversation started".into())
+        );
+    }
+
+    // ── add_user_message() ──────────────────────────────────────────────
+
+    #[test]
+    fn add_user_message_appends() {
+        let mut app = App::new();
+        app.add_user_message("Hello".into());
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "user");
+        assert_eq!(msgs[0].1, "Hello");
+    }
+
+    #[test]
+    fn add_user_message_multiple() {
+        let mut app = App::new();
+        app.add_user_message("First".into());
+        app.add_user_message("Second".into());
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].1, "First");
+        assert_eq!(msgs[1].1, "Second");
+    }
+
+    // ── add_assistant_message() ─────────────────────────────────────────
+
+    #[test]
+    fn add_assistant_message_appends() {
+        let mut app = App::new();
+        app.add_assistant_message("Response".into());
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "assistant");
+        assert_eq!(msgs[0].1, "Response");
+    }
+
+    #[test]
+    fn mixed_messages_preserve_order() {
+        let mut app = App::new();
+        app.add_user_message("Q1".into());
+        app.add_assistant_message("A1".into());
+        app.add_user_message("Q2".into());
+        app.add_assistant_message("A2".into());
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs[0], ("user".into(), "Q1".into()));
+        assert_eq!(msgs[1], ("assistant".into(), "A1".into()));
+        assert_eq!(msgs[2], ("user".into(), "Q2".into()));
+        assert_eq!(msgs[3], ("assistant".into(), "A2".into()));
+    }
+
+    // ── append_to_streaming() ───────────────────────────────────────────
+
+    #[test]
+    fn append_to_streaming_accumulates() {
+        let mut app = App::new();
+        app.append_to_streaming("Hello");
+        app.append_to_streaming(", ");
+        app.append_to_streaming("world!");
+        assert_eq!(app.streaming_response, "Hello, world!");
+    }
+
+    #[test]
+    fn append_to_streaming_empty_string() {
+        let mut app = App::new();
+        app.append_to_streaming("");
+        assert!(app.streaming_response.is_empty());
+    }
+
+    // ── finish_streaming() ──────────────────────────────────────────────
+
+    #[test]
+    fn finish_streaming_moves_content_to_conversation() {
+        let mut app = App::new();
+        app.is_streaming = true;
+        app.streaming_response = "The answer is 42".into();
+        app.finish_streaming();
+
+        assert!(!app.is_streaming);
+        assert!(app.streaming_response.is_empty());
+        assert!(app.stream_rx.is_none());
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].0, "assistant");
+        assert_eq!(msgs[0].1, "The answer is 42");
+    }
+
+    #[test]
+    fn finish_streaming_empty_does_not_add_message() {
+        let mut app = App::new();
+        app.is_streaming = true;
+        app.streaming_response = String::new();
+        app.finish_streaming();
+
+        assert!(!app.is_streaming);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn finish_streaming_clears_stream_rx() {
+        let mut app = App::new();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(tx);
+        app.stream_rx = Some(rx);
+        app.is_streaming = true;
+        app.streaming_response = "data".into();
+        app.finish_streaming();
+
+        assert!(app.stream_rx.is_none());
+    }
+
+    // ── move_cursor_left() ──────────────────────────────────────────────
+
+    #[test]
+    fn move_cursor_left_from_end() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 3;
+        app.move_cursor_left();
+        assert_eq!(app.cursor_position, 2);
+    }
+
+    #[test]
+    fn move_cursor_left_at_zero_stays() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 0;
+        app.move_cursor_left();
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn move_cursor_left_empty_string() {
+        let mut app = App::new();
+        app.input = String::new();
+        app.cursor_position = 0;
+        app.move_cursor_left();
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn move_cursor_left_multibyte() {
+        let mut app = App::new();
+        // 'e' with accent: 2 bytes in UTF-8
+        app.input = "cafe\u{0301}".into(); // "café" as base + combining
+        app.cursor_position = app.input.len();
+        app.move_cursor_left();
+        // Should move back by one char boundary (the combining accent).
+        assert!(app.cursor_position < app.input.len());
+    }
+
+    #[test]
+    fn move_cursor_left_with_emoji() {
+        let mut app = App::new();
+        app.input = "hi\u{1F600}".into(); // "hi😀"
+        app.cursor_position = app.input.len(); // past the emoji
+        app.move_cursor_left();
+        // emoji is 4 bytes, so cursor should be at 2
+        assert_eq!(app.cursor_position, 2);
+    }
+
+    // ── move_cursor_right() ─────────────────────────────────────────────
+
+    #[test]
+    fn move_cursor_right_from_start() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 0;
+        app.move_cursor_right();
+        assert_eq!(app.cursor_position, 1);
+    }
+
+    #[test]
+    fn move_cursor_right_at_end_stays() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 3;
+        app.move_cursor_right();
+        assert_eq!(app.cursor_position, 3);
+    }
+
+    #[test]
+    fn move_cursor_right_empty_string() {
+        let mut app = App::new();
+        app.input = String::new();
+        app.cursor_position = 0;
+        app.move_cursor_right();
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn move_cursor_right_with_emoji() {
+        let mut app = App::new();
+        app.input = "\u{1F600}hi".into(); // "😀hi"
+        app.cursor_position = 0;
+        app.move_cursor_right();
+        // emoji is 4 bytes, should jump to position 4
+        assert_eq!(app.cursor_position, 4);
+    }
+
+    #[test]
+    fn move_cursor_left_right_roundtrip() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 3;
+        app.move_cursor_left();
+        app.move_cursor_right();
+        assert_eq!(app.cursor_position, 3);
+    }
+
+    // ── insert_char() ───────────────────────────────────────────────────
+
+    #[test]
+    fn insert_char_at_start() {
+        let mut app = App::new();
+        app.input = "bc".into();
+        app.cursor_position = 0;
+        app.insert_char('a');
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor_position, 1);
+    }
+
+    #[test]
+    fn insert_char_at_middle() {
+        let mut app = App::new();
+        app.input = "ac".into();
+        app.cursor_position = 1;
+        app.insert_char('b');
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor_position, 2);
+    }
+
+    #[test]
+    fn insert_char_at_end() {
+        let mut app = App::new();
+        app.input = "ab".into();
+        app.cursor_position = 2;
+        app.insert_char('c');
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor_position, 3);
+    }
+
+    #[test]
+    fn insert_char_into_empty() {
+        let mut app = App::new();
+        app.insert_char('x');
+        assert_eq!(app.input, "x");
+        assert_eq!(app.cursor_position, 1);
+    }
+
+    #[test]
+    fn insert_multibyte_char() {
+        let mut app = App::new();
+        app.input = "ab".into();
+        app.cursor_position = 1;
+        app.insert_char('\u{1F600}'); // 😀, 4 bytes
+        assert_eq!(app.input, "a\u{1F600}b");
+        assert_eq!(app.cursor_position, 5); // 1 + 4
+    }
+
+    #[test]
+    fn insert_char_sequence() {
+        let mut app = App::new();
+        for c in "hello".chars() {
+            app.insert_char(c);
+        }
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.cursor_position, 5);
+    }
+
+    // ── delete_char() ───────────────────────────────────────────────────
+
+    #[test]
+    fn delete_char_at_start_noop() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 0;
+        app.delete_char();
+        assert_eq!(app.input, "abc");
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn delete_char_at_end() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 3;
+        app.delete_char();
+        assert_eq!(app.input, "ab");
+        assert_eq!(app.cursor_position, 2);
+    }
+
+    #[test]
+    fn delete_char_in_middle() {
+        let mut app = App::new();
+        app.input = "abc".into();
+        app.cursor_position = 2;
+        app.delete_char();
+        assert_eq!(app.input, "ac");
+        assert_eq!(app.cursor_position, 1);
+    }
+
+    #[test]
+    fn delete_char_empty_string() {
+        let mut app = App::new();
+        app.cursor_position = 0;
+        app.delete_char();
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn delete_multibyte_char() {
+        let mut app = App::new();
+        app.input = "a\u{1F600}b".into(); // "a😀b"
+        app.cursor_position = 5; // after the emoji
+        app.delete_char();
+        assert_eq!(app.input, "ab");
+        assert_eq!(app.cursor_position, 1);
+    }
+
+    #[test]
+    fn delete_all_chars_one_by_one() {
+        let mut app = App::new();
+        app.input = "hi".into();
+        app.cursor_position = 2;
+        app.delete_char();
+        app.delete_char();
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    // ── submit_input() ──────────────────────────────────────────────────
+
+    #[test]
+    fn submit_input_returns_trimmed_text() {
+        let mut app = App::new();
+        app.input = "  hello world  ".into();
+        app.cursor_position = 15;
+        let result = app.submit_input();
+        assert_eq!(result, Some("hello world".into()));
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn submit_empty_returns_none() {
+        let mut app = App::new();
+        app.input = "   ".into();
+        assert_eq!(app.submit_input(), None);
+    }
+
+    #[test]
+    fn submit_completely_empty_returns_none() {
+        let mut app = App::new();
+        assert_eq!(app.submit_input(), None);
+    }
+
+    #[test]
+    fn submit_input_clears_state() {
+        let mut app = App::new();
+        app.input = "test".into();
+        app.cursor_position = 4;
+        let _ = app.submit_input();
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn submit_preserves_inner_whitespace() {
+        let mut app = App::new();
+        app.input = "  hello   world  ".into();
+        let result = app.submit_input();
+        assert_eq!(result, Some("hello   world".into()));
+    }
+
+    // ── scroll_up / scroll_down ─────────────────────────────────────────
+
+    #[test]
+    fn scroll_up_increments_by_three() {
+        let mut app = App::new();
+        assert_eq!(app.scroll_offset, 0);
+        app.scroll_up();
+        assert_eq!(app.scroll_offset, 3);
+        app.scroll_up();
+        assert_eq!(app.scroll_offset, 6);
+    }
+
+    #[test]
+    fn scroll_down_decrements_by_three() {
+        let mut app = App::new();
+        app.scroll_offset = 9;
+        app.scroll_down();
+        assert_eq!(app.scroll_offset, 6);
+        app.scroll_down();
+        assert_eq!(app.scroll_offset, 3);
+    }
+
+    #[test]
+    fn scroll_down_saturates_at_zero() {
+        let mut app = App::new();
+        app.scroll_offset = 2;
+        app.scroll_down();
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn scroll_down_at_zero_stays() {
+        let mut app = App::new();
+        app.scroll_offset = 0;
+        app.scroll_down();
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn scroll_up_near_max_u16() {
+        let mut app = App::new();
+        app.scroll_offset = u16::MAX - 1;
+        app.scroll_up();
+        // saturating_add should clamp at u16::MAX
+        assert_eq!(app.scroll_offset, u16::MAX);
+    }
+
+    // ── Messages go to the correct conversation ─────────────────────────
+
+    #[test]
+    fn messages_go_to_active_conversation_not_others() {
+        let mut app = App::new();
+        app.add_user_message("first conv msg".into());
+        app.new_conversation();
+        app.add_user_message("second conv msg".into());
+
+        assert_eq!(app.conversations[0].messages.len(), 1);
+        assert_eq!(app.conversations[0].messages[0].1, "first conv msg");
+        assert_eq!(app.conversations[1].messages.len(), 1);
+        assert_eq!(app.conversations[1].messages[0].1, "second conv msg");
+    }
+
+    // ── Multiple conversations: isolation ──────────────────────────────
+
+    #[test]
+    fn multiple_conversations_isolated() {
+        let mut app = App::new();
+        app.add_user_message("msg1".into());
+        app.new_conversation();
+        app.add_user_message("msg2".into());
+        assert_eq!(app.conversations.len(), 2);
+        assert_eq!(app.current_conversation().messages.len(), 1);
+        assert_eq!(app.current_conversation().messages[0].1, "msg2");
+        // Switch back
+        app.active_conversation = 0;
+        assert_eq!(app.current_conversation().messages.len(), 1);
+        assert_eq!(app.current_conversation().messages[0].1, "msg1");
+    }
+
+    #[test]
+    fn switch_between_three_conversations() {
+        let mut app = App::new();
+        app.add_user_message("conv0".into());
+        app.new_conversation();
+        app.add_user_message("conv1".into());
+        app.new_conversation();
+        app.add_user_message("conv2".into());
+        assert_eq!(app.conversations.len(), 3);
+
+        // Verify each conversation is independent
+        app.active_conversation = 0;
+        assert_eq!(app.current_conversation().messages[0].1, "conv0");
+        app.active_conversation = 1;
+        assert_eq!(app.current_conversation().messages[0].1, "conv1");
+        app.active_conversation = 2;
+        assert_eq!(app.current_conversation().messages[0].1, "conv2");
+    }
+
+    #[test]
+    fn adding_message_to_switched_conversation() {
+        let mut app = App::new();
+        app.add_user_message("first".into());
+        app.new_conversation();
+        app.add_user_message("second".into());
+
+        // Switch back and add to first conversation
+        app.active_conversation = 0;
+        app.add_assistant_message("reply to first".into());
+        assert_eq!(app.conversations[0].messages.len(), 2);
+        assert_eq!(app.conversations[0].messages[1].1, "reply to first");
+        // Second conversation unaffected
+        assert_eq!(app.conversations[1].messages.len(), 1);
+    }
+
+    // ── Cursor with emoji / multibyte ──────────────────────────────────
+
+    #[test]
+    fn cursor_handles_emoji_insert_delete() {
+        let mut app = App::new();
+        app.insert_char('\u{1F980}'); // 🦀 (crab emoji, 4 bytes)
+        assert_eq!(app.input, "\u{1F980}");
+        assert_eq!(app.cursor_position, 4);
+        app.delete_char();
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn insert_accented_characters() {
+        let mut app = App::new();
+        app.insert_char('\u{00E9}'); // e with accent (2 bytes)
+        assert_eq!(app.input, "\u{00E9}");
+        assert_eq!(app.cursor_position, 2);
+        app.insert_char('\u{00E8}'); // another accented e
+        assert_eq!(app.input, "\u{00E9}\u{00E8}");
+        assert_eq!(app.cursor_position, 4);
+    }
+
+    #[test]
+    fn delete_accented_char() {
+        let mut app = App::new();
+        app.input = "caf\u{00E9}".into(); // "cafe" with accent on e (2 bytes)
+        app.cursor_position = app.input.len();
+        app.delete_char();
+        assert_eq!(app.input, "caf");
+        assert_eq!(app.cursor_position, 3);
+    }
+
+    #[test]
+    fn cursor_movement_across_emoji_boundary() {
+        let mut app = App::new();
+        app.input = "a\u{1F600}b".into(); // "a😀b"
+        app.cursor_position = 0;
+
+        app.move_cursor_right(); // past 'a'
+        assert_eq!(app.cursor_position, 1);
+        app.move_cursor_right(); // past emoji (4 bytes)
+        assert_eq!(app.cursor_position, 5);
+        app.move_cursor_right(); // past 'b'
+        assert_eq!(app.cursor_position, 6);
+
+        app.move_cursor_left(); // back before 'b'
+        assert_eq!(app.cursor_position, 5);
+        app.move_cursor_left(); // back before emoji
+        assert_eq!(app.cursor_position, 1);
+        app.move_cursor_left(); // back before 'a'
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn insert_emoji_in_middle_of_text() {
+        let mut app = App::new();
+        app.input = "ab".into();
+        app.cursor_position = 1;
+        app.insert_char('\u{2764}'); // ❤ (3 bytes)
+        assert_eq!(app.input, "a\u{2764}b");
+        assert_eq!(app.cursor_position, 4); // 1 + 3
+    }
+
+    // ── scroll_down at 0 ───────────────────────────────────────────────
+
+    #[test]
+    fn scroll_down_from_zero_repeated() {
+        let mut app = App::new();
+        app.scroll_down();
+        app.scroll_down();
+        app.scroll_down();
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    // ── finish_streaming edge cases ────────────────────────────────────
+
+    #[test]
+    fn finish_streaming_when_not_streaming() {
+        let mut app = App::new();
+        app.is_streaming = false;
+        app.streaming_response = String::new();
+        app.finish_streaming();
+        assert!(!app.is_streaming);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn finish_streaming_preserves_existing_messages() {
+        let mut app = App::new();
+        app.add_user_message("question".into());
+        app.is_streaming = true;
+        app.streaming_response = "answer".into();
+        app.finish_streaming();
+        let msgs = &app.current_conversation().messages;
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0], ("user".into(), "question".into()));
+        assert_eq!(msgs[1], ("assistant".into(), "answer".into()));
+    }
+
+    // ── submit_input with unicode ──────────────────────────────────────
+
+    #[test]
+    fn submit_input_with_unicode() {
+        let mut app = App::new();
+        app.input = "Hello \u{1F600} world".into();
+        app.cursor_position = app.input.len();
+        let result = app.submit_input();
+        assert_eq!(result, Some("Hello \u{1F600} world".into()));
+        assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+}

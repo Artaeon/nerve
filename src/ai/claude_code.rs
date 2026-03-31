@@ -83,7 +83,7 @@ impl ClaudeCodeProvider {
     /// System messages are concatenated into a dedicated `--system-prompt`
     /// argument.  User/assistant messages are flattened into a single text
     /// block that is passed via `-p`.
-    fn build_prompt(messages: &[ChatMessage]) -> (Option<String>, String) {
+    pub(crate) fn build_prompt(messages: &[ChatMessage]) -> (Option<String>, String) {
         let mut system_parts: Vec<&str> = Vec::new();
         let mut conversation = String::new();
 
@@ -120,7 +120,7 @@ impl ClaudeCodeProvider {
 
     /// Resolve the effective model identifier — use the caller's choice if
     /// non-empty, otherwise fall back to our default.
-    fn resolve_model<'a>(&'a self, model: &'a str) -> &'a str {
+    pub(crate) fn resolve_model<'a>(&'a self, model: &'a str) -> &'a str {
         if model.is_empty() {
             &self.default_model
         } else {
@@ -344,5 +344,218 @@ impl AiProvider for ClaudeCodeProvider {
 
     fn name(&self) -> &str {
         "Claude Code"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── build_prompt: user-only messages ────────────────────────────────
+
+    #[test]
+    fn build_prompt_single_user_message() {
+        let msgs = vec![ChatMessage::user("Hello")];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(system.is_none());
+        assert_eq!(conversation, "Hello");
+    }
+
+    #[test]
+    fn build_prompt_multiple_user_messages() {
+        let msgs = vec![
+            ChatMessage::user("First"),
+            ChatMessage::user("Second"),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(system.is_none());
+        assert_eq!(conversation, "First\n\nSecond");
+    }
+
+    // ── build_prompt: system + user ─────────────────────────────────────
+
+    #[test]
+    fn build_prompt_system_and_user() {
+        let msgs = vec![
+            ChatMessage::system("Be helpful."),
+            ChatMessage::user("What is Rust?"),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(system, Some("Be helpful.".into()));
+        assert_eq!(conversation, "What is Rust?");
+    }
+
+    // ── build_prompt: system + user + assistant ─────────────────────────
+
+    #[test]
+    fn build_prompt_system_user_assistant() {
+        let msgs = vec![
+            ChatMessage::system("You are a tutor."),
+            ChatMessage::user("Explain closures."),
+            ChatMessage::assistant("A closure captures variables from its environment."),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(system, Some("You are a tutor.".into()));
+        assert!(conversation.contains("Explain closures."));
+        assert!(conversation.contains("[Previous assistant response: A closure captures variables from its environment.]"));
+    }
+
+    #[test]
+    fn build_prompt_user_assistant_user() {
+        let msgs = vec![
+            ChatMessage::user("Q1"),
+            ChatMessage::assistant("A1"),
+            ChatMessage::user("Q2"),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(system.is_none());
+        assert_eq!(conversation, "Q1\n\n[Previous assistant response: A1]\n\nQ2");
+    }
+
+    // ── build_prompt: multiple system messages ──────────────────────────
+
+    #[test]
+    fn build_prompt_multiple_system_messages_concatenated() {
+        let msgs = vec![
+            ChatMessage::system("Rule 1."),
+            ChatMessage::system("Rule 2."),
+            ChatMessage::user("Go."),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(system, Some("Rule 1.\n\nRule 2.".into()));
+        assert_eq!(conversation, "Go.");
+    }
+
+    #[test]
+    fn build_prompt_system_messages_scattered() {
+        // System messages scattered between other messages should all be collected.
+        let msgs = vec![
+            ChatMessage::system("Sys1"),
+            ChatMessage::user("U1"),
+            ChatMessage::system("Sys2"),
+            ChatMessage::user("U2"),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(system, Some("Sys1\n\nSys2".into()));
+        assert_eq!(conversation, "U1\n\nU2");
+    }
+
+    // ── build_prompt: empty messages ────────────────────────────────────
+
+    #[test]
+    fn build_prompt_empty_messages() {
+        let msgs: Vec<ChatMessage> = vec![];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(system.is_none());
+        assert!(conversation.is_empty());
+    }
+
+    #[test]
+    fn build_prompt_only_system_messages() {
+        let msgs = vec![ChatMessage::system("Be helpful.")];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(system, Some("Be helpful.".into()));
+        assert!(conversation.is_empty());
+    }
+
+    // ── build_prompt: unknown role ──────────────────────────────────────
+
+    #[test]
+    fn build_prompt_unknown_role_ignored() {
+        let msgs = vec![
+            ChatMessage {
+                role: "function".into(),
+                content: "ignored".into(),
+            },
+            ChatMessage::user("Hello"),
+        ];
+        let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(system.is_none());
+        assert_eq!(conversation, "Hello");
+    }
+
+    // ── build_prompt: assistant wrapping format ─────────────────────────
+
+    #[test]
+    fn build_prompt_assistant_message_format() {
+        let msgs = vec![ChatMessage::assistant("The answer is 42.")];
+        let (_, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert_eq!(
+            conversation,
+            "[Previous assistant response: The answer is 42.]"
+        );
+    }
+
+    // ── build_prompt: no double newlines at start ───────────────────────
+
+    #[test]
+    fn build_prompt_no_leading_newlines() {
+        let msgs = vec![ChatMessage::user("Only one")];
+        let (_, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
+        assert!(!conversation.starts_with('\n'));
+    }
+
+    // ── resolve_model ───────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_model_uses_provided_model() {
+        let provider = ClaudeCodeProvider::new();
+        assert_eq!(provider.resolve_model("opus"), "opus");
+    }
+
+    #[test]
+    fn resolve_model_empty_uses_default() {
+        let provider = ClaudeCodeProvider::new();
+        assert_eq!(provider.resolve_model(""), "sonnet");
+    }
+
+    #[test]
+    fn resolve_model_custom_default() {
+        let provider = ClaudeCodeProvider::with_model("haiku".into());
+        assert_eq!(provider.resolve_model(""), "haiku");
+    }
+
+    #[test]
+    fn resolve_model_non_empty_overrides_custom_default() {
+        let provider = ClaudeCodeProvider::with_model("haiku".into());
+        assert_eq!(provider.resolve_model("opus"), "opus");
+    }
+
+    // ── Constructor variants ────────────────────────────────────────────
+
+    #[test]
+    fn new_provider_defaults() {
+        let p = ClaudeCodeProvider::new();
+        assert_eq!(p.claude_binary, "claude");
+        assert_eq!(p.default_model, "sonnet");
+        assert!(!p.enable_tools);
+        assert!(p.session_id.is_none());
+        assert!(p.working_dir.is_none());
+    }
+
+    #[test]
+    fn with_tools_enables_tools() {
+        let p = ClaudeCodeProvider::with_tools();
+        assert!(p.enable_tools);
+        assert!(p.tools_enabled());
+    }
+
+    #[test]
+    fn with_working_dir_sets_dir() {
+        let p = ClaudeCodeProvider::new().with_working_dir("/tmp/test".into());
+        assert_eq!(p.working_dir, Some("/tmp/test".into()));
+    }
+
+    #[test]
+    fn with_model_sets_model() {
+        let p = ClaudeCodeProvider::with_model("opus".into());
+        assert_eq!(p.default_model, "opus");
+        assert!(!p.enable_tools);
+    }
+
+    #[test]
+    fn name_returns_claude_code() {
+        let p = ClaudeCodeProvider::new();
+        assert_eq!(p.name(), "Claude Code");
     }
 }
