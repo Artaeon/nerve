@@ -125,10 +125,21 @@ pub struct App {
     /// Working directory for Claude Code file access.
     pub working_dir: Option<String>,
 
+    // -- agent mode --
+    /// When `true`, the AI can use tools (read/write files, run commands, etc.)
+    /// and will loop until no more tool calls remain.
+    pub agent_mode: bool,
+    /// Number of tool-call iterations in the current agent loop (capped at 10).
+    pub agent_iterations: usize,
+
     // -- search overlay --
     pub search_query: String,
     pub search_results: Vec<usize>,
     pub search_current: usize,
+
+    // -- context tracking --
+    /// Running count of estimated tokens in the current conversation.
+    pub total_tokens_used: usize,
 
     // -- misc --
     pub status_message: Option<String>,
@@ -203,9 +214,14 @@ impl App {
             code_mode: false,
             working_dir: None,
 
+            agent_mode: false,
+            agent_iterations: 0,
+
             search_query: String::new(),
             search_results: Vec::new(),
             search_current: 0,
+
+            total_tokens_used: 0,
 
             status_message: None,
             status_time: None,
@@ -381,6 +397,8 @@ mod tests {
         assert!(!app.show_help);
         assert!(!app.code_mode);
         assert!(app.working_dir.is_none());
+        assert!(!app.agent_mode);
+        assert_eq!(app.agent_iterations, 0);
         assert_eq!(app.selected_provider, "claude_code");
         assert!(!app.provider_changed);
     }
@@ -1099,6 +1117,108 @@ mod tests {
         let result = app.submit_input();
         assert_eq!(result, Some("Hello \u{1F600} world".into()));
         assert!(app.input.is_empty());
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    // ── active_conversation bounds after delete ────────────────────────
+
+    #[test]
+    fn active_conversation_bounds_after_delete() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        assert_eq!(app.conversations.len(), 3);
+        assert_eq!(app.active_conversation, 2);
+
+        // Delete the last conversation
+        app.conversations.remove(2);
+        // active_conversation is now out of bounds (pointing to index 2, but
+        // only indices 0..1 exist). current_conversation() clamps internally,
+        // so it must NOT panic.
+        let _ = app.current_conversation();
+        let _ = app.current_conversation_mut();
+    }
+
+    // ── new_conversation resets streaming ──────────────────────────────
+
+    #[test]
+    fn new_conversation_resets_streaming() {
+        let mut app = App::new();
+        app.is_streaming = true;
+        app.streaming_response = "partial".into();
+        app.new_conversation();
+        // New conversation should not inherit streaming state
+        assert!(app.streaming_response.is_empty());
+        assert!(!app.is_streaming);
+    }
+
+    // ── insert_char at various positions ──────────────────────────────
+
+    #[test]
+    fn insert_char_at_various_positions() {
+        let mut app = App::new();
+        app.input = "hello".into();
+
+        // Insert at beginning
+        app.cursor_position = 0;
+        app.insert_char('X');
+        assert_eq!(app.input, "Xhello");
+
+        // Insert at end
+        app.cursor_position = 6;
+        app.insert_char('Y');
+        assert_eq!(app.input, "XhelloY");
+
+        // Insert in middle
+        app.cursor_position = 3;
+        app.insert_char('Z');
+        assert_eq!(app.input, "XheZlloY");
+    }
+
+    // ── scroll_offset large values ────────────────────────────────────
+
+    #[test]
+    fn scroll_offset_large_values() {
+        let mut app = App::new();
+        // Scroll up many times
+        for _ in 0..1000 {
+            app.scroll_up();
+        }
+        assert_eq!(app.scroll_offset, 3000); // 1000 * 3
+
+        // Scroll down many times
+        for _ in 0..1000 {
+            app.scroll_down();
+        }
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    // ── current_conversation clamps when all but one deleted ──────────
+
+    #[test]
+    fn current_conversation_clamps_to_last_valid() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        // Point to the last (index 2)
+        app.active_conversation = 2;
+        // Remove conversations 1 and 2
+        app.conversations.truncate(1);
+        // active_conversation = 2 is way out of bounds, but the accessor
+        // must clamp to 0.
+        let conv = app.current_conversation();
+        assert_eq!(conv.title, "New Conversation");
+    }
+
+    // ── delete_char at cursor_position=0 with content is no-op ───────
+
+    #[test]
+    fn delete_char_at_cursor_zero_with_content() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 0;
+        app.delete_char();
+        assert_eq!(app.input, "hello");
         assert_eq!(app.cursor_position, 0);
     }
 }
