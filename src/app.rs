@@ -23,6 +23,8 @@ pub enum AppMode {
     ClipboardManager,
     /// Conversation history browser.
     HistoryBrowser,
+    /// Picking an AI provider.
+    ProviderSelect,
 }
 
 /// Whether the user is navigating (Normal / vim-style) or typing.
@@ -106,6 +108,12 @@ pub struct App {
     pub history_select_index: usize,
     pub history_search: String,
 
+    // -- provider selection --
+    pub available_providers: Vec<String>,
+    pub selected_provider: String,
+    pub provider_select_index: usize,
+    pub provider_changed: bool,
+
     // -- misc --
     pub status_message: Option<String>,
     pub should_quit: bool,
@@ -161,6 +169,16 @@ impl App {
             history_entries: Vec::new(),
             history_select_index: 0,
             history_search: String::new(),
+
+            available_providers: vec![
+                "claude_code".into(),
+                "ollama".into(),
+                "openai".into(),
+                "openrouter".into(),
+            ],
+            selected_provider: "claude_code".into(),
+            provider_select_index: 0,
+            provider_changed: false,
 
             status_message: None,
             should_quit: false,

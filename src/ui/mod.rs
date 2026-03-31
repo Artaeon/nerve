@@ -59,6 +59,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         AppMode::CommandBar => command_bar::render_command_bar(frame, app),
         AppMode::Help => help::render_help(frame),
         AppMode::ModelSelect => render_model_selector(frame, app),
+        AppMode::ProviderSelect => render_provider_selector(frame, app),
         AppMode::ClipboardManager => clipboard_manager::render_clipboard_manager(frame, app),
         _ => {}
     }
@@ -74,13 +75,24 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    // Calculate message count for the badge
+    let msg_count = app.current_conversation().messages.len();
+    let provider_label = provider_display_name(&app.selected_provider);
+    let right_display = format!(
+        "{} \u{203a} {} \u{2502} {} msgs ",
+        provider_label,
+        app.selected_model,
+        msg_count
+    );
+    let right_len = right_display.len() as u16;
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(14),  // branding
-            Constraint::Length(3),   // separator
-            Constraint::Min(1),     // conversation title
-            Constraint::Length(30), // model badge
+            Constraint::Length(15),        // branding + version
+            Constraint::Length(3),          // separator
+            Constraint::Min(1),            // conversation title
+            Constraint::Length(right_len), // provider/model + msg count
         ])
         .split(inner);
 
@@ -102,7 +114,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Separator
     let sep = Paragraph::new(Line::from(Span::styled(
-        " | ",
+        " \u{2502} ",
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(sep, chunks[1]);
@@ -110,45 +122,40 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Conversation title
     let title = &app.current_conversation().title;
     let title_widget = Paragraph::new(Line::from(Span::styled(
-        format!("{title}"),
+        title.to_string(),
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
     )));
     frame.render_widget(title_widget, chunks[2]);
 
-    // Model badge with inferred provider
-    let provider_hint = infer_provider(&app.selected_model);
+    // Right side: provider > model | msg count
     let model_badge = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!("{} ", provider_hint),
+            format!("{} ", provider_label),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::styled(
+            "\u{203a} ",
             Style::default().fg(Color::DarkGray),
         ),
         Span::styled(
-            &app.selected_model,
+            app.selected_model.to_string(),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" "),
+        Span::styled(
+            " \u{2502} ",
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(
+            format!("{} msgs ", msg_count),
+            Style::default().fg(Color::Cyan),
+        ),
     ]))
     .alignment(Alignment::Right);
     frame.render_widget(model_badge, chunks[3]);
-}
-
-/// Infer a provider label from the model name for display purposes.
-fn infer_provider(model: &str) -> &'static str {
-    if model.starts_with("gpt") {
-        "OpenAI"
-    } else if model.starts_with("claude") {
-        "Anthropic"
-    } else if model.starts_with("llama") || model.starts_with("mistral") || model.starts_with("codellama") {
-        "Ollama"
-    } else if model.starts_with("gemini") {
-        "Google"
-    } else {
-        "model:"
-    }
 }
 
 // ─── Bottom area (input + status) ────────────────────────────────────────────
@@ -189,38 +196,80 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::Normal => Color::DarkGray,
     };
 
-    // Build the displayed text with a cursor indicator.
-    let before_cursor = &app.input[..app.cursor_position];
-    let after_cursor = &app.input[app.cursor_position..];
-    let cursor_char = if app.input_mode == InputMode::Insert {
-        "\u{258c}" // ▌
+    let is_empty = app.input.is_empty();
+
+    // Build the displayed text with a cursor indicator or placeholder.
+    let input_line = if is_empty && app.input_mode == InputMode::Insert {
+        // Show placeholder text when empty in insert mode
+        Line::from(vec![
+            mode_indicator,
+            Span::raw(" "),
+            Span::styled(
+                "Type your message... (Enter to send, Esc for normal mode)",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                "\u{258c}",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
+        ])
+    } else if is_empty && app.input_mode == InputMode::Normal {
+        // Hint in normal mode when empty
+        Line::from(vec![
+            mode_indicator,
+            Span::raw(" "),
+            Span::styled(
+                "Press i to start typing, / for Nerve Bar",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
     } else {
-        ""
+        let before_cursor = &app.input[..app.cursor_position];
+        let after_cursor = &app.input[app.cursor_position..];
+        let cursor_char = if app.input_mode == InputMode::Insert {
+            "\u{258c}" // ▌
+        } else {
+            ""
+        };
+
+        Line::from(vec![
+            mode_indicator,
+            Span::raw(" "),
+            Span::styled(before_cursor, Style::default().fg(Color::White)),
+            Span::styled(
+                cursor_char,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::SLOW_BLINK),
+            ),
+            Span::styled(after_cursor, Style::default().fg(Color::White)),
+        ])
     };
 
-    let input_line = Line::from(vec![
-        mode_indicator,
-        Span::raw(" "),
-        Span::styled(before_cursor, Style::default().fg(Color::White)),
-        Span::styled(
-            cursor_char,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::SLOW_BLINK),
-        ),
-        Span::styled(after_cursor, Style::default().fg(Color::White)),
-    ]);
+    // Word count
+    let word_count = if is_empty {
+        0
+    } else {
+        app.input.split_whitespace().count()
+    };
 
-    // Hint text and character count for the title bar
+    // Hint text for bottom line
     let hint = match app.input_mode {
         InputMode::Insert => "Enter: send | Esc: normal mode",
-        InputMode::Normal => "i: insert | Ctrl+K: Nerve Bar",
+        InputMode::Normal => "i: insert | /: Nerve Bar | q: quit",
     };
-    let char_count = app.input.chars().count();
+
     let title_line = Line::from(vec![
-        Span::styled(" Message ", Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
         Span::styled(
-            format!("({} chars) ", char_count),
+            " Message ",
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("({} words) ", word_count),
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -246,42 +295,96 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let left_text = if let Some(ref msg) = app.status_message {
-        Span::styled(format!(" {msg}"), Style::default().fg(Color::Yellow))
-    } else if app.is_streaming {
-        Span::styled(
-            " Streaming...",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::SLOW_BLINK),
-        )
-    } else {
-        Span::styled(" Ready", Style::default().fg(Color::DarkGray))
-    };
+    let provider_label = provider_display_name(&app.selected_provider);
+    let sep = Span::styled(" \u{2502} ", Style::default().fg(Color::Rgb(60, 60, 70)));
 
-    let provider_hint = infer_provider(&app.selected_model);
-    let right_text = Span::styled(
-        format!(
-            "Conv {}/{} | {} {} | Ctrl+K: Nerve Bar | Ctrl+H: Help ",
+    if app.is_streaming {
+        // Streaming status bar with progress animation
+        // Cycle through animation frames based on streaming response length
+        let anim_chars = ['\u{2591}', '\u{2592}', '\u{2593}', '\u{2588}'];
+        let tick = app.streaming_response.len() % 4;
+        let progress: String = (0..8)
+            .map(|i| anim_chars[(tick + i) % 4])
+            .collect();
+
+        let line = Line::from(vec![
+            Span::styled(
+                " Streaming... ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                progress,
+                Style::default().fg(Color::Green),
+            ),
+            sep.clone(),
+            Span::styled(
+                format!("{} \u{203a} {}", provider_label, app.selected_model),
+                Style::default().fg(Color::DarkGray),
+            ),
+            sep.clone(),
+            Span::styled(
+                format!(
+                    "Conv {}/{}",
+                    app.active_conversation + 1,
+                    app.conversations.len(),
+                ),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::raw(" "),
+        ]);
+
+        frame.render_widget(Paragraph::new(line), area);
+    } else {
+        // Normal status bar
+        let left_status = if let Some(ref msg) = app.status_message {
+            Span::styled(format!(" {msg}"), Style::default().fg(Color::Yellow))
+        } else {
+            Span::styled(
+                " Ready",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+        };
+
+        let right_text = format!(
+            "Conv {}/{} \u{2502} Ctrl+K: Nerve Bar \u{2502} F1: Help ",
             app.active_conversation + 1,
             app.conversations.len(),
-            provider_hint,
-            app.selected_model,
-        ),
-        Style::default().fg(Color::DarkGray),
-    );
+        );
+        let right_span = Span::styled(
+            right_text.clone(),
+            Style::default().fg(Color::DarkGray),
+        );
+        let right_width = right_text.len() as u16;
 
-    let right_width = right_text.width() as u16;
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(1), Constraint::Length(right_width)])
-        .split(area);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(1), Constraint::Length(right_width)])
+            .split(area);
 
-    frame.render_widget(Paragraph::new(Line::from(left_text)), chunks[0]);
-    frame.render_widget(
-        Paragraph::new(Line::from(right_text)).alignment(Alignment::Right),
-        chunks[1],
-    );
+        let left_line = Line::from(vec![
+            left_status,
+            sep.clone(),
+            Span::styled(
+                format!("Provider: {}", provider_label),
+                Style::default().fg(Color::DarkGray),
+            ),
+            sep.clone(),
+            Span::styled(
+                format!("Model: {}", app.selected_model),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]);
+
+        frame.render_widget(Paragraph::new(left_line), chunks[0]);
+        frame.render_widget(
+            Paragraph::new(Line::from(right_span)).alignment(Alignment::Right),
+            chunks[1],
+        );
+    }
 }
 
 // ─── Model selector overlay ──────────────────────────────────────────────────
@@ -350,6 +453,106 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
     // Use ListState for automatic scroll tracking.
     let mut state = ListState::default();
     state.select(Some(app.model_select_index));
+
+    frame.render_stateful_widget(list, popup_area, &mut state);
+}
+
+// ─── Provider selector overlay ───────────────────────────────────────────────
+
+/// Human-friendly display name for a provider key.
+fn provider_display_name(key: &str) -> &'static str {
+    match key {
+        "claude_code" | "claude" => "Claude Code",
+        "ollama" => "Ollama",
+        "openai" => "OpenAI",
+        "openrouter" => "OpenRouter",
+        _ => "Custom",
+    }
+}
+
+/// Short description for the provider selector overlay.
+fn provider_description(key: &str) -> &'static str {
+    match key {
+        "claude_code" | "claude" => "subscription, no API key",
+        "ollama" => "local, no API key",
+        "openai" => "requires API key",
+        "openrouter" => "requires API key",
+        _ => "custom provider",
+    }
+}
+
+fn render_provider_selector(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+
+    let popup_width = 50u16.min(area.width.saturating_sub(4));
+    let popup_height = (app.available_providers.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    let y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(
+            Line::from(Span::styled(
+                " Select Provider ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Center),
+        )
+        .title_bottom(
+            Line::from(Span::styled(
+                " Enter: Select | Esc: Cancel ",
+                Style::default().fg(Color::DarkGray),
+            ))
+            .alignment(Alignment::Center),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan))
+        .padding(Padding::horizontal(1));
+
+    let items: Vec<ListItem<'_>> = app
+        .available_providers
+        .iter()
+        .enumerate()
+        .map(|(i, provider_key)| {
+            let is_selected = i == app.provider_select_index;
+            let is_active = *provider_key == app.selected_provider;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_active {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            let marker = if is_active { " * " } else { "   " };
+            let name = provider_display_name(provider_key);
+            let desc = provider_description(provider_key);
+            ListItem::new(Line::from(Span::styled(
+                format!("{marker}{name} ({desc})"),
+                style,
+            )))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(block)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut state = ListState::default();
+    state.select(Some(app.provider_select_index));
 
     frame.render_stateful_widget(list, popup_area, &mut state);
 }

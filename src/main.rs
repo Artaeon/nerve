@@ -272,12 +272,9 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config) -> anyhow::Resul
 
     let mut app = App::new();
     app.selected_model = config.default_model.clone();
+    app.selected_provider = config.default_provider.clone();
 
-    // Add a welcome message to the first conversation.
-    app.current_conversation_mut().messages.push((
-        "system".into(),
-        "Welcome to Nerve. Type a message or press Ctrl+K to open the command bar.".into(),
-    ));
+    // No initial system message — the rich welcome screen shows when messages are empty.
 
     let result = event_loop(&mut terminal, &mut app, &provider, &config).await;
 
@@ -297,17 +294,40 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config) -> anyhow::Resul
 async fn event_loop(
     terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    provider: &Arc<dyn AiProvider>,
+    initial_provider: &Arc<dyn AiProvider>,
     config: &Config,
 ) -> anyhow::Result<()> {
+    let mut provider: Arc<dyn AiProvider> = Arc::clone(initial_provider);
+
     loop {
         // Draw the UI.
         terminal.draw(|frame| ui::draw(frame, app))?;
 
+        // Check if provider needs to be recreated.
+        if app.provider_changed {
+            match create_provider(config, Some(&app.selected_provider)) {
+                Ok(new_provider) => {
+                    provider = Arc::from(new_provider);
+                }
+                Err(e) => {
+                    app.status_message = Some(format!("Provider error: {e}"));
+                }
+            }
+            app.provider_changed = false;
+        }
+
         // Poll for events with a short timeout so we can service the stream.
         if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                handle_key_event(app, key, provider, config).await?;
+            match event::read()? {
+                Event::Key(key) => {
+                    handle_key_event(app, key, &provider, config).await?;
+                }
+                Event::Mouse(mouse) => match mouse.kind {
+                    crossterm::event::MouseEventKind::ScrollUp => app.scroll_up(),
+                    crossterm::event::MouseEventKind::ScrollDown => app.scroll_down(),
+                    _ => {}
+                },
+                _ => {}
             }
         }
 
@@ -433,6 +453,7 @@ async fn handle_key_event(
         AppMode::CommandBar => handle_command_bar(app, key),
         AppMode::PromptPicker => handle_prompt_picker(app, key),
         AppMode::ModelSelect => handle_model_select(app, key),
+        AppMode::ProviderSelect => handle_provider_select(app, key),
         AppMode::Help => {
             // Any key besides Ctrl+H (handled above) closes help.
             if code == KeyCode::Esc {
@@ -485,6 +506,14 @@ async fn handle_normal_mode(
                             .available_models
                             .iter()
                             .position(|m| m == &app.selected_model)
+                            .unwrap_or(0);
+                    }
+                    KeyCode::Char('t') => {
+                        app.mode = AppMode::ProviderSelect;
+                        app.provider_select_index = app
+                            .available_providers
+                            .iter()
+                            .position(|p| p == &app.selected_provider)
                             .unwrap_or(0);
                     }
                     KeyCode::Char('y') => copy_last_assistant_message(app),
@@ -544,6 +573,14 @@ async fn handle_normal_mode(
                             .available_models
                             .iter()
                             .position(|m| m == &app.selected_model)
+                            .unwrap_or(0);
+                    }
+                    KeyCode::Char('t') => {
+                        app.mode = AppMode::ProviderSelect;
+                        app.provider_select_index = app
+                            .available_providers
+                            .iter()
+                            .position(|p| p == &app.selected_provider)
                             .unwrap_or(0);
                     }
                     KeyCode::Char('v') => {
@@ -729,6 +766,31 @@ fn handle_model_select(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some(model) = app.available_models.get(app.model_select_index) {
                 app.selected_model = model.clone();
                 app.status_message = Some(format!("Model set to {model}"));
+            }
+            app.mode = AppMode::Normal;
+        }
+        _ => {}
+    }
+}
+
+// ── Provider selection ─────────────────────────────────────────────────────
+
+fn handle_provider_select(app: &mut App, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.mode = AppMode::Normal,
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.provider_select_index = app.provider_select_index.saturating_sub(1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if app.provider_select_index + 1 < app.available_providers.len() {
+                app.provider_select_index += 1;
+            }
+        }
+        KeyCode::Enter => {
+            if let Some(provider_name) = app.available_providers.get(app.provider_select_index) {
+                app.selected_provider = provider_name.clone();
+                app.provider_changed = true;
+                app.status_message = Some(format!("Provider switched to {}", provider_name));
             }
             app.mode = AppMode::Normal;
         }
@@ -926,6 +988,8 @@ Available commands:\n\
   /new              — Start a new conversation\n\
   /model <name>     — Switch to a different model\n\
   /models           — List available models\n\
+  /provider <name>  — Switch provider (claude_code, ollama, openai, openrouter)\n\
+  /providers        — List available providers\n\
   /url <url> [question] — Scrape a URL and use it as context\n\
   /auto list        — List all automations\n\
   /auto run <name>  — Run an automation with current input\n\
@@ -1005,6 +1069,62 @@ Available commands:\n\
             None => {
                 app.status_message = Some(format!("Unknown model: {name}"));
             }
+        }
+        return true;
+    }
+
+    // /providers — list available providers with descriptions.
+    if trimmed == "/providers" {
+        let current = &app.selected_provider;
+        let list = format!(
+            "Available providers:\n\n\
+             {} claude_code  - Claude Code (subscription, no API key)\n\
+             {} ollama      - Ollama (local, no API key)\n\
+             {} openai      - OpenAI (requires OPENAI_API_KEY)\n\
+             {} openrouter  - OpenRouter (requires OPENROUTER_API_KEY)\n\n\
+             Current: {}\n\
+             Switch with: /provider <name> or Ctrl+T",
+            if current == "claude_code" || current == "claude" { "*" } else { " " },
+            if current == "ollama" { "*" } else { " " },
+            if current == "openai" { "*" } else { " " },
+            if current == "openrouter" { "*" } else { " " },
+            current
+        );
+        app.add_assistant_message(list);
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /provider — bare command shows current provider.
+    if trimmed == "/provider" {
+        app.add_assistant_message(format!(
+            "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter",
+            app.selected_provider
+        ));
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /provider <name> — switch provider.
+    if let Some(rest) = trimmed.strip_prefix("/provider ") {
+        let name = rest.trim();
+        if name.is_empty() {
+            app.add_assistant_message(format!(
+                "Current provider: {}\nUse /provider <name> to switch.\nAvailable: claude_code, ollama, openai, openrouter",
+                app.selected_provider
+            ));
+            app.scroll_offset = 0;
+            return true;
+        }
+        let valid = ["claude_code", "claude", "ollama", "openai", "openrouter"];
+        if valid.contains(&name) {
+            app.selected_provider = name.to_string();
+            app.provider_changed = true;
+            app.status_message = Some(format!("Switched to provider: {name}"));
+        } else {
+            app.add_assistant_message(format!(
+                "Unknown provider: {name}\nAvailable: claude_code, ollama, openai, openrouter"
+            ));
         }
         return true;
     }
