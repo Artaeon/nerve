@@ -118,6 +118,21 @@ impl ClaudeCodeProvider {
         (system_prompt, conversation)
     }
 
+    /// Check if the `claude` CLI is available in `$PATH`.
+    ///
+    /// Runs `claude --version` and returns `true` only if it exits
+    /// successfully.  This is a blocking check intended for startup
+    /// validation.
+    pub fn is_available(&self) -> bool {
+        std::process::Command::new(&self.claude_binary)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
     /// Resolve the effective model identifier — use the caller's choice if
     /// non-empty, otherwise fall back to our default.
     pub(crate) fn resolve_model<'a>(&'a self, model: &'a str) -> &'a str {
@@ -183,7 +198,7 @@ impl AiProvider for ClaudeCodeProvider {
             let mut child = Command::new(&self.claude_binary)
                 .args(&args)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
                 .context("failed to spawn claude CLI — is it installed and in PATH?")?;
 
@@ -191,6 +206,8 @@ impl AiProvider for ClaudeCodeProvider {
                 .stdout
                 .take()
                 .ok_or_else(|| anyhow!("failed to capture claude stdout"))?;
+
+            let stderr_handle = child.stderr.take();
 
             // Use a small-capacity BufReader so we get chunks as soon as
             // the CLI flushes them, giving a streaming feel.
@@ -221,7 +238,18 @@ impl AiProvider for ClaudeCodeProvider {
             // Reap the child so we don't leave zombies.
             let status = child.wait().await.context("failed to wait on claude process")?;
             if !status.success() {
-                tracing::warn!("claude exited with status {status}");
+                let stderr_msg = if let Some(mut stderr) = stderr_handle {
+                    let mut buf = String::new();
+                    stderr.read_to_string(&mut buf).await.ok();
+                    buf
+                } else {
+                    String::new()
+                };
+                if stderr_msg.is_empty() {
+                    tracing::warn!("claude exited with status {status}");
+                } else {
+                    tracing::warn!("claude exited with status {status}: {stderr_msg}");
+                }
             }
 
             Ok(())
@@ -279,7 +307,7 @@ impl AiProvider for ClaudeCodeProvider {
             let output = Command::new(&self.claude_binary)
                 .args(&args)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .output()
                 .await
                 .context("failed to run claude CLI — is it installed and in PATH?")?;
@@ -557,5 +585,16 @@ mod tests {
     fn name_returns_claude_code() {
         let p = ClaudeCodeProvider::new();
         assert_eq!(p.name(), "Claude Code");
+    }
+
+    // ── is_available ───────────────────────────────────────────────────
+
+    #[test]
+    fn is_available_returns_false_for_nonexistent_binary() {
+        let p = ClaudeCodeProvider {
+            claude_binary: "definitely_not_a_real_binary_xyz_123".into(),
+            ..ClaudeCodeProvider::new()
+        };
+        assert!(!p.is_available());
     }
 }
