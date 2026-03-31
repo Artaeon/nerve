@@ -1,0 +1,276 @@
+use anyhow::Context;
+
+#[derive(Debug, Clone)]
+pub struct ScrapeResult {
+    pub url: String,
+    pub title: Option<String>,
+    pub content: String,
+    pub word_count: usize,
+}
+
+/// Maximum number of words to keep in scraped content (rough token budget).
+const MAX_WORDS: usize = 4000;
+
+/// Fetch a URL and extract readable text content from the HTML.
+pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent("Nerve/0.1.0")
+        .build()
+        .context("failed to build HTTP client")?;
+
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("failed to fetch {url}"))?;
+
+    if !response.status().is_success() {
+        anyhow::bail!(
+            "HTTP {} when fetching {url}",
+            response.status()
+        );
+    }
+
+    let html = response
+        .text()
+        .await
+        .with_context(|| format!("failed to read response body from {url}"))?;
+
+    let title = extract_title(&html);
+    let text = strip_html(&html);
+    let text = decode_html_entities(&text);
+    let text = collapse_whitespace(&text);
+    let word_count = text.split_whitespace().count();
+    let content = truncate_words(&text, MAX_WORDS);
+
+    Ok(ScrapeResult {
+        url: url.to_string(),
+        title,
+        content,
+        word_count,
+    })
+}
+
+/// Fetch multiple URLs concurrently, returning results in the same order.
+pub async fn scrape_urls(urls: &[&str]) -> Vec<anyhow::Result<ScrapeResult>> {
+    let futures: Vec<_> = urls.iter().map(|url| scrape_url(url)).collect();
+    futures::future::join_all(futures).await
+}
+
+/// Extract the content of the first `<title>` tag, if present.
+fn extract_title(html: &str) -> Option<String> {
+    let lower = html.to_lowercase();
+    let start = lower.find("<title")?;
+    // Find the closing `>` of the opening tag.
+    let tag_end = lower[start..].find('>')? + start + 1;
+    let end = lower[tag_end..].find("</title")? + tag_end;
+    let raw = &html[tag_end..end];
+    let decoded = decode_html_entities(raw);
+    let trimmed = decoded.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Strip HTML tags from the input, removing `<script>` and `<style>` blocks
+/// entirely (including their content). Uses character-by-character parsing.
+fn strip_html(html: &str) -> String {
+    let mut result = String::with_capacity(html.len() / 2);
+    let chars: Vec<char> = html.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '<' {
+            // Check if this is a script or style opening tag.
+            if let Some(block_tag) = starts_with_block_tag(&chars, i) {
+                // Skip everything until the matching closing tag.
+                i = skip_to_closing_tag(&chars, i, &block_tag);
+                continue;
+            }
+
+            // Skip past the closing `>` of this tag.
+            while i < len && chars[i] != '>' {
+                i += 1;
+            }
+            // Skip the `>` itself, and add a space to avoid words merging.
+            if i < len {
+                i += 1;
+            }
+            result.push(' ');
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    result
+}
+
+/// Check if position `i` in `chars` starts a `<script` or `<style` tag.
+/// Returns the block tag name if so.
+fn starts_with_block_tag(chars: &[char], i: usize) -> Option<String> {
+    for tag in &["script", "style"] {
+        let pattern: Vec<char> = format!("<{tag}").chars().collect();
+        if i + pattern.len() <= chars.len() {
+            let segment: String = chars[i..i + pattern.len()]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            if segment == format!("<{tag}") {
+                // Make sure it's actually a tag (followed by space, >, or /).
+                let next_idx = i + pattern.len();
+                if next_idx < chars.len() {
+                    let next = chars[next_idx];
+                    if next == '>' || next == ' ' || next == '/' || next == '\t' || next == '\n' {
+                        return Some(tag.to_string());
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Skip forward from position `i` until we find and pass `</tag_name>`.
+/// Returns the index just after the closing tag.
+fn skip_to_closing_tag(chars: &[char], start: usize, tag_name: &str) -> usize {
+    let closing = format!("</{tag_name}");
+    let closing_chars: Vec<char> = closing.chars().collect();
+    let len = chars.len();
+    let mut i = start + 1; // skip past the initial `<`
+
+    while i < len {
+        if chars[i] == '<' && i + closing_chars.len() <= len {
+            let segment: String = chars[i..i + closing_chars.len()]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            if segment == closing {
+                // Skip to the `>` that closes this tag.
+                let mut j = i + closing_chars.len();
+                while j < len && chars[j] != '>' {
+                    j += 1;
+                }
+                return j + 1; // past the `>`
+            }
+        }
+        i += 1;
+    }
+
+    len // closing tag not found; consume rest of input
+}
+
+/// Decode common HTML entities.
+fn decode_html_entities(text: &str) -> String {
+    text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+}
+
+/// Collapse runs of whitespace into single spaces and trim blank lines.
+fn collapse_whitespace(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut prev_newline = false;
+    let mut prev_space = false;
+
+    for ch in text.chars() {
+        if ch == '\n' || ch == '\r' {
+            if !prev_newline {
+                result.push('\n');
+                prev_newline = true;
+            }
+            prev_space = false;
+        } else if ch.is_whitespace() {
+            if !prev_space && !prev_newline {
+                result.push(' ');
+                prev_space = true;
+            }
+        } else {
+            prev_newline = false;
+            prev_space = false;
+            result.push(ch);
+        }
+    }
+
+    // Remove leading/trailing whitespace from each line.
+    result
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Truncate content to approximately `max_words` words.
+fn truncate_words(text: &str, max_words: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.len() <= max_words {
+        return text.to_string();
+    }
+    let mut result = words[..max_words].join(" ");
+    result.push_str("\n\n[Content truncated — showing first ");
+    result.push_str(&max_words.to_string());
+    result.push_str(" of ");
+    result.push_str(&words.len().to_string());
+    result.push_str(" words]");
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_html_basic() {
+        let html = "<p>Hello <b>world</b></p>";
+        let text = strip_html(html);
+        assert!(text.contains("Hello"));
+        assert!(text.contains("world"));
+        assert!(!text.contains('<'));
+    }
+
+    #[test]
+    fn test_strip_script_blocks() {
+        let html = "<p>Before</p><script>var x = 1;</script><p>After</p>";
+        let text = strip_html(html);
+        assert!(text.contains("Before"));
+        assert!(text.contains("After"));
+        assert!(!text.contains("var x"));
+    }
+
+    #[test]
+    fn test_decode_entities() {
+        let text = "Tom &amp; Jerry &lt;3 &quot;cool&quot;";
+        let decoded = decode_html_entities(text);
+        assert_eq!(decoded, "Tom & Jerry <3 \"cool\"");
+    }
+
+    #[test]
+    fn test_extract_title() {
+        let html = "<html><head><title>My Page</title></head><body></body></html>";
+        assert_eq!(extract_title(html), Some("My Page".to_string()));
+    }
+
+    #[test]
+    fn test_extract_title_none() {
+        let html = "<html><head></head><body></body></html>";
+        assert_eq!(extract_title(html), None);
+    }
+
+    #[test]
+    fn test_truncate_words() {
+        let text = "one two three four five";
+        assert_eq!(truncate_words(text, 10), text);
+        let truncated = truncate_words(text, 3);
+        assert!(truncated.starts_with("one two three"));
+        assert!(truncated.contains("[Content truncated"));
+    }
+}
