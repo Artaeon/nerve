@@ -1,0 +1,5 @@
+name = "Example Custom Prompt"
+description = "An example showing how to create custom SmartPrompts"
+template = "You are a helpful assistant. Please help with the following:\n\n{{input}}"
+category = "Custom"
+tags = ["example", "template"]
