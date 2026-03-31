@@ -10,6 +10,7 @@ mod history;
 mod keybinds;
 mod knowledge;
 mod prompts;
+mod scaffold;
 mod scraper;
 mod shell;
 mod ui;
@@ -1233,6 +1234,11 @@ Shell & Git\n\
   /build              Auto-detect and run project build\n\
   /git [subcommand]   Quick git operations (status/log/diff/branch)\n\
 \n\
+Project Scaffolding\n\
+  /template list      List available project templates\n\
+  /template <name>    Create project from template\n\
+  /scaffold <desc>    AI-generate a project from description\n\
+\n\
 Automation\n\
   /auto list          List automations\n\
   /auto run <name>    Run automation\n\
@@ -1570,6 +1576,115 @@ System\n\
             app.status_message = Some(format!("Added {added} file(s) as context"));
         }
         app.scroll_offset = 0;
+        return true;
+    }
+
+    // /template — project templates.
+    if trimmed == "/template" || trimmed.starts_with("/template ") {
+        let rest = trimmed.strip_prefix("/template").unwrap_or("").trim();
+        let args: Vec<&str> = rest.split_whitespace().collect();
+
+        if args.is_empty() || args[0] == "list" {
+            let templates = scaffold::list_templates();
+            let mut msg = "Available templates:\n\n".to_string();
+            for (name, lang, desc) in &templates {
+                msg.push_str(&format!("  {name:<20} [{lang}] {desc}\n"));
+            }
+            msg.push_str("\nUsage: /template <name> [project-name]");
+            app.add_assistant_message(msg);
+            app.scroll_offset = 0;
+            return true;
+        }
+
+        let template_name = args[0];
+        let project_name = args
+            .get(1)
+            .copied()
+            .unwrap_or(template_name)
+            .to_string();
+
+        match scaffold::get_template(template_name) {
+            Some(mut template) => {
+                // Replace placeholders
+                for file in &mut template.files {
+                    file.content = file.content.replace("{{name}}", &project_name);
+                    file.content = file.content
+                        .replace("{{description}}", &format!("A {project_name} project"));
+                }
+
+                let target = std::env::current_dir()
+                    .unwrap_or_default()
+                    .join(&project_name);
+                match scaffold::write_template(&template, &target) {
+                    Ok(count) => {
+                        let next_steps = match template.language.as_str() {
+                            "Rust" => "cargo build\ncargo run\n",
+                            "Node.js" | "React" => "npm install\nnpm start\n",
+                            "Python" => "pip install -e .\npython -m app\n",
+                            "Go" => "go build\ngo run .\n",
+                            _ => "",
+                        };
+                        app.add_assistant_message(format!(
+                            "Created {} project '{}' at {}\n\
+                             {} files written.\n\n\
+                             Next steps:\n```\ncd {}\n{}```",
+                            template.language,
+                            project_name,
+                            target.display(),
+                            count,
+                            project_name,
+                            next_steps,
+                        ));
+                    }
+                    Err(e) => {
+                        app.status_message = Some(format!("Error: {e}"));
+                    }
+                }
+            }
+            None => {
+                app.add_assistant_message(format!(
+                    "Template '{}' not found. Use /template list to see available templates.",
+                    template_name
+                ));
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /scaffold — AI-powered project scaffolding.
+    if trimmed == "/scaffold" || trimmed.starts_with("/scaffold ") {
+        let rest = trimmed.strip_prefix("/scaffold").unwrap_or("").trim();
+        if rest.is_empty() {
+            app.add_assistant_message(
+                "Usage: /scaffold <project description>\n\n\
+                 Example: /scaffold a REST API in Rust with JWT auth and PostgreSQL\n\n\
+                 This uses Claude Code to generate a complete project structure.\n\
+                 Note: requires /code on for file creation."
+                    .into(),
+            );
+            app.scroll_offset = 0;
+            return true;
+        }
+
+        let description = rest.to_string();
+        let prompt = format!(
+            "Create a complete, production-ready project structure for: {description}\n\n\
+             Requirements:\n\
+             - Create all necessary files and directories\n\
+             - Include proper package/build configuration\n\
+             - Include a README.md with setup instructions\n\
+             - Include a .gitignore\n\
+             - Include basic tests\n\
+             - Follow best practices for the chosen language/framework\n\
+             - Make it immediately runnable after setup\n\
+             - Use modern, up-to-date dependencies"
+        );
+
+        // Submit this as a regular message to the AI
+        app.add_user_message(prompt);
+        app.scroll_offset = 0;
+        send_to_ai_from_history(app, provider).await;
         return true;
     }
 
