@@ -152,7 +152,7 @@ knowledge bases, project scaffolding, and a beautiful TUI. ~7MB binary, 370 test
 
 - **No API keys required** -- Uses your Claude Code subscription natively. Just install Claude Code and go.
 - **Blazing fast** -- Rust + ratatui. LTO-stripped ~7MB binary with instant startup.
-- **Multi-provider** -- Claude Code, OpenAI, Ollama (local), OpenRouter, any OpenAI-compatible endpoint. Switch on the fly with Ctrl+T.
+- **Multi-provider** -- Claude Code, OpenAI, Ollama (local), OpenRouter, GitHub Copilot, any OpenAI-compatible endpoint. Switch on the fly with Ctrl+T.
 - **Terminal-native** -- No browser, no Electron. Designed for developers who live in the terminal.
 - **Smart, not bloated** -- 130 built-in prompts across 20 categories, knowledge base RAG, automations, project scaffolding. All in a single binary.
 - **Open source** -- MIT licensed. Free forever.
@@ -173,7 +173,7 @@ knowledge bases, project scaffolding, and a beautiful TUI. ~7MB binary, 370 test
 
 ### AI & Prompts
 
-- **Multi-Provider** -- Claude Code (no API key), OpenAI, Ollama, OpenRouter, any OpenAI-compatible endpoint
+- **Multi-Provider** -- Claude Code (no API key), OpenAI, Ollama, OpenRouter, GitHub Copilot, any OpenAI-compatible endpoint
 - **130 Smart Prompts** -- 20 categories: Writing, Coding, Engineering, Analysis, Creative, Productivity, Design, Git, Rust, DevOps, Best Practices, Business, Communication, Data, Learning, Legal, Marketing, Personal, Product, Translation
 - **Nerve Bar** (Ctrl+K) -- Fuzzy command palette with category tabs, search, and prompt preview
 - **Streaming** -- Responses render token-by-token with full syntax highlighting via syntect
@@ -413,6 +413,7 @@ Nerve supports multiple AI backends and lets you switch between them at runtime 
 | **OpenAI** | API | `OPENAI_API_KEY` environment variable or config |
 | **OpenRouter** | API | `OPENROUTER_API_KEY` environment variable or config |
 | **Ollama** | Local | No key needed -- runs on `localhost:11434` |
+| **GitHub Copilot** | CLI integration | `gh` CLI with Copilot extension installed |
 | **Custom** | OpenAI-compatible | Any base URL + API key via `config.toml` |
 
 ---
@@ -501,6 +502,15 @@ Start Ollama locally and point Nerve at it:
 ```bash
 ollama serve
 nerve --provider ollama --model llama3
+```
+
+#### GitHub Copilot
+
+Requires the `gh` CLI with the Copilot extension:
+
+```bash
+gh extension install github/gh-copilot
+nerve --provider copilot
 ```
 
 #### Custom OpenAI-Compatible Provider
@@ -620,6 +630,7 @@ nerve/
 │   │   ├── mod.rs                Module exports
 │   │   ├── provider.rs           AiProvider trait + message types
 │   │   ├── claude_code.rs        Claude Code CLI integration
+│   │   ├── copilot.rs            GitHub Copilot CLI integration
 │   │   └── openai.rs             OpenAI-compatible API client
 │   ├── ui/
 │   │   ├── mod.rs                Layout and rendering dispatch
@@ -665,6 +676,18 @@ Nerve is designed as a standalone tool that integrates with [Granit](https://git
 - Launch Nerve from within Granit's command palette
 - Vault-aware AI context (Nerve reads your notes for RAG)
 - HTTP/MCP API for tighter bidirectional communication
+
+---
+
+## Documentation
+
+See the [User Guide](docs/GUIDE.md) for comprehensive documentation including:
+- Provider setup for all 6 providers (Claude Code, OpenAI, Ollama, OpenRouter, GitHub Copilot, custom)
+- Agent mode tutorial
+- Context management for token efficiency
+- Shell and file integration workflows
+- 130 smart prompts reference
+- Tips and tricks for power users
 
 ---
 
