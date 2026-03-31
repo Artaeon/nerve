@@ -17,7 +17,7 @@ fn custom_prompts_dir() -> PathBuf {
 ///
 /// Lowercases, replaces whitespace runs with `_`, strips non-alphanumeric
 /// characters (except `_` and `-`), and appends `.toml`.
-fn prompt_filename(name: &str) -> String {
+pub(crate) fn prompt_filename(name: &str) -> String {
     let slug: String = name
         .to_lowercase()
         .split_whitespace()
@@ -86,4 +86,92 @@ pub fn delete_custom_prompt(name: &str) -> anyhow::Result<()> {
         fs::remove_file(path)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prompts::SmartPrompt;
+
+    #[test]
+    fn smartprompt_toml_roundtrip() {
+        let prompt = SmartPrompt {
+            name: "Test Prompt".into(),
+            description: "A test".into(),
+            template: "Do something with {{input}}".into(),
+            category: "Custom".into(),
+            tags: vec!["test".into(), "example".into()],
+        };
+        let toml_str = toml::to_string(&prompt).unwrap();
+        let restored: SmartPrompt = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.name, prompt.name);
+        assert_eq!(restored.template, prompt.template);
+        assert_eq!(restored.tags, prompt.tags);
+    }
+
+    #[test]
+    fn prompt_filename_sanitizes() {
+        let name = prompt_filename("Hello World!");
+        assert!(!name.contains(' '));
+        assert!(!name.contains('!'));
+        assert!(name.ends_with(".toml"));
+    }
+
+    #[test]
+    fn prompt_filename_lowercases() {
+        let name = prompt_filename("My PROMPT");
+        assert_eq!(name, "my_prompt.toml");
+    }
+
+    #[test]
+    fn prompt_filename_strips_special_chars() {
+        let name = prompt_filename("Test@#$%^&*()Prompt");
+        assert_eq!(name, "testprompt.toml");
+    }
+
+    #[test]
+    fn prompt_filename_preserves_hyphens() {
+        let name = prompt_filename("code-review");
+        assert_eq!(name, "code-review.toml");
+    }
+
+    #[test]
+    fn prompt_filename_collapses_whitespace() {
+        let name = prompt_filename("hello   world   test");
+        assert_eq!(name, "hello_world_test.toml");
+    }
+
+    #[test]
+    fn prompt_filename_empty_name() {
+        let name = prompt_filename("");
+        assert_eq!(name, ".toml");
+    }
+
+    #[test]
+    fn smartprompt_empty_tags_roundtrip() {
+        let prompt = SmartPrompt {
+            name: "No Tags".into(),
+            description: "Desc".into(),
+            template: "template".into(),
+            category: "Cat".into(),
+            tags: vec![],
+        };
+        let toml_str = toml::to_string(&prompt).unwrap();
+        let restored: SmartPrompt = toml::from_str(&toml_str).unwrap();
+        assert!(restored.tags.is_empty());
+    }
+
+    #[test]
+    fn smartprompt_with_multiline_template() {
+        let prompt = SmartPrompt {
+            name: "Multi".into(),
+            description: "Desc".into(),
+            template: "Line 1\nLine 2\nLine 3".into(),
+            category: "Cat".into(),
+            tags: vec![],
+        };
+        let toml_str = toml::to_string(&prompt).unwrap();
+        let restored: SmartPrompt = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.template, "Line 1\nLine 2\nLine 3");
+    }
 }

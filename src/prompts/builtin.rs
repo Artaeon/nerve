@@ -769,3 +769,95 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
         ),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn builtin_prompts_not_empty() {
+        let prompts = builtin_prompts();
+        assert!(!prompts.is_empty());
+        assert!(
+            prompts.len() >= 100,
+            "Expected at least 100 prompts, got {}",
+            prompts.len()
+        );
+    }
+
+    #[test]
+    fn all_prompts_have_required_fields() {
+        for p in builtin_prompts() {
+            assert!(!p.name.is_empty(), "Prompt has empty name");
+            assert!(
+                !p.description.is_empty(),
+                "Prompt '{}' has empty description",
+                p.name
+            );
+            assert!(
+                !p.template.is_empty(),
+                "Prompt '{}' has empty template",
+                p.name
+            );
+            assert!(
+                !p.category.is_empty(),
+                "Prompt '{}' has empty category",
+                p.name
+            );
+            assert!(
+                p.template.contains("{{input}}"),
+                "Prompt '{}' missing {{{{input}}}} placeholder",
+                p.name
+            );
+        }
+    }
+
+    #[test]
+    fn no_duplicate_names() {
+        let prompts = builtin_prompts();
+        let mut names = HashSet::new();
+        for p in &prompts {
+            assert!(names.insert(&p.name), "Duplicate prompt name: {}", p.name);
+        }
+    }
+
+    #[test]
+    fn expected_categories_exist() {
+        let prompts = builtin_prompts();
+        let categories: HashSet<&str> = prompts.iter().map(|p| p.category.as_str()).collect();
+        for expected in &[
+            "Writing",
+            "Coding",
+            "Translation",
+            "Analysis",
+            "Creative",
+            "Productivity",
+            "Engineering",
+            "Design",
+            "Best Practices",
+            "Git",
+        ] {
+            assert!(
+                categories.contains(expected),
+                "Missing category: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_category_has_minimum_prompts() {
+        let prompts = builtin_prompts();
+        let mut counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for p in &prompts {
+            *counts.entry(p.category.as_str()).or_default() += 1;
+        }
+        for (cat, count) in &counts {
+            assert!(
+                *count >= 5,
+                "Category '{cat}' has only {count} prompts, expected at least 5"
+            );
+        }
+    }
+}

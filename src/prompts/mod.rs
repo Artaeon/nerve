@@ -39,3 +39,68 @@ pub fn categories() -> Vec<String> {
     cats.dedup();
     cats
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn all_prompts_includes_at_least_builtins() {
+        let builtin_count = builtin::builtin_prompts().len();
+        let all_count = all_prompts().len();
+        assert!(
+            all_count >= builtin_count,
+            "all_prompts() ({all_count}) should be >= builtin count ({builtin_count})"
+        );
+    }
+
+    #[test]
+    fn categories_returns_sorted_unique() {
+        let cats = categories();
+        // Check sorted
+        let mut sorted = cats.clone();
+        sorted.sort();
+        assert_eq!(cats, sorted, "categories() should return sorted list");
+        // Check unique (no duplicates)
+        let unique: HashSet<&String> = cats.iter().collect();
+        assert_eq!(
+            cats.len(),
+            unique.len(),
+            "categories() should have no duplicates"
+        );
+    }
+
+    #[test]
+    fn categories_includes_all_expected() {
+        let cats = categories();
+        for expected in &[
+            "Writing",
+            "Coding",
+            "Translation",
+            "Analysis",
+            "Creative",
+            "Productivity",
+            "Engineering",
+            "Design",
+            "Best Practices",
+            "Git",
+        ] {
+            assert!(
+                cats.iter().any(|c| c == expected),
+                "Missing expected category: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn categories_has_no_duplicates() {
+        let cats = categories();
+        let set: HashSet<&str> = cats.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            cats.len(),
+            set.len(),
+            "categories() returned duplicates"
+        );
+    }
+}
