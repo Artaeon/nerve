@@ -3,6 +3,29 @@ pub struct ContextManager {
     max_tokens: usize,
 }
 
+/// Truncate text intelligently at a sentence boundary when possible.
+pub(crate) fn smart_truncate(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+
+    let truncated = &text[..max_chars];
+
+    // Try to break at the last sentence-ending punctuation within the range.
+    if let Some(pos) = truncated.rfind(|c| c == '.' || c == '!' || c == '?') {
+        // Include the punctuation character itself.
+        return truncated[..=pos].to_string();
+    }
+
+    // Fall back to a word boundary.
+    if let Some(pos) = truncated.rfind(' ') {
+        return format!("{}...", &truncated[..pos]);
+    }
+
+    // Last resort: hard cut.
+    format!("{truncated}...")
+}
+
 impl ContextManager {
     pub fn new(max_tokens: usize) -> Self {
         Self { max_tokens }
@@ -19,6 +42,65 @@ impl ContextManager {
             .iter()
             .map(|(_, content)| Self::estimate_tokens(content))
             .sum()
+    }
+
+    /// Return a recommended context token limit for a given provider name.
+    pub fn recommended_limit(provider: &str) -> usize {
+        match provider {
+            "claude_code" | "claude" => 200_000, // Claude has huge context
+            "openai" => 60_000,                  // GPT-4o has 128K but we want headroom
+            "openrouter" => 30_000,              // Be conservative — depends on model
+            "ollama" => 8_000,                   // Local models often have small context
+            _ => 30_000,
+        }
+    }
+
+    /// Check whether the conversation exceeds the token budget.
+    pub fn is_over_budget(&self, messages: &[(String, String)]) -> bool {
+        Self::conversation_tokens(messages) > self.max_tokens
+    }
+
+    /// Calculate remaining tokens available in the context window.
+    pub fn remaining_tokens(&self, messages: &[(String, String)]) -> usize {
+        let used = Self::conversation_tokens(messages);
+        self.max_tokens.saturating_sub(used)
+    }
+
+    /// Compact tool results in a conversation: keep recent results intact,
+    /// but shorten older tool outputs to save context space.
+    pub fn compact_tool_results(&self, messages: &[(String, String)]) -> Vec<(String, String)> {
+        let mut result = Vec::new();
+        let len = messages.len();
+
+        for (i, (role, content)) in messages.iter().enumerate() {
+            // Keep the last 6 messages as-is (recent context matters)
+            if i >= len.saturating_sub(6) {
+                result.push((role.clone(), content.clone()));
+                continue;
+            }
+
+            // Compact old tool results
+            if role == "user" && content.starts_with("Tool execution results:") {
+                let tool_count = content.matches("<tool_result>").count();
+                let brief = format!(
+                    "[Previous tool execution: {} tool(s) ran successfully]",
+                    tool_count
+                );
+                result.push((role.clone(), brief));
+            } else if role == "system"
+                && (content.starts_with("File:")
+                    || content.starts_with("Command:")
+                    || content.starts_with("Directory listing"))
+            {
+                // Compact old file/command context
+                let first_line: String = content.lines().next().unwrap_or("").to_string();
+                result.push((role.clone(), format!("[Context: {}]", first_line)));
+            } else {
+                result.push((role.clone(), content.clone()));
+            }
+        }
+
+        result
     }
 
     /// Compact a conversation by summarizing older messages if over token limit.
@@ -68,7 +150,7 @@ impl ContextManager {
         result
     }
 
-    /// Create a brief summary of messages
+    /// Create a brief, informative summary of messages.
     fn summarize_messages(messages: &[&(String, String)]) -> String {
         let mut summary = String::new();
         let mut exchange_count = 0;
@@ -77,12 +159,28 @@ impl ContextManager {
             match role.as_str() {
                 "user" => {
                     exchange_count += 1;
-                    let brief: String = content.chars().take(100).collect();
-                    summary.push_str(&format!("- User asked: {brief}...\n"));
+                    // Extract the core question/request
+                    let brief = smart_truncate(content, 150);
+                    summary.push_str(&format!("- User: {brief}\n"));
                 }
                 "assistant" => {
-                    let brief: String = content.chars().take(100).collect();
-                    summary.push_str(&format!("  AI responded: {brief}...\n"));
+                    // For code responses, just note what was done
+                    if content.contains("```") {
+                        let code_blocks = content.matches("```").count() / 2;
+                        let first_line: String = content
+                            .lines()
+                            .find(|l| !l.trim().is_empty() && !l.starts_with("```"))
+                            .unwrap_or("")
+                            .chars()
+                            .take(100)
+                            .collect();
+                        summary.push_str(&format!(
+                            "  AI: {first_line}... [{code_blocks} code block(s)]\n"
+                        ));
+                    } else {
+                        let brief = smart_truncate(content, 150);
+                        summary.push_str(&format!("  AI: {brief}\n"));
+                    }
                 }
                 _ => {}
             }
@@ -92,9 +190,10 @@ impl ContextManager {
             return "No prior exchanges.".into();
         }
 
-        format!("[{exchange_count} previous exchange(s)]\n{summary}")
+        format!("[Summary of {exchange_count} previous exchange(s)]\n{summary}")
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -153,5 +252,149 @@ mod tests {
         let compacted = cm.compact_messages(&messages);
         let system_count = compacted.iter().filter(|(r, _)| r == "system").count();
         assert!(system_count >= 1); // Original system + summary
+    }
+
+    #[test]
+    fn smart_truncate_short_text_unchanged() {
+        assert_eq!(smart_truncate("hello", 100), "hello");
+    }
+
+    #[test]
+    fn smart_truncate_at_sentence_boundary() {
+        let text = "First sentence. Second sentence that goes on and on and on.";
+        let result = smart_truncate(text, 20);
+        // Should break at the period after "First sentence."
+        assert_eq!(result, "First sentence.");
+    }
+
+    #[test]
+    fn smart_truncate_at_word_boundary() {
+        let text = "no period here just words going on and on and on and on";
+        let result = smart_truncate(text, 20);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn smart_truncate_no_spaces() {
+        let text = "abcdefghijklmnopqrstuvwxyz";
+        let result = smart_truncate(text, 10);
+        assert_eq!(result, "abcdefghij...");
+    }
+
+    #[test]
+    fn summarize_messages_with_code_blocks() {
+        let messages: Vec<(String, String)> = vec![
+            ("user".into(), "Write a hello world function".into()),
+            (
+                "assistant".into(),
+                "Here is the function:\n```rust\nfn hello() { println!(\"Hello!\"); }\n```\nDone."
+                    .into(),
+            ),
+        ];
+        let refs: Vec<&(String, String)> = messages.iter().collect();
+        let summary = ContextManager::summarize_messages(&refs);
+        assert!(summary.contains("[Summary of 1 previous exchange(s)]"));
+        assert!(summary.contains("1 code block(s)"));
+    }
+
+    #[test]
+    fn summarize_messages_without_code() {
+        let messages: Vec<(String, String)> = vec![
+            ("user".into(), "What is Rust?".into()),
+            (
+                "assistant".into(),
+                "Rust is a systems programming language.".into(),
+            ),
+        ];
+        let refs: Vec<&(String, String)> = messages.iter().collect();
+        let summary = ContextManager::summarize_messages(&refs);
+        assert!(summary.contains("User: What is Rust?"));
+        assert!(summary.contains("AI: Rust is a systems programming language."));
+    }
+
+    #[test]
+    fn summarize_empty_messages() {
+        let messages: Vec<&(String, String)> = vec![];
+        let summary = ContextManager::summarize_messages(&messages);
+        assert_eq!(summary, "No prior exchanges.");
+    }
+
+    #[test]
+    fn recommended_limit_values() {
+        assert_eq!(ContextManager::recommended_limit("claude_code"), 200_000);
+        assert_eq!(ContextManager::recommended_limit("claude"), 200_000);
+        assert_eq!(ContextManager::recommended_limit("openai"), 60_000);
+        assert_eq!(ContextManager::recommended_limit("openrouter"), 30_000);
+        assert_eq!(ContextManager::recommended_limit("ollama"), 8_000);
+        assert_eq!(ContextManager::recommended_limit("unknown"), 30_000);
+    }
+
+    #[test]
+    fn remaining_tokens_calculation() {
+        let cm = ContextManager::new(1000);
+        let messages = vec![("user".into(), "hello".into())]; // ~2 tokens
+        let remaining = cm.remaining_tokens(&messages);
+        assert_eq!(remaining, 998);
+    }
+
+    #[test]
+    fn is_over_budget_false_when_under() {
+        let cm = ContextManager::new(1000);
+        let messages = vec![("user".into(), "hello".into())];
+        assert!(!cm.is_over_budget(&messages));
+    }
+
+    #[test]
+    fn is_over_budget_true_when_over() {
+        let cm = ContextManager::new(1);
+        let messages = vec![("user".into(), "this is definitely more than one token".into())];
+        assert!(cm.is_over_budget(&messages));
+    }
+
+    #[test]
+    fn compact_tool_results_recent_preserved() {
+        let cm = ContextManager::new(100_000);
+        let messages = vec![
+            ("user".into(), "Tool execution results:\n\n<tool_result>\ntool: read_file\nstatus: SUCCESS\noutput:\nfn main() {}\n</tool_result>\n\n".into()),
+            ("assistant".into(), "I see the code.".into()),
+            ("user".into(), "Now fix it".into()),
+            ("assistant".into(), "Sure, here is the fix.".into()),
+            ("user".into(), "Thanks".into()),
+            ("assistant".into(), "You're welcome!".into()),
+        ];
+        let compacted = cm.compact_tool_results(&messages);
+        // All 6 messages are "last 6" so all preserved as-is
+        assert_eq!(compacted.len(), 6);
+        assert!(compacted[0].1.starts_with("Tool execution results:"));
+    }
+
+    #[test]
+    fn compact_tool_results_old_compacted() {
+        let cm = ContextManager::new(100_000);
+        let mut messages = vec![
+            ("user".into(), "Tool execution results:\n\n<tool_result>\ntool: read_file\nstatus: SUCCESS\noutput:\nlong file content here\n</tool_result>\n\n<tool_result>\ntool: ls\nstatus: SUCCESS\noutput:\ndir listing\n</tool_result>\n\n".into()),
+            ("assistant".into(), "I read the files.".into()),
+        ];
+        // Add 6 more messages so the tool result is "old"
+        for i in 0..6 {
+            messages.push(("user".into(), format!("msg {i}")));
+        }
+        let compacted = cm.compact_tool_results(&messages);
+        // The old tool result should be compacted
+        assert!(compacted[0].1.contains("[Previous tool execution: 2 tool(s)"));
+    }
+
+    #[test]
+    fn compact_tool_results_old_system_context() {
+        let cm = ContextManager::new(100_000);
+        let mut messages = vec![
+            ("system".into(), "File: /tmp/foo.rs\nfn main() {}\n".into()),
+            ("user".into(), "Read this file".into()),
+        ];
+        for i in 0..6 {
+            messages.push(("user".into(), format!("msg {i}")));
+        }
+        let compacted = cm.compact_tool_results(&messages);
+        assert_eq!(compacted[0].1, "[Context: File: /tmp/foo.rs]");
     }
 }
