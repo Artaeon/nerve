@@ -1,0 +1,364 @@
+use std::future::Future;
+use std::pin::Pin;
+
+use anyhow::{anyhow, Context};
+use futures::StreamExt;
+use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
+
+use super::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+
+// ---------------------------------------------------------------------------
+// Request / response types for the OpenAI-compatible API
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct ChatCompletionRequest<'a> {
+    model: &'a str,
+    messages: &'a [ChatMessage],
+    stream: bool,
+}
+
+// -- Non-streaming response --
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionResponse {
+    choices: Vec<ChatCompletionChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionChoice {
+    message: ChatCompletionMessage,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionMessage {
+    content: Option<String>,
+}
+
+// -- Streaming SSE chunk --
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionChunk {
+    choices: Vec<ChunkChoice>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkChoice {
+    delta: ChunkDelta,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChunkDelta {
+    content: Option<String>,
+}
+
+// -- Models listing --
+
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    context_length: Option<usize>,
+}
+
+// -- API error body --
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorResponse {
+    error: Option<ApiErrorDetail>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorDetail {
+    message: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Provider implementation
+// ---------------------------------------------------------------------------
+
+/// An AI provider that speaks the OpenAI chat-completions protocol.
+///
+/// Works with OpenAI, Ollama, OpenRouter, and any compatible endpoint.
+#[derive(Debug, Clone)]
+pub struct OpenAiProvider {
+    client: reqwest::Client,
+    api_key: String,
+    base_url: String,
+    provider_name: String,
+}
+
+impl OpenAiProvider {
+    /// Create a new provider with explicit configuration.
+    pub fn new(api_key: String, base_url: String, provider_name: String) -> Self {
+        let client = reqwest::Client::new();
+        Self {
+            client,
+            api_key,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            provider_name,
+        }
+    }
+
+    // -- Convenience constructors --------------------------------------------------
+
+    /// OpenAI (api.openai.com).
+    pub fn openai(api_key: String) -> Self {
+        Self::new(
+            api_key,
+            "https://api.openai.com/v1".into(),
+            "OpenAI".into(),
+        )
+    }
+
+    /// Ollama running locally on the default port.
+    pub fn ollama() -> Self {
+        Self::new(
+            "ollama".into(),
+            "http://localhost:11434/v1".into(),
+            "Ollama".into(),
+        )
+    }
+
+    /// OpenRouter.
+    pub fn openrouter(api_key: String) -> Self {
+        Self::new(
+            api_key,
+            "https://openrouter.ai/api/v1".into(),
+            "OpenRouter".into(),
+        )
+    }
+
+    /// Any custom OpenAI-compatible endpoint.
+    pub fn custom(api_key: String, base_url: String, name: String) -> Self {
+        Self::new(api_key, base_url, name)
+    }
+
+    // -- Internal helpers ----------------------------------------------------------
+
+    /// Build a request with the common headers.
+    fn auth_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
+        self.client
+            .request(method, url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+    }
+
+    /// Try to extract an error message from a non-2xx response body.
+    async fn extract_api_error(response: reqwest::Response) -> String {
+        let status = response.status();
+        match response.text().await {
+            Ok(body) => {
+                if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body) {
+                    if let Some(detail) = err.error {
+                        if let Some(msg) = detail.message {
+                            return format!("API error ({status}): {msg}");
+                        }
+                    }
+                }
+                format!("API error ({status}): {body}")
+            }
+            Err(_) => format!("API error ({status})"),
+        }
+    }
+}
+
+impl AiProvider for OpenAiProvider {
+    fn chat_stream(
+        &self,
+        messages: &[ChatMessage],
+        model: &str,
+        tx: mpsc::UnboundedSender<StreamEvent>,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+        let messages = messages.to_vec();
+        let model = model.to_string();
+        Box::pin(async move {
+        let url = format!("{}/chat/completions", self.base_url);
+        let body = ChatCompletionRequest {
+            model: &model,
+            messages: &messages,
+            stream: true,
+        };
+
+        let response = self
+            .auth_request(reqwest::Method::POST, &url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send streaming request")?;
+
+        if !response.status().is_success() {
+            let msg = Self::extract_api_error(response).await;
+            let _ = tx.send(StreamEvent::Error(msg.clone()));
+            return Err(anyhow!(msg));
+        }
+
+        // Read the byte stream and parse SSE lines.
+        let mut byte_stream = response.bytes_stream();
+        let mut buffer = String::new();
+
+        while let Some(chunk_result) = byte_stream.next().await {
+            let chunk = match chunk_result {
+                Ok(c) => c,
+                Err(e) => {
+                    let msg = format!("stream read error: {e}");
+                    let _ = tx.send(StreamEvent::Error(msg.clone()));
+                    return Err(anyhow!(msg));
+                }
+            };
+
+            // Append raw bytes to buffer (UTF-8).
+            let text = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&text);
+
+            // Process complete lines from the buffer.
+            while let Some(newline_pos) = buffer.find('\n') {
+                let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
+                buffer = buffer[newline_pos + 1..].to_string();
+
+                // Skip empty lines and SSE comments (lines starting with ':')
+                if line.is_empty() || line.starts_with(':') {
+                    continue;
+                }
+
+                // We only care about "data: ..." lines.
+                let Some(data) = line.strip_prefix("data: ") else {
+                    // Could be "event:" or other SSE field — ignore.
+                    continue;
+                };
+
+                let data = data.trim();
+
+                // End-of-stream sentinel.
+                if data == "[DONE]" {
+                    let _ = tx.send(StreamEvent::Done);
+                    return Ok(());
+                }
+
+                // Skip empty data payloads.
+                if data.is_empty() {
+                    continue;
+                }
+
+                // Parse the JSON chunk.
+                match serde_json::from_str::<ChatCompletionChunk>(data) {
+                    Ok(chunk) => {
+                        if let Some(choice) = chunk.choices.first() {
+                            if let Some(ref content) = choice.delta.content {
+                                if !content.is_empty() {
+                                    if tx.send(StreamEvent::Token(content.clone())).is_err() {
+                                        // Receiver dropped — stop processing.
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        // Log but don't abort — some providers send non-standard
+                        // chunks (e.g. usage data) that we can safely ignore.
+                        tracing::warn!("failed to parse SSE chunk: {e} — data: {data}");
+                    }
+                }
+            }
+        }
+
+        // Stream ended without an explicit [DONE] — still signal completion.
+        let _ = tx.send(StreamEvent::Done);
+        Ok(())
+        })
+    }
+
+    fn chat(
+        &self,
+        messages: &[ChatMessage],
+        model: &str,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+        let messages = messages.to_vec();
+        let model = model.to_string();
+        Box::pin(async move {
+        let url = format!("{}/chat/completions", self.base_url);
+        let body = ChatCompletionRequest {
+            model: &model,
+            messages: &messages,
+            stream: false,
+        };
+
+        let response = self
+            .auth_request(reqwest::Method::POST, &url)
+            .json(&body)
+            .send()
+            .await
+            .context("failed to send chat request")?;
+
+        if !response.status().is_success() {
+            let msg = Self::extract_api_error(response).await;
+            return Err(anyhow!(msg));
+        }
+
+        let resp: ChatCompletionResponse = response
+            .json()
+            .await
+            .context("failed to parse chat completion response")?;
+
+        let content = resp
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content)
+            .unwrap_or_default();
+
+        Ok(content)
+        })
+    }
+
+    fn list_models(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+        Box::pin(async move {
+        let url = format!("{}/models", self.base_url);
+
+        let response = self
+            .auth_request(reqwest::Method::GET, &url)
+            .send()
+            .await
+            .context("failed to fetch models list")?;
+
+        if !response.status().is_success() {
+            let msg = Self::extract_api_error(response).await;
+            return Err(anyhow!(msg));
+        }
+
+        let resp: ModelsResponse = response
+            .json()
+            .await
+            .context("failed to parse models response")?;
+
+        let models = resp
+            .data
+            .into_iter()
+            .map(|entry| {
+                let display_name = entry.name.unwrap_or_else(|| entry.id.clone());
+                ModelInfo {
+                    id: entry.id,
+                    name: display_name,
+                    provider: self.provider_name.clone(),
+                    context_length: entry.context_length,
+                }
+            })
+            .collect();
+
+        Ok(models)
+        })
+    }
+
+    fn name(&self) -> &str {
+        &self.provider_name
+    }
+}
