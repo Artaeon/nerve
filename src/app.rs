@@ -59,6 +59,16 @@ impl Conversation {
     }
 }
 
+// ─── Branch ─────────────────────────────────────────────────────────────────
+
+/// A saved conversation branch point
+#[derive(Debug, Clone)]
+pub struct Branch {
+    pub name: String,
+    pub messages: Vec<(String, String)>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
 // ─── App ─────────────────────────────────────────────────────────────────────
 
 /// Root application state.
@@ -137,9 +147,16 @@ pub struct App {
     pub search_results: Vec<usize>,
     pub search_current: usize,
 
+    // -- branches --
+    pub branches: Vec<Branch>,
+    pub branch_select_index: usize,
+
     // -- context tracking --
     /// Running count of estimated tokens in the current conversation.
     pub total_tokens_used: usize,
+
+    // -- plugins --
+    pub plugins: Vec<crate::plugins::Plugin>,
 
     // -- misc --
     pub status_message: Option<String>,
@@ -222,7 +239,12 @@ impl App {
             search_results: Vec::new(),
             search_current: 0,
 
+            branches: Vec::new(),
+            branch_select_index: 0,
+
             total_tokens_used: 0,
+
+            plugins: Vec::new(),
 
             status_message: None,
             status_time: None,
@@ -368,6 +390,34 @@ impl App {
 
     pub fn scroll_down(&mut self) {
         self.scroll_offset = self.scroll_offset.saturating_sub(3);
+    }
+
+    // ── Branching ───────────────────────────────────────────────────────
+
+    /// Create a branch from the current conversation state
+    pub fn create_branch(&mut self, name: String) {
+        let messages = self.current_conversation().messages.clone();
+        self.branches.push(Branch {
+            name,
+            messages,
+            created_at: chrono::Utc::now(),
+        });
+    }
+
+    /// Restore a branch (replace current conversation messages)
+    pub fn restore_branch(&mut self, index: usize) {
+        if let Some(branch) = self.branches.get(index) {
+            let messages = branch.messages.clone();
+            self.current_conversation_mut().messages = messages;
+            self.scroll_offset = 0;
+        }
+    }
+
+    /// Delete a branch
+    pub fn delete_branch(&mut self, index: usize) {
+        if index < self.branches.len() {
+            self.branches.remove(index);
+        }
     }
 }
 
@@ -1222,5 +1272,46 @@ mod tests {
         app.delete_char();
         assert_eq!(app.input, "hello");
         assert_eq!(app.cursor_position, 0);
+    }
+
+    // ── Branching ──────────────────────────────────────────────────────
+
+    #[test]
+    fn create_and_restore_branch() {
+        let mut app = App::new();
+        app.add_user_message("hello".into());
+        app.add_assistant_message("hi".into());
+
+        app.create_branch("test branch".into());
+        assert_eq!(app.branches.len(), 1);
+        assert_eq!(app.branches[0].messages.len(), 2);
+
+        // Add more messages
+        app.add_user_message("more".into());
+        assert_eq!(app.current_conversation().messages.len(), 3);
+
+        // Restore branch
+        app.restore_branch(0);
+        assert_eq!(app.current_conversation().messages.len(), 2);
+    }
+
+    #[test]
+    fn delete_branch() {
+        let mut app = App::new();
+        app.create_branch("branch1".into());
+        app.create_branch("branch2".into());
+        assert_eq!(app.branches.len(), 2);
+
+        app.delete_branch(0);
+        assert_eq!(app.branches.len(), 1);
+        assert_eq!(app.branches[0].name, "branch2");
+    }
+
+    #[test]
+    fn restore_invalid_branch() {
+        let mut app = App::new();
+        app.add_user_message("hello".into());
+        app.restore_branch(99); // Should not panic
+        assert_eq!(app.current_conversation().messages.len(), 1);
     }
 }
