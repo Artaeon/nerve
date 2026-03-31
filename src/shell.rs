@@ -250,4 +250,52 @@ mod tests {
         let result = truncate_output(short, MAX_OUTPUT_LINES);
         assert_eq!(result, short);
     }
+
+    #[test]
+    fn run_command_captures_stderr() {
+        let result = run_command("echo error >&2").unwrap();
+        assert!(result.stderr.contains("error"));
+    }
+
+    #[test]
+    fn run_command_with_pipe() {
+        let result = run_command("echo 'hello world' | tr 'h' 'H'").unwrap();
+        assert!(result.stdout.contains("Hello"));
+    }
+
+    #[test]
+    fn run_command_exit_code() {
+        let result = run_command("exit 42").unwrap();
+        assert_eq!(result.exit_code, 42);
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn format_command_output_shows_stderr() {
+        let result = CommandResult {
+            command: "test".into(),
+            stdout: "out".into(),
+            stderr: "err".into(),
+            exit_code: 1,
+            success: false,
+        };
+        let output = format_command_output(&result);
+        assert!(output.contains("stderr:"));
+        assert!(output.contains("err"));
+        assert!(output.contains("Exit code: 1"));
+    }
+
+    #[test]
+    fn format_context_shows_status() {
+        let result = CommandResult {
+            command: "test".into(),
+            stdout: "output".into(),
+            stderr: String::new(),
+            exit_code: 0,
+            success: true,
+        };
+        let ctx = format_command_for_context(&result);
+        assert!(ctx.contains("success"));
+        assert!(ctx.contains("```"));
+    }
 }

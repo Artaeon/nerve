@@ -550,4 +550,42 @@ mod tests {
         assert!(expanded.contains("print(1)"));
         assert!(expanded.contains("print(2)"));
     }
+
+    #[test]
+    fn read_file_with_unicode() {
+        let dir = std::env::temp_dir().join("nerve_test_unicode");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let content = "Hello \u{4e16}\u{754c}\nRust \u{1f980}\n";
+        fs::write(dir.join("unicode.txt"), content).unwrap();
+        let fc = read_file_context(&dir.join("unicode.txt").to_string_lossy()).unwrap();
+        assert!(fc.content.contains("\u{4e16}\u{754c}"));
+        assert!(fc.content.contains("\u{1f980}"));
+        assert_eq!(fc.line_count, 2);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_language_dockerfile() {
+        // Dockerfile has no extension, should fall back to "text"
+        let path = std::path::Path::new("Dockerfile");
+        let lang = detect_language(path);
+        assert_eq!(lang, "text");
+    }
+
+    #[test]
+    fn format_size_boundaries() {
+        assert_eq!(format_size(0), "0B");
+        assert_eq!(format_size(1023), "1023B");
+        assert_eq!(format_size(1024), "1.0KB");
+        assert_eq!(format_size(1048576), "1.0MB");
+    }
+
+    #[test]
+    fn expand_file_references_preserves_nonfile_at() {
+        // @username should not be expanded
+        let text = "hello @john how are you";
+        let expanded = expand_file_references(text);
+        assert_eq!(expanded, text);
+    }
 }

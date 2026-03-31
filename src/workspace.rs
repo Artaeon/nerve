@@ -707,4 +707,43 @@ mod tests {
 
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn detect_go_project_parses_module() {
+        let dir = std::env::temp_dir().join("nerve_test_go_module");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("go.mod"), "module github.com/user/myapp\n\ngo 1.21\n").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Go);
+        assert_eq!(ws.name, "github.com/user/myapp");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_python_with_django() {
+        let dir = std::env::temp_dir().join("nerve_test_django");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("requirements.txt"), "django==4.2\n").unwrap();
+        fs::write(dir.join("manage.py"), "#!/usr/bin/env python\n").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Python);
+        assert!(ws.tech_stack.iter().any(|t| t == "Django"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn workspace_key_files_detected() {
+        let dir = std::env::temp_dir().join("nerve_test_keyfiles");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        fs::write(dir.join("README.md"), "# Test").unwrap();
+        fs::write(dir.join("src/main.rs"), "fn main() {}").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert!(ws.key_files.contains(&"README.md".to_string()));
+        assert!(ws.key_files.contains(&"src/main.rs".to_string()));
+        fs::remove_dir_all(&dir).ok();
+    }
 }
