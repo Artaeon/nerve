@@ -5,12 +5,15 @@ mod clipboard;
 mod clipboard_manager;
 mod config;
 mod daemon;
+mod files;
 mod history;
 mod keybinds;
 mod knowledge;
 mod prompts;
 mod scraper;
+mod shell;
 mod ui;
+mod workspace;
 
 use std::io::{self, Read as _};
 use std::sync::Arc;
@@ -293,7 +296,17 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config) -> anyhow::Resul
     app.selected_model = config.default_model.clone();
     app.selected_provider = config.default_provider.clone();
 
-    // No initial system message — the rich welcome screen shows when messages are empty.
+    // Auto-detect workspace and inject system prompt with project context.
+    if let Some(ws) = workspace::detect_workspace() {
+        let sys_prompt = ws.to_system_prompt();
+        app.current_conversation_mut()
+            .messages
+            .insert(0, ("system".into(), sys_prompt));
+        app.status_message = Some(format!(
+            "Detected {:?} project: {}",
+            ws.project_type, ws.name
+        ));
+    }
 
     let result = event_loop(&mut terminal, &mut app, &provider, &config).await;
 
@@ -697,7 +710,8 @@ async fn handle_normal_mode(
                         let commands = [
                             "help", "clear", "new", "model", "models", "provider",
                             "providers", "code", "cwd", "url", "kb", "auto", "status",
-                            "export", "rename", "system",
+                            "export", "rename", "system", "workspace", "run",
+                            "pipe", "diff", "test", "build", "git",
                         ];
                         let matches: Vec<&&str> = commands
                             .iter()
@@ -1149,7 +1163,8 @@ fn common_prefix(strings: &[&&str]) -> String {
 /// Submit the user's message and spawn a streaming response task.
 ///
 /// Handles slash commands (`/help`, `/clear`, `/new`, `/model`, `/models`,
-/// `/url`) before falling through to the normal AI chat path.
+/// `/url`, `/run`, `/pipe`, `/diff`, `/test`, `/build`, `/git`) before
+/// falling through to the normal AI chat path.
 async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
     // ── Slash-command dispatch ──────────────────────────────────────────
     if text.starts_with('/') {
@@ -1200,12 +1215,23 @@ AI Provider\n\
   /cwd <dir>          Set working directory\n\
 \n\
 Knowledge & Context\n\
+  /file <path>        Read file as context\n\
+  /file <path>:S-E    Read specific line range\n\
+  /files <p1> <p2>    Read multiple files\n\
   /kb add <dir>       Add directory to knowledge base\n\
   /kb search <query>  Search knowledge base\n\
   /kb list            List knowledge bases\n\
   /kb status          Show KB statistics\n\
   /kb clear           Clear knowledge base\n\
   /url <url> [q]      Scrape URL for context\n\
+\n\
+Shell & Git\n\
+  /run <command>      Run shell command and show output\n\
+  /pipe <command>     Run command and add output as context\n\
+  /diff [args]        Show git diff (adds as context)\n\
+  /test               Auto-detect and run project tests\n\
+  /build              Auto-detect and run project build\n\
+  /git [subcommand]   Quick git operations (status/log/diff/branch)\n\
 \n\
 Automation\n\
   /auto list          List automations\n\
@@ -1222,6 +1248,9 @@ Keybindings\n\
   Tab                 Next conversation\n\
   Shift+Tab           Previous conversation\n\
   x (Normal mode)     Delete last exchange\n\
+\n\
+Workspace\n\
+  /workspace          Show detected project info\n\
 \n\
 System\n\
   /status             Show system status\n\
@@ -1469,6 +1498,81 @@ System\n\
         return true;
     }
 
+    // /file <path> — read a file and add it as context.
+    // /file <path>:<start>-<end> — read specific line range.
+    if trimmed == "/file" || trimmed.starts_with("/file ") {
+        let rest = trimmed.strip_prefix("/file").unwrap_or("").trim();
+        if rest.is_empty() {
+            app.add_assistant_message(
+                "Usage: /file <path> or /file <path>:<start>-<end>\n\
+                 Reads a file and adds it as context for the AI."
+                    .into(),
+            );
+            app.scroll_offset = 0;
+            return true;
+        }
+        let path_arg = rest;
+
+        // Check for line range: path:10-20
+        let result = if let Some((path, range)) = path_arg.split_once(':') {
+            if let Some((start, end)) = range.split_once('-') {
+                let s: usize = start.parse().unwrap_or(1);
+                let e: usize = end.parse().unwrap_or(usize::MAX);
+                files::read_file_range(path, s, e)
+            } else {
+                files::read_file_context(path)
+            }
+        } else {
+            files::read_file_context(path_arg)
+        };
+
+        match result {
+            Ok(fc) => {
+                let formatted = files::format_file_for_context(&fc);
+                app.current_conversation_mut()
+                    .messages
+                    .push(("system".into(), formatted));
+                app.status_message = Some(format!("Added {} ({} lines)", fc.path, fc.line_count));
+            }
+            Err(e) => {
+                app.status_message = Some(format!("Error: {e}"));
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /files <path1> <path2> ... — read multiple files as context.
+    if trimmed == "/files" || trimmed.starts_with("/files ") {
+        let rest = trimmed.strip_prefix("/files").unwrap_or("").trim();
+        if rest.is_empty() {
+            app.add_assistant_message("Usage: /files <path1> <path2> ...".into());
+            app.scroll_offset = 0;
+            return true;
+        }
+        let paths: Vec<&str> = rest.split_whitespace().collect();
+        let mut added = 0;
+        for path in &paths {
+            match files::read_file_context(path) {
+                Ok(fc) => {
+                    let formatted = files::format_file_for_context(&fc);
+                    app.current_conversation_mut()
+                        .messages
+                        .push(("system".into(), formatted));
+                    added += 1;
+                }
+                Err(e) => {
+                    app.status_message = Some(format!("Error reading {path}: {e}"));
+                }
+            }
+        }
+        if added > 0 {
+            app.status_message = Some(format!("Added {added} file(s) as context"));
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
     // /auto — automation commands.
     if trimmed == "/auto" || trimmed.starts_with("/auto ") {
         handle_auto_command(app, trimmed, provider).await;
@@ -1478,6 +1582,33 @@ System\n\
     // /kb — knowledge base commands.
     if trimmed == "/kb" || trimmed.starts_with("/kb ") {
         handle_kb_command(app, trimmed);
+        return true;
+    }
+
+    // /workspace (or /ws) — show detected workspace info.
+    if trimmed == "/workspace" || trimmed == "/ws" {
+        match workspace::detect_workspace() {
+            Some(ws) => {
+                let info = format!(
+                    "Workspace detected:\n\n\
+                     Project: {}\n\
+                     Type: {:?}\n\
+                     Root: {}\n\
+                     Tech: {}\n\
+                     Files: {}",
+                    ws.name,
+                    ws.project_type,
+                    ws.root.display(),
+                    ws.tech_stack.join(", "),
+                    ws.key_files.join(", ")
+                );
+                app.add_assistant_message(info);
+            }
+            None => {
+                app.add_assistant_message("No project detected in current directory.".into());
+            }
+        }
+        app.scroll_offset = 0;
         return true;
     }
 
@@ -1685,6 +1816,176 @@ System\n\
         }
         return true;
     }
+
+    // ── Shell commands ────────────────────────────────────────────────────
+
+    // /run <command> (or /! <command>) — run a shell command and show output.
+    if trimmed.starts_with("/run ") || trimmed.starts_with("/! ") {
+        let rest = if let Some(r) = trimmed.strip_prefix("/run ") {
+            r.trim()
+        } else {
+            trimmed.strip_prefix("/! ").unwrap_or("").trim()
+        };
+        if rest.is_empty() {
+            app.add_assistant_message(
+                "Usage: /run <command>\nExecutes a shell command and shows the output.".into(),
+            );
+            return true;
+        }
+        let cmd = rest.to_string();
+        app.status_message = Some(format!("Running: {cmd}"));
+        match shell::run_command(&cmd) {
+            Ok(result) => {
+                let output = shell::format_command_output(&result);
+                app.add_assistant_message(output);
+            }
+            Err(e) => {
+                app.status_message = Some(format!("Error: {e}"));
+            }
+        }
+        return true;
+    }
+
+    // /pipe <command> — run command and add output as context.
+    if trimmed.starts_with("/pipe ") {
+        let rest = trimmed.strip_prefix("/pipe ").unwrap_or("").trim();
+        if rest.is_empty() {
+            app.add_assistant_message(
+                "Usage: /pipe <command>\nRuns a command and adds its output as context.".into(),
+            );
+            return true;
+        }
+        let cmd = rest.to_string();
+        app.status_message = Some(format!("Running: {cmd}"));
+        match shell::run_command(&cmd) {
+            Ok(result) => {
+                let context = shell::format_command_for_context(&result);
+                app.current_conversation_mut()
+                    .messages
+                    .push(("system".into(), context));
+                app.status_message = Some(format!(
+                    "Added output of '{}' as context ({} lines)",
+                    cmd,
+                    result.stdout.lines().count()
+                ));
+            }
+            Err(e) => {
+                app.status_message = Some(format!("Error: {e}"));
+            }
+        }
+        return true;
+    }
+
+    // /diff [args] — show git diff and add as context.
+    if trimmed == "/diff" || trimmed.starts_with("/diff ") {
+        let diff_args = trimmed
+            .strip_prefix("/diff")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        match shell::git_diff(&diff_args) {
+            Ok(result) => {
+                if result.stdout.trim().is_empty() {
+                    app.add_assistant_message("No changes detected (git diff is empty).".into());
+                } else {
+                    let label = if diff_args.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {diff_args}")
+                    };
+                    let context =
+                        format!("Git diff{}:\n\n```diff\n{}\n```", label, result.stdout);
+                    app.current_conversation_mut()
+                        .messages
+                        .push(("system".into(), context));
+                    app.add_assistant_message(format!(
+                        "Diff loaded ({} lines). Ask me anything about it.",
+                        result.stdout.lines().count()
+                    ));
+                }
+            }
+            Err(e) => app.status_message = Some(format!("Error: {e}")),
+        }
+        return true;
+    }
+
+    // /test — auto-detect and run project tests.
+    if trimmed == "/test" {
+        let cmd = shell::detect_test_command();
+        app.status_message = Some(format!("Running: {cmd}"));
+        match shell::run_command(cmd) {
+            Ok(result) => {
+                let output = shell::format_command_output(&result);
+                let context = shell::format_command_for_context(&result);
+                app.current_conversation_mut()
+                    .messages
+                    .push(("system".into(), context));
+                app.add_assistant_message(output);
+                if !result.success {
+                    app.status_message =
+                        Some("Tests FAILED \u{2014} ask me to help fix them".into());
+                } else {
+                    app.status_message = Some("Tests passed".into());
+                }
+            }
+            Err(e) => app.status_message = Some(format!("Error: {e}")),
+        }
+        return true;
+    }
+
+    // /build — auto-detect and run project build.
+    if trimmed == "/build" {
+        let cmd = shell::detect_build_command();
+        app.status_message = Some(format!("Running: {cmd}"));
+        match shell::run_command(cmd) {
+            Ok(result) => {
+                let output = shell::format_command_output(&result);
+                if !result.success {
+                    let context = shell::format_command_for_context(&result);
+                    app.current_conversation_mut()
+                        .messages
+                        .push(("system".into(), context));
+                    app.add_assistant_message(output);
+                    app.status_message =
+                        Some("Build FAILED \u{2014} ask me to help fix it".into());
+                } else {
+                    app.add_assistant_message(output);
+                    app.status_message = Some("Build succeeded".into());
+                }
+            }
+            Err(e) => app.status_message = Some(format!("Error: {e}")),
+        }
+        return true;
+    }
+
+    // /git [subcommand] — quick git operations.
+    if trimmed == "/git" || trimmed.starts_with("/git ") {
+        let rest = trimmed.strip_prefix("/git").unwrap_or("").trim();
+        let args: Vec<&str> = rest.split_whitespace().collect();
+        let subcmd = args.first().copied().unwrap_or("status");
+        let cmd = match subcmd {
+            "status" | "s" => "git status --short".to_string(),
+            "log" | "l" => {
+                let n = args
+                    .get(1)
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(10);
+                format!("git log --oneline -{n}")
+            }
+            "diff" | "d" => "git diff".to_string(),
+            "branch" | "b" => "git branch -a".to_string(),
+            _ => format!("git {rest}"),
+        };
+        match shell::run_command(&cmd) {
+            Ok(result) => {
+                let output = shell::format_command_output(&result);
+                app.add_assistant_message(output);
+            }
+            Err(e) => app.status_message = Some(format!("Error: {e}")),
+        }
+        return true;
+    }
+
     false
 }
 
@@ -2166,7 +2467,12 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         .messages
         .iter()
         .filter_map(|(role, content)| match role.as_str() {
-            "user" => Some(ChatMessage::user(content)),
+            // Expand @file references in user messages so the AI sees file
+            // contents while the conversation history keeps the original text.
+            "user" => {
+                let expanded = files::expand_file_references(content);
+                Some(ChatMessage::user(expanded))
+            }
             "assistant" => Some(ChatMessage::assistant(content)),
             "system" => Some(ChatMessage::system(content)),
             _ => None,
@@ -2228,12 +2534,15 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
         return;
     }
 
-    // Rebuild messages and re-send
+    // Rebuild messages and re-send (expand @file references in user messages)
     let messages: Vec<ChatMessage> = app.current_conversation()
         .messages
         .iter()
         .filter_map(|(role, content)| match role.as_str() {
-            "user" => Some(ChatMessage::user(content)),
+            "user" => {
+                let expanded = files::expand_file_references(content);
+                Some(ChatMessage::user(expanded))
+            }
             "assistant" => Some(ChatMessage::assistant(content)),
             "system" => Some(ChatMessage::system(content)),
             _ => None,
