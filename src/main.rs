@@ -15,6 +15,8 @@ mod scaffold;
 mod scraper;
 mod shell;
 mod ui;
+mod plugins;
+mod session;
 mod workspace;
 
 use std::io::{self, Read as _};
@@ -70,6 +72,10 @@ struct Cli {
     /// Stop the running daemon
     #[arg(long)]
     stop_daemon: bool,
+
+    /// Resume the last session
+    #[arg(short = 'c', long = "continue")]
+    continue_session: bool,
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -147,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Interactive TUI.
-    run_tui(provider, config).await
+    run_tui(provider, config, cli.continue_session).await
 }
 
 // ─── Provider creation ──────────────────────────────────────────────────────
@@ -285,7 +291,7 @@ async fn list_models(provider: &dyn AiProvider) -> anyhow::Result<()> {
 
 // ─── Interactive TUI ────────────────────────────────────────────────────────
 
-async fn run_tui(provider: Arc<dyn AiProvider>, config: Config) -> anyhow::Result<()> {
+async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session: bool) -> anyhow::Result<()> {
     // Enter the alternate screen and enable raw mode.
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -313,7 +319,31 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config) -> anyhow::Resul
         ));
     }
 
+    // Load plugins from ~/.config/nerve/plugins/
+    let loaded_plugins = plugins::load_plugins();
+    if !loaded_plugins.is_empty() {
+        app.set_status(format!("{} plugin(s) loaded", loaded_plugins.len()));
+    }
+    app.plugins = loaded_plugins;
+
+    // Restore previous session if --continue was passed.
+    if continue_session {
+        match session::load_last_session() {
+            Ok(sess) => {
+                session::restore_session_to_app(&sess, &mut app);
+                app.set_status(format!("Resumed session ({} conversation(s))", app.conversations.len()));
+            }
+            Err(_) => {
+                app.set_status("No previous session found");
+            }
+        }
+    }
+
     let result = event_loop(&mut terminal, &mut app, &provider, &config).await;
+
+    // Auto-save session on every quit path.
+    let sess = session::session_from_app(&app);
+    let _ = session::save_session(&sess);
 
     // Restore terminal state regardless of how we exited.
     crossterm::terminal::disable_raw_mode()?;
@@ -860,6 +890,7 @@ async fn handle_normal_mode(
                             "export", "rename", "system", "workspace", "run",
                             "pipe", "diff", "test", "build", "git",
                             "agent", "cd", "summary", "compact", "context", "tokens",
+                            "branch", "session",
                         ];
                         let matches: Vec<&&str> = commands
                             .iter()
@@ -1412,6 +1443,26 @@ Keybindings\n\
   Tab                 Next conversation\n\
   Shift+Tab           Previous conversation\n\
   x (Normal mode)     Delete last exchange\n\
+\n\
+Plugins\n\
+  /plugin list        List installed plugins\n\
+  /plugin init        Create example plugin\n\
+  /plugin reload      Reload all plugins\n\
+\n\
+Sessions\n\
+  /session            Show session info\n\
+  /session save       Save current session\n\
+  /session list       List saved sessions\n\
+  /session restore    Restore last session\n\
+  nerve --continue    Resume last session on startup\n\
+\n\
+Branching\n\
+  /branch save [name] Save conversation branch point\n\
+  /branch list        List saved branches\n\
+  /branch restore <n> Restore a saved branch\n\
+  /branch delete <n>  Delete a branch\n\
+  /branch diff <n>    Compare current with a branch\n\
+  /br                 Shorthand for /branch\n\
 \n\
 Workspace\n\
   /workspace          Show detected project info\n\
@@ -2356,6 +2407,60 @@ System\n\
         return true;
     }
 
+    // /session — session management (save, list, restore, info).
+    if trimmed == "/session" || trimmed.starts_with("/session ") {
+        let rest = trimmed.strip_prefix("/session").unwrap_or("").trim();
+        let args: Vec<&str> = rest.split_whitespace().collect();
+        let subcmd = args.first().copied().unwrap_or("info");
+        match subcmd {
+            "save" => {
+                let sess = session::session_from_app(app);
+                match session::save_session(&sess) {
+                    Ok(()) => app.set_status("Session saved"),
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
+            "list" => {
+                match session::list_sessions() {
+                    Ok(sessions) => {
+                        if sessions.is_empty() {
+                            app.add_assistant_message("No saved sessions.".into());
+                        } else {
+                            let mut msg = "Saved sessions:\n\n".to_string();
+                            for (id, date, count) in &sessions {
+                                msg.push_str(&format!("  {} — {} ({} conv)\n",
+                                    &id[..8], date.format("%Y-%m-%d %H:%M"), count));
+                            }
+                            msg.push_str("\nResume with: nerve --continue");
+                            app.add_assistant_message(msg);
+                        }
+                    }
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
+            "restore" => {
+                match session::load_last_session() {
+                    Ok(sess) => {
+                        session::restore_session_to_app(&sess, app);
+                        app.set_status(format!("Session restored ({} conversations)", app.conversations.len()));
+                    }
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
+            _ => {
+                let sess_info = format!(
+                    "Session Info:\n  Conversations: {}\n  Active: {}\n  Model: {}\n  Provider: {}\n\nCommands:\n  /session save     Save current session\n  /session list     List saved sessions\n  /session restore  Restore last session\n  nerve --continue  Resume on startup",
+                    app.conversations.len(),
+                    app.current_conversation().title,
+                    app.selected_model,
+                    app.selected_provider
+                );
+                app.add_assistant_message(sess_info);
+            }
+        }
+        return true;
+    }
+
     // /summary — generate a summary of the current conversation.
     if trimmed == "/summary" {
         let conv = app.current_conversation();
@@ -2470,6 +2575,198 @@ System\n\
         }
 
         app.add_assistant_message(ctx);
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /plugin — manage plugins.
+    if trimmed == "/plugin" || trimmed == "/plugins"
+        || trimmed.starts_with("/plugin ") || trimmed.starts_with("/plugins ")
+    {
+        let rest = trimmed
+            .strip_prefix("/plugins")
+            .or_else(|| trimmed.strip_prefix("/plugin"))
+            .unwrap_or("")
+            .trim();
+        let args: Vec<&str> = rest.split_whitespace().collect();
+        let subcmd = args.first().copied().unwrap_or("list");
+
+        match subcmd {
+            "list" => {
+                let all = plugins::list_all_plugins();
+                if all.is_empty() {
+                    app.add_assistant_message(format!(
+                        "No plugins installed.\n\nPlugin directory: {}\n\nCreate a plugin:\n  /plugin init\n\nOr create manually:\n  mkdir -p {}/my-plugin\n  # Add plugin.toml and a script",
+                        plugins::plugins_dir().display(),
+                        plugins::plugins_dir().display()
+                    ));
+                } else {
+                    let mut msg = "Installed plugins:\n\n".to_string();
+                    for (manifest, loaded) in &all {
+                        let status = if *loaded { "enabled" } else { "disabled" };
+                        msg.push_str(&format!(
+                            "  /{:<15} {} (v{}) [{}]\n    {}\n\n",
+                            manifest.command, manifest.name, manifest.version, status, manifest.description
+                        ));
+                    }
+                    app.add_assistant_message(msg);
+                }
+            }
+            "init" => {
+                match plugins::create_example_plugin() {
+                    Ok(path) => {
+                        app.add_assistant_message(format!(
+                            "Created example plugin at:\n  {}\n\nEdit plugin.toml and run.sh to customize.\nRestart Nerve to load new plugins.",
+                            path.display()
+                        ));
+                    }
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
+            "reload" => {
+                app.plugins = plugins::load_plugins();
+                app.set_status(format!("{} plugin(s) loaded", app.plugins.len()));
+            }
+            _ => {
+                app.add_assistant_message("Usage: /plugin list | /plugin init | /plugin reload".into());
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // Check plugins — dispatch to any plugin whose command matches.
+    {
+        let cmd = trimmed.strip_prefix('/').unwrap_or(trimmed);
+        let (plugin_cmd, plugin_args) = match cmd.find(char::is_whitespace) {
+            Some(pos) => (&cmd[..pos], cmd[pos..].trim()),
+            None => (cmd, ""),
+        };
+        for plugin in &app.plugins {
+            if plugin.manifest.command == plugin_cmd {
+                match plugin.execute(plugin_args, "") {
+                    Ok(output) => {
+                        app.add_assistant_message(output);
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Plugin error: {e}"));
+                    }
+                }
+                return true;
+            }
+        }
+    }
+
+    // /branch — conversation branching.
+    if trimmed == "/branch" || trimmed == "/br"
+        || trimmed.starts_with("/branch ") || trimmed.starts_with("/br ")
+    {
+        let rest = if trimmed.starts_with("/branch") {
+            trimmed.strip_prefix("/branch").unwrap_or("").trim()
+        } else {
+            trimmed.strip_prefix("/br").unwrap_or("").trim()
+        };
+        let args: Vec<&str> = rest.split_whitespace().collect();
+        let subcmd = args.first().copied().unwrap_or("list");
+        match subcmd {
+            "save" | "create" => {
+                let name = if args.len() > 1 {
+                    args[1..].join(" ")
+                } else {
+                    format!("Branch {}", app.branches.len() + 1)
+                };
+                app.create_branch(name.clone());
+                app.set_status(format!("Branch saved: {name}"));
+            }
+            "list" => {
+                if app.branches.is_empty() {
+                    app.add_assistant_message(
+                        "No branches saved.\n\nUsage:\n  /branch save [name]  Save current state\n  /branch restore <n>  Restore a branch\n  /branch delete <n>   Delete a branch\n  /branch diff <n>     Compare with a branch".into()
+                    );
+                } else {
+                    let mut msg = "Saved branches:\n\n".to_string();
+                    for (i, branch) in app.branches.iter().enumerate() {
+                        let msg_count = branch.messages.len();
+                        let time = branch.created_at.format("%H:%M:%S");
+                        msg.push_str(&format!("  {}. {} ({} messages, saved at {})\n", i + 1, branch.name, msg_count, time));
+                    }
+                    msg.push_str("\nUsage: /branch restore <number> | /branch delete <number>");
+                    app.add_assistant_message(msg);
+                }
+            }
+            "restore" | "load" => {
+                if let Some(idx_str) = args.get(1) {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        let idx = idx.saturating_sub(1); // 1-indexed
+                        if idx < app.branches.len() {
+                            let name = app.branches[idx].name.clone();
+                            app.restore_branch(idx);
+                            app.set_status(format!("Restored branch: {name}"));
+                        } else {
+                            app.set_status("Invalid branch number");
+                        }
+                    } else {
+                        app.set_status("Usage: /branch restore <number>");
+                    }
+                } else {
+                    app.set_status("Usage: /branch restore <number>");
+                }
+            }
+            "delete" | "rm" => {
+                if let Some(idx_str) = args.get(1) {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        let idx = idx.saturating_sub(1);
+                        if idx < app.branches.len() {
+                            let name = app.branches[idx].name.clone();
+                            app.delete_branch(idx);
+                            app.set_status(format!("Deleted branch: {name}"));
+                        } else {
+                            app.set_status("Invalid branch number");
+                        }
+                    }
+                }
+            }
+            "diff" => {
+                if let Some(idx_str) = args.get(1) {
+                    if let Ok(idx) = idx_str.parse::<usize>() {
+                        let idx = idx.saturating_sub(1);
+                        if let Some(branch) = app.branches.get(idx) {
+                            let current = &app.current_conversation().messages;
+                            let branched = &branch.messages;
+
+                            let common = current.iter().zip(branched.iter())
+                                .take_while(|(a, b)| a == b)
+                                .count();
+
+                            let mut msg = format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
+                            msg.push_str(&format!("Common messages: {}\n", common));
+                            msg.push_str(&format!("Current has {} more message(s)\n", current.len().saturating_sub(common)));
+                            msg.push_str(&format!("Branch has {} more message(s)\n\n", branched.len().saturating_sub(common)));
+
+                            if current.len() > common {
+                                msg.push_str("Current (diverged):\n");
+                                for (role, content) in &current[common..] {
+                                    let brief: String = content.chars().take(80).collect();
+                                    msg.push_str(&format!("  [{role}] {brief}...\n"));
+                                }
+                            }
+                            if branched.len() > common {
+                                msg.push_str("\nBranch (diverged):\n");
+                                for (role, content) in &branched[common..] {
+                                    let brief: String = content.chars().take(80).collect();
+                                    msg.push_str(&format!("  [{role}] {brief}...\n"));
+                                }
+                            }
+
+                            app.add_assistant_message(msg);
+                        }
+                    }
+                }
+            }
+            _ => {
+                app.add_assistant_message("Usage: /branch save|list|restore|delete|diff".into());
+            }
+        }
         app.scroll_offset = 0;
         return true;
     }
