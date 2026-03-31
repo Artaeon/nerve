@@ -28,9 +28,9 @@ static THEME: LazyLock<Theme> = LazyLock::new(|| {
 const CODE_BG: Color = Color::Rgb(30, 30, 46);
 /// Foreground for code-block chrome (borders, language label).
 const CODE_CHROME_FG: Color = Color::Rgb(100, 100, 120);
-/// Inline code colours.
+/// Inline code colours (brighter background so it pops).
 const INLINE_CODE_FG: Color = Color::Cyan;
-const INLINE_CODE_BG: Color = Color::Rgb(40, 40, 55);
+const INLINE_CODE_BG: Color = Color::Rgb(55, 55, 75);
 
 // ── Public entry point ───────────────────────────────────────────────────────
 
@@ -162,18 +162,24 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         " \u{2502} ",
         Style::default().fg(Color::Rgb(50, 50, 60)),
     );
+    // Thin dim separator that spans the usable chat width (minus block borders
+    // and horizontal padding = 4 columns).
+    let sep_width = area.width.saturating_sub(4) as usize;
     let separator_line = Line::from(Span::styled(
-        " \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-        Style::default().fg(Color::Rgb(50, 50, 60)),
+        "\u{2500}".repeat(sep_width),
+        Style::default()
+            .fg(Color::Rgb(50, 50, 60))
+            .add_modifier(Modifier::DIM),
     ));
 
     let msg_count = conversation.messages.len();
     let now = Utc::now();
 
     for (idx, (role, content)) in conversation.messages.iter().enumerate() {
-        // Subtle separator between messages
+        // Subtle separator between messages (not before the first one).
         if idx > 0 {
             lines.push(separator_line.clone());
+            lines.push(Line::from("")); // breathing room after separator
         }
 
         // Blank line for breathing room.
@@ -237,20 +243,20 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 }
             }
             _ => {
-                // System / unknown role
+                // System / unknown role — subtle italic amber text.
                 lines.push(Line::from(vec![
                     gutter.clone(),
                     Span::styled(
-                        "  SYS  ",
+                        "  \u{2014} ",
                         Style::default()
-                            .fg(Color::White)
-                            .bg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
+                            .fg(Color::Rgb(180, 150, 60))
+                            .add_modifier(Modifier::DIM),
                     ),
-                    Span::raw("  "),
                     Span::styled(
                         time_ago,
-                        Style::default().fg(Color::DarkGray),
+                        Style::default()
+                            .fg(Color::Rgb(100, 90, 50))
+                            .add_modifier(Modifier::DIM),
                     ),
                 ]));
                 for text_line in content.lines() {
@@ -258,7 +264,9 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                         gutter.clone(),
                         Span::styled(
                             format!("  {text_line}"),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default()
+                                .fg(Color::Rgb(180, 150, 60))
+                                .add_modifier(Modifier::DIM | Modifier::ITALIC),
                         ),
                     ]));
                 }
@@ -270,6 +278,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     if app.is_streaming && !app.streaming_response.is_empty() {
         if !conversation.messages.is_empty() {
             lines.push(separator_line.clone());
+            lines.push(Line::from("")); // breathing room after separator
         }
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -286,25 +295,26 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         ]));
         // Apply the same markdown/code-block rendering to streaming content.
         let stream_lines = parse_assistant_content(&app.streaming_response);
-        for sl in stream_lines {
+        let stream_line_count = stream_lines.len();
+        for (si, sl) in stream_lines.into_iter().enumerate() {
             let mut spans = vec![gutter.clone()];
             spans.extend(sl.spans);
+            // Append the blinking cursor to the very last line of content.
+            if si == stream_line_count - 1 {
+                spans.push(Span::styled(
+                    "\u{258c}",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::SLOW_BLINK),
+                ));
+            }
             lines.push(Line::from(spans));
         }
-        // Blinking cursor indicator at the end of the streaming text.
-        lines.push(Line::from(vec![
-            gutter.clone(),
-            Span::styled(
-                "  \u{258c}",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::SLOW_BLINK),
-            ),
-        ]));
     } else if app.is_streaming {
-        // Streaming started but no tokens yet.
+        // Streaming started but no tokens yet — show "Thinking..." with animation.
         if !conversation.messages.is_empty() {
             lines.push(separator_line.clone());
+            lines.push(Line::from("")); // breathing room after separator
         }
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
@@ -314,14 +324,16 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::Green)
-                    .add_modifier(Modifier::SLOW_BLINK),
+                    .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
+        ]));
+        lines.push(Line::from(vec![
+            gutter.clone(),
             Span::styled(
-                "thinking...",
+                "  Thinking...",
                 Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::SLOW_BLINK),
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC | Modifier::SLOW_BLINK),
             ),
         ]));
     }
@@ -413,15 +425,17 @@ fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
 
 // ── Code-block chrome ────────────────────────────────────────────────────────
 
-/// Produces a header line like: `   ╭─ rust ──────────`
+/// Produces a header line like: `   ╭─  rust  ──────────`
 fn code_header_line(lang: &str) -> Line<'static> {
     let label = if lang.is_empty() {
         "code".to_string()
     } else {
         lang.to_string()
     };
-    let bar = "─".repeat(40usize.saturating_sub(label.len() + 5));
-    let text = format!("   ╭─ {label} {bar}");
+    // Padded label: `  rust  ` for nicer appearance.
+    let padded_label = format!("  {label}  ");
+    let bar = "\u{2500}".repeat(40usize.saturating_sub(padded_label.len() + 4));
+    let text = format!("   \u{256d}\u{2500}{padded_label}{bar}");
     Line::from(Span::styled(
         text,
         Style::default().fg(CODE_CHROME_FG).bg(CODE_BG),
@@ -430,8 +444,8 @@ fn code_header_line(lang: &str) -> Line<'static> {
 
 /// Produces a footer line: `   ╰────────────────────`
 fn code_footer_line() -> Line<'static> {
-    let bar = "─".repeat(40);
-    let text = format!("   ╰{bar}");
+    let bar = "\u{2500}".repeat(40);
+    let text = format!("   \u{2570}{bar}");
     Line::from(Span::styled(
         text,
         Style::default().fg(CODE_CHROME_FG).bg(CODE_BG),
@@ -440,7 +454,7 @@ fn code_footer_line() -> Line<'static> {
 
 // ── Syntax highlighting ──────────────────────────────────────────────────────
 
-/// Syntax-highlight a code block and return styled `Line`s.
+/// Syntax-highlight a code block and return styled `Line`s with line numbers.
 fn highlight_code(
     code: &str,
     lang: &str,
@@ -459,14 +473,25 @@ fn highlight_code(
         return lines;
     }
 
-    for line in code.lines() {
+    let line_num_style = Style::default().fg(Color::DarkGray).bg(CODE_BG);
+    let pipe_style = Style::default().fg(Color::DarkGray).bg(CODE_BG);
+
+    for (line_idx, line) in code.lines().enumerate() {
         let ranges = h.highlight_line(line, ss).unwrap_or_default();
         let mut spans: Vec<Span<'static>> = Vec::new();
 
-        // 3-space indent to match message body alignment.
+        // Prefix: `   │ 1 │ ` — chrome + line number + pipe
         spans.push(Span::styled(
-            "   ",
-            Style::default().bg(CODE_BG),
+            "   \u{2502}",
+            pipe_style,
+        ));
+        spans.push(Span::styled(
+            format!("{:>4}", line_idx + 1),
+            line_num_style,
+        ));
+        spans.push(Span::styled(
+            " \u{2502} ",
+            pipe_style,
         ));
 
         for (style, text) in ranges {
@@ -633,7 +658,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
                     return spans;
                 }
             }
-            // ── Inline code: `code` ──────────────────────────────
+            // ── Inline code: `code` → ` code ` with padding ─────
             '`' => {
                 if i > plain_start {
                     spans.push(Span::styled(
@@ -646,8 +671,9 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
                 let mut found_end = false;
                 while let Some(&(j, c2)) = chars.peek() {
                     if c2 == '`' {
+                        // 1-space padding on each side for readability.
                         spans.push(Span::styled(
-                            text[content_start..j].to_string(),
+                            format!(" {} ", &text[content_start..j]),
                             Style::default().fg(INLINE_CODE_FG).bg(INLINE_CODE_BG),
                         ));
                         chars.next(); // skip closing `
