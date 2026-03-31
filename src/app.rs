@@ -132,6 +132,8 @@ pub struct App {
 
     // -- misc --
     pub status_message: Option<String>,
+    /// Timestamp of when `status_message` was last set (for auto-clear).
+    pub status_time: Option<std::time::Instant>,
     pub should_quit: bool,
     pub show_help: bool,
 }
@@ -206,6 +208,7 @@ impl App {
             search_current: 0,
 
             status_message: None,
+            status_time: None,
             should_quit: false,
             show_help: false,
         }
@@ -214,13 +217,21 @@ impl App {
     // ── Conversation accessors ──────────────────────────────────────────
 
     /// Reference to the currently active conversation.
+    ///
+    /// Clamps `active_conversation` to a valid index so we never panic even if
+    /// conversations were deleted without updating the index.
     pub fn current_conversation(&self) -> &Conversation {
-        &self.conversations[self.active_conversation]
+        let idx = self.active_conversation.min(self.conversations.len().saturating_sub(1));
+        &self.conversations[idx]
     }
 
     /// Mutable reference to the currently active conversation.
+    ///
+    /// Clamps `active_conversation` to a valid index so we never panic even if
+    /// conversations were deleted without updating the index.
     pub fn current_conversation_mut(&mut self) -> &mut Conversation {
-        &mut self.conversations[self.active_conversation]
+        let idx = self.active_conversation.min(self.conversations.len().saturating_sub(1));
+        &mut self.conversations[idx]
     }
 
     /// Create a new empty conversation and switch to it.
@@ -230,7 +241,15 @@ impl App {
         self.scroll_offset = 0;
         self.streaming_response.clear();
         self.is_streaming = false;
-        self.status_message = Some("New conversation started".into());
+        self.set_status("New conversation started");
+    }
+
+    // ── Status ──────────────────────────────────────────────────────────
+
+    /// Set a status message with an auto-clear timestamp.
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = Some(msg.into());
+        self.status_time = Some(std::time::Instant::now());
     }
 
     // ── Messages ────────────────────────────────────────────────────────
