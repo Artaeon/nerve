@@ -1,0 +1,39 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Nerve v0.1 │ New conversation                 │ Claude Code > sonnet │ 1│
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│   ╭──────────────────────────────────────────────────────╮              │
+│   │                                                      │              │
+│   │      ███╗   ██╗███████╗██████╗ ██╗   ██╗███████╗    │              │
+│   │      ████╗  ██║██╔════╝██╔══██╗██║   ██║██╔════╝    │              │
+│   │      ██╔██╗ ██║█████╗  ██████╔╝██║   ██║█████╗      │              │
+│   │      ██║╚██╗██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝      │              │
+│   │      ██║ ╚████║███████╗██║  ██║ ╚████╔╝ ███████╗    │              │
+│   │      ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝    │              │
+│   │                                                      │              │
+│   │          Raw AI power in your terminal               │              │
+│   │                                                      │              │
+│   ╰──────────────────────────────────────────────────────╯              │
+│                                                                         │
+│   Quick Start                                                           │
+│   ─────────────────                                                     │
+│   Type a message and press Enter to chat                                │
+│                                                                         │
+│   Ctrl+K    Nerve Bar (command palette)                                 │
+│   Ctrl+T    Switch provider                                             │
+│   Ctrl+M    Switch model                                                │
+│   Ctrl+P    Browse prompts                                              │
+│   Ctrl+O    History browser                                             │
+│   Ctrl+B    Clipboard manager                                           │
+│   Ctrl+H    Help & keybindings                                          │
+│                                                                         │
+│   /help     Show all slash commands                                     │
+│   /url      Scrape a webpage for context                                │
+│   /kb       Manage knowledge base                                       │
+│   /auto     Run automations                                             │
+│                                                                         │
+├─────────────────────────────────────────────────────────────────────────┤
+│ NOR  Type your message... (Enter to send)              (0 words)       │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Ready │ Claude Code > sonnet │ 0 words │ Conv 1/1                      │
+└─────────────────────────────────────────────────────────────────────────┘

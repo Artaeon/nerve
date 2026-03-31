@@ -1,0 +1,21 @@
+╭─ Nerve Bar ───────────────────────────────────────────────────────────╮
+│ > code review▌                                                         │
+│ ─────────────────────────────────────────────────────────────────────  │
+│ All  Writing  Coding  Engineering  Design  Git  Rust  ...              │
+│ ─────────────────────────────────────────────────────────────────────  │
+│                                                                         │
+│ ► Full Code Review                                  [Engineering]      │
+│   Senior-level code review with severity ratings                       │
+│                                                                         │
+│   PR Review Checklist                             [Best Practices]     │
+│   Review changes against best practices                                │
+│                                                                         │
+│   Rust Code Review                                        [Rust]       │
+│   Rust-specific: ownership, lifetimes, idioms                          │
+│ ─────────────────────────────────────────────────────────────────────  │
+│ Preview:                                                                │
+│ You are a senior software engineer performing a thorough code          │
+│ review. Analyze the following code with extreme attention to detail... │
+│                                                                         │
+│ 3/130 prompts                    Tab: category | Enter: use | Esc     │
+╰───────────────────────────────────────────────────────────────────────╯
