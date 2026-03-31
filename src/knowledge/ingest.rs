@@ -130,7 +130,7 @@ pub fn ingest_file(path: &Path, kb: &mut KnowledgeBase) -> anyhow::Result<usize>
 }
 
 /// Split text into overlapping chunks of approximately `chunk_size` words.
-fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+pub(crate) fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
         return Vec::new();
@@ -147,4 +147,117 @@ fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     }
 
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_empty_text() {
+        let chunks = chunk_text("", 500, 50);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_whitespace_only() {
+        let chunks = chunk_text("   \n\t  ", 500, 50);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn chunk_short_text_single_chunk() {
+        let chunks = chunk_text("hello world this is short", 500, 50);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello world this is short");
+    }
+
+    #[test]
+    fn chunk_text_exactly_at_chunk_size_no_overlap() {
+        // 10 words, chunk_size=10, overlap=0 => 1 chunk
+        let text = "one two three four five six seven eight nine ten";
+        let chunks = chunk_text(text, 10, 0);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
+    }
+
+    #[test]
+    fn chunk_long_text_multiple_chunks() {
+        let words: Vec<String> = (0..100).map(|i| format!("w{i}")).collect();
+        let text = words.join(" ");
+        let chunks = chunk_text(&text, 30, 10);
+        assert!(chunks.len() > 1);
+        // Each chunk should have at most 30 words
+        for chunk in &chunks {
+            let wc = chunk.split_whitespace().count();
+            assert!(wc <= 30, "chunk has {wc} words, expected <= 30");
+        }
+    }
+
+    #[test]
+    fn chunk_overlap_is_correct() {
+        let words: Vec<String> = (0..60).map(|i| format!("w{i}")).collect();
+        let text = words.join(" ");
+        let chunks = chunk_text(&text, 30, 10);
+        assert!(chunks.len() >= 2);
+
+        // Last 10 words of first chunk should appear at the start of second chunk
+        let first_words: Vec<&str> = chunks[0].split_whitespace().collect();
+        let second_words: Vec<&str> = chunks[1].split_whitespace().collect();
+        let overlap_from_first = &first_words[first_words.len() - 10..];
+        let overlap_from_second = &second_words[..10];
+        assert_eq!(overlap_from_first, overlap_from_second);
+    }
+
+    #[test]
+    fn chunk_very_long_text() {
+        let words: Vec<&str> = (0..5000).map(|_| "word").collect();
+        let text = words.join(" ");
+        let chunks = chunk_text(&text, 500, 50);
+        // 5000 words, step = 450, so ceil(5000/450) = 12 chunks
+        // First chunk covers 0..500, next 450..950, etc.
+        assert!(chunks.len() >= 10);
+        // All text should be covered
+        let last_chunk_words: Vec<&str> = chunks.last().unwrap().split_whitespace().collect();
+        assert!(!last_chunk_words.is_empty());
+    }
+
+    #[test]
+    fn supported_extension_accepted() {
+        let tmp = tempfile::Builder::new().suffix(".md").tempfile().expect("create tmp");
+        std::fs::write(tmp.path(), "Hello world test content").expect("write");
+        let mut kb = KnowledgeBase::new("test".into());
+        let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
+        assert_eq!(result, 1);
+        assert_eq!(kb.documents.len(), 1);
+        assert!(!kb.chunks.is_empty());
+    }
+
+    #[test]
+    fn unsupported_extension_skipped() {
+        let tmp = tempfile::Builder::new().suffix(".exe").tempfile().expect("create tmp");
+        std::fs::write(tmp.path(), "some binary content").expect("write");
+        let mut kb = KnowledgeBase::new("test".into());
+        let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
+        assert_eq!(result, 0);
+        assert!(kb.documents.is_empty());
+    }
+
+    #[test]
+    fn empty_file_skipped() {
+        let tmp = tempfile::Builder::new().suffix(".txt").tempfile().expect("create tmp");
+        std::fs::write(tmp.path(), "").expect("write");
+        let mut kb = KnowledgeBase::new("test".into());
+        let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn ingest_file_word_count_matches() {
+        let tmp = tempfile::Builder::new().suffix(".txt").tempfile().expect("create tmp");
+        std::fs::write(tmp.path(), "alpha beta gamma delta epsilon").expect("write");
+        let mut kb = KnowledgeBase::new("test".into());
+        ingest_file(tmp.path(), &mut kb).expect("ingest");
+        assert_eq!(kb.documents[0].word_count, 5);
+    }
 }

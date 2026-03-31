@@ -115,3 +115,164 @@ impl KnowledgeBase {
         self.documents.iter().map(|d| d.word_count).sum()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_test_kb() -> KnowledgeBase {
+        let mut kb = KnowledgeBase::new("test".into());
+        let doc = Document {
+            id: "doc1".into(),
+            title: "Test Doc".into(),
+            source_path: "/tmp/test.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 100,
+        };
+        let chunks = vec![
+            Chunk { id: "c1".into(), document_id: "doc1".into(), content: "hello world".into(), index: 0, word_count: 2 },
+            Chunk { id: "c2".into(), document_id: "doc1".into(), content: "foo bar baz".into(), index: 1, word_count: 3 },
+        ];
+        kb.add_document(doc, chunks);
+        kb
+    }
+
+    #[test]
+    fn new_kb_is_empty() {
+        let kb = KnowledgeBase::new("test".into());
+        assert_eq!(kb.name, "test");
+        assert!(kb.documents.is_empty());
+        assert!(kb.chunks.is_empty());
+        assert_eq!(kb.total_chunks(), 0);
+        assert_eq!(kb.total_words(), 0);
+    }
+
+    #[test]
+    fn new_kb_has_timestamps() {
+        let before = chrono::Utc::now();
+        let kb = KnowledgeBase::new("ts_test".into());
+        let after = chrono::Utc::now();
+        assert!(kb.created_at >= before && kb.created_at <= after);
+        assert!(kb.updated_at >= before && kb.updated_at <= after);
+        assert_eq!(kb.created_at, kb.updated_at);
+    }
+
+    #[test]
+    fn add_document_increases_counts() {
+        let kb = make_test_kb();
+        assert_eq!(kb.documents.len(), 1);
+        assert_eq!(kb.chunks.len(), 2);
+        assert_eq!(kb.total_chunks(), 2);
+        assert_eq!(kb.total_words(), 100);
+    }
+
+    #[test]
+    fn add_document_updates_timestamp() {
+        let mut kb = KnowledgeBase::new("ts".into());
+        let initial = kb.updated_at;
+        let doc = Document {
+            id: "d".into(),
+            title: "T".into(),
+            source_path: "/tmp/t".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 1,
+        };
+        kb.add_document(doc, vec![]);
+        assert!(kb.updated_at >= initial);
+    }
+
+    #[test]
+    fn remove_document_clears_chunks() {
+        let mut kb = make_test_kb();
+        kb.remove_document("doc1");
+        assert!(kb.documents.is_empty());
+        assert!(kb.chunks.is_empty());
+        assert_eq!(kb.total_chunks(), 0);
+        assert_eq!(kb.total_words(), 0);
+    }
+
+    #[test]
+    fn remove_nonexistent_document_is_noop() {
+        let mut kb = make_test_kb();
+        kb.remove_document("no_such_id");
+        assert_eq!(kb.documents.len(), 1);
+        assert_eq!(kb.chunks.len(), 2);
+    }
+
+    #[test]
+    fn total_chunks_sums_correctly() {
+        let mut kb = make_test_kb();
+        let doc2 = Document {
+            id: "doc2".into(),
+            title: "Second".into(),
+            source_path: "/tmp/second.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 50,
+        };
+        let chunks2 = vec![
+            Chunk { id: "c3".into(), document_id: "doc2".into(), content: "alpha beta".into(), index: 0, word_count: 2 },
+        ];
+        kb.add_document(doc2, chunks2);
+        assert_eq!(kb.total_chunks(), 3);
+    }
+
+    #[test]
+    fn total_words_sums_across_documents() {
+        let mut kb = make_test_kb();
+        let doc2 = Document {
+            id: "doc2".into(),
+            title: "Second".into(),
+            source_path: "/tmp/s.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 50,
+        };
+        kb.add_document(doc2, vec![]);
+        assert_eq!(kb.total_words(), 150);
+    }
+
+    #[test]
+    fn serialization_roundtrip() {
+        let kb = make_test_kb();
+        let json = serde_json::to_string(&kb).expect("serialize");
+        let deserialized: KnowledgeBase = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.name, kb.name);
+        assert_eq!(deserialized.documents.len(), kb.documents.len());
+        assert_eq!(deserialized.chunks.len(), kb.chunks.len());
+        assert_eq!(deserialized.documents[0].id, "doc1");
+        assert_eq!(deserialized.chunks[0].content, "hello world");
+        assert_eq!(deserialized.chunks[1].content, "foo bar baz");
+    }
+
+    #[test]
+    fn document_fields_preserved() {
+        let now = chrono::Utc::now();
+        let doc = Document {
+            id: "id123".into(),
+            title: "My Title".into(),
+            source_path: "/some/path.rs".into(),
+            ingested_at: now,
+            word_count: 42,
+        };
+        assert_eq!(doc.id, "id123");
+        assert_eq!(doc.title, "My Title");
+        assert_eq!(doc.source_path, "/some/path.rs");
+        assert_eq!(doc.ingested_at, now);
+        assert_eq!(doc.word_count, 42);
+    }
+
+    #[test]
+    fn chunk_fields_preserved() {
+        let chunk = Chunk {
+            id: "ch1".into(),
+            document_id: "doc99".into(),
+            content: "some text here".into(),
+            index: 7,
+            word_count: 3,
+        };
+        assert_eq!(chunk.id, "ch1");
+        assert_eq!(chunk.document_id, "doc99");
+        assert_eq!(chunk.content, "some text here");
+        assert_eq!(chunk.index, 7);
+        assert_eq!(chunk.word_count, 3);
+    }
+}

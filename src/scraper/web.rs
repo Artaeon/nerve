@@ -273,4 +273,108 @@ mod tests {
         assert!(truncated.starts_with("one two three"));
         assert!(truncated.contains("[Content truncated"));
     }
+
+    #[test]
+    fn test_collapse_whitespace_multiple_spaces() {
+        let text = "hello    world   foo";
+        let collapsed = collapse_whitespace(text);
+        assert_eq!(collapsed, "hello world foo");
+    }
+
+    #[test]
+    fn test_collapse_whitespace_multiple_newlines() {
+        let text = "hello\n\n\n\nworld";
+        let collapsed = collapse_whitespace(text);
+        assert_eq!(collapsed, "hello\nworld");
+    }
+
+    #[test]
+    fn test_nested_tags() {
+        let html = "<div><p>text</p></div>";
+        let text = strip_html(html);
+        let text = collapse_whitespace(&text);
+        assert!(text.contains("text"));
+        assert!(!text.contains('<'));
+    }
+
+    #[test]
+    fn test_self_closing_tags() {
+        let html = "before<br/>middle<img src='x'/>after";
+        let text = strip_html(html);
+        assert!(text.contains("before"));
+        assert!(text.contains("middle"));
+        assert!(text.contains("after"));
+        assert!(!text.contains('<'));
+    }
+
+    #[test]
+    fn test_empty_input() {
+        let text = strip_html("");
+        assert!(text.is_empty());
+        let title = extract_title("");
+        assert_eq!(title, None);
+        let collapsed = collapse_whitespace("");
+        assert!(collapsed.is_empty());
+    }
+
+    #[test]
+    fn test_only_tags_no_text() {
+        let html = "<div><span></span><br/></div>";
+        let text = strip_html(html);
+        let text = collapse_whitespace(&text);
+        // Should be empty or only whitespace after collapsing
+        assert!(text.trim().is_empty());
+    }
+
+    #[test]
+    fn test_mixed_content_and_entities() {
+        let html = "<p>Tom &amp; Jerry &lt;3 &quot;friends&quot;</p>";
+        let text = strip_html(html);
+        let text = decode_html_entities(&text);
+        assert!(text.contains("Tom & Jerry"));
+        assert!(text.contains("<3"));
+        assert!(text.contains("\"friends\""));
+    }
+
+    #[test]
+    fn test_very_long_input() {
+        let segment = "<p>word </p>";
+        let html: String = std::iter::repeat(segment).take(5000).collect();
+        let text = strip_html(&html);
+        let collapsed = collapse_whitespace(&text);
+        // Should not panic and should contain the word
+        assert!(collapsed.contains("word"));
+        let word_count = collapsed.split_whitespace().count();
+        assert!(word_count >= 4000, "expected many words, got {word_count}");
+    }
+
+    #[test]
+    fn test_style_block_stripped() {
+        let html = "<p>visible</p><style>body { color: red; }</style><p>also visible</p>";
+        let text = strip_html(html);
+        assert!(text.contains("visible"));
+        assert!(text.contains("also visible"));
+        assert!(!text.contains("color"));
+    }
+
+    #[test]
+    fn test_extract_title_with_entities() {
+        let html = "<html><head><title>A &amp; B</title></head></html>";
+        let title = extract_title(html);
+        assert_eq!(title, Some("A & B".to_string()));
+    }
+
+    #[test]
+    fn test_truncate_words_exact_boundary() {
+        let text = "one two three";
+        assert_eq!(truncate_words(text, 3), text);
+        assert_eq!(truncate_words(text, 4), text);
+    }
+
+    #[test]
+    fn test_nbsp_decoded() {
+        let text = "hello&nbsp;world";
+        let decoded = decode_html_entities(text);
+        assert_eq!(decoded, "hello world");
+    }
 }

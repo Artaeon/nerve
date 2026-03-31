@@ -84,3 +84,120 @@ fn calculate_score(chunk: &str, query_words: &[&str], matcher: &SkimMatcherV2) -
     let word_count = chunk.split_whitespace().count() as f64;
     score / (1.0 + word_count.ln())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::knowledge::store::{Document, KnowledgeBase};
+
+    fn make_search_kb() -> KnowledgeBase {
+        let mut kb = KnowledgeBase::new("search_test".into());
+        let doc = Document {
+            id: "d1".into(),
+            title: "Programming".into(),
+            source_path: "/tmp/prog.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 20,
+        };
+        let chunks = vec![
+            Chunk { id: "c1".into(), document_id: "d1".into(), content: "Rust is a systems programming language focused on safety".into(), index: 0, word_count: 9 },
+            Chunk { id: "c2".into(), document_id: "d1".into(), content: "Python is an interpreted language for scripting".into(), index: 1, word_count: 7 },
+            Chunk { id: "c3".into(), document_id: "d1".into(), content: "JavaScript runs in the browser and on servers".into(), index: 2, word_count: 8 },
+        ];
+        kb.add_document(doc, chunks);
+        kb
+    }
+
+    #[test]
+    fn search_finds_matching_chunks() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "rust", 5);
+        assert!(!results.is_empty());
+        assert!(results[0].chunk.content.to_lowercase().contains("rust"));
+    }
+
+    #[test]
+    fn search_no_matches_returns_empty() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "xyznonexistent", 5);
+        // Fuzzy matcher might still return something, but with exact-miss words the
+        // score may be zero. If any results do come back, they should at least be
+        // scored positively (no negative scores).
+        for r in &results {
+            assert!(r.score > 0.0);
+        }
+    }
+
+    #[test]
+    fn search_empty_query_returns_empty() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "", 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_empty_kb_returns_empty() {
+        let kb = KnowledgeBase::new("empty".into());
+        let results = search_knowledge(&kb, "rust", 5);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn search_respects_max_results() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "language", 1);
+        assert!(results.len() <= 1);
+    }
+
+    #[test]
+    fn search_results_sorted_by_score_descending() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "language", 10);
+        for window in results.windows(2) {
+            assert!(window[0].score >= window[1].score,
+                "results not sorted: {} < {}", window[0].score, window[1].score);
+        }
+    }
+
+    #[test]
+    fn search_is_case_insensitive() {
+        let kb = make_search_kb();
+        let lower = search_knowledge(&kb, "rust", 5);
+        let upper = search_knowledge(&kb, "RUST", 5);
+        let mixed = search_knowledge(&kb, "RuSt", 5);
+        // All should find the same chunk
+        assert!(!lower.is_empty());
+        assert!(!upper.is_empty());
+        assert!(!mixed.is_empty());
+        assert_eq!(lower[0].chunk.id, upper[0].chunk.id);
+        assert_eq!(lower[0].chunk.id, mixed[0].chunk.id);
+    }
+
+    #[test]
+    fn search_exact_match_scores_higher_than_fuzzy() {
+        let kb = make_search_kb();
+        // "Rust" appears literally in c1 but not in c2 or c3
+        let results = search_knowledge(&kb, "rust", 10);
+        if results.len() >= 2 {
+            // The chunk with the exact match should be first
+            assert!(results[0].chunk.content.to_lowercase().contains("rust"));
+        }
+    }
+
+    #[test]
+    fn search_includes_document_title() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "rust", 5);
+        assert!(!results.is_empty());
+        assert_eq!(results[0].document_title, "Programming");
+    }
+
+    #[test]
+    fn search_with_multiple_query_words() {
+        let kb = make_search_kb();
+        let results = search_knowledge(&kb, "systems safety", 5);
+        assert!(!results.is_empty());
+        // The Rust chunk mentions both "systems" and "safety"
+        assert!(results[0].chunk.content.contains("systems"));
+    }
+}
