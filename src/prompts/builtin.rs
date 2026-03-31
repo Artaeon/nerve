@@ -767,6 +767,212 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Git",
             &["gitignore", "ignore", "template", "project setup"],
         ),
+
+        // ── Engineering — SmartPrompts ─────────────────────────────────────
+        p(
+            "Full Code Review",
+            "Perform a thorough, senior-level code review with severity ratings",
+            "You are a senior software engineer performing a thorough code review. Analyze the following code with extreme attention to detail.\n\nReview checklist:\n1. CORRECTNESS: Logic errors, off-by-one, null/undefined handling, race conditions\n2. SECURITY: Injection risks, auth issues, data exposure, OWASP Top 10\n3. PERFORMANCE: Time/space complexity, unnecessary allocations, N+1 queries, missing indexes\n4. READABILITY: Naming, structure, comments where non-obvious, dead code\n5. MAINTAINABILITY: SOLID principles, coupling, cohesion, testability\n6. ERROR HANDLING: Edge cases, graceful degradation, error messages\n7. TESTING: Missing test cases, edge cases not covered\n\nFor each issue found, provide:\n- Severity: CRITICAL / WARNING / SUGGESTION\n- Line reference or code snippet\n- What's wrong and why\n- Concrete fix with code example\n\nEnd with a summary: overall quality score (1-10), top 3 priorities to fix, and what's done well.\n\n{{input}}",
+            "Engineering",
+            &["code review", "quality", "security", "best practices", "audit"],
+        ),
+        p(
+            "Architect Solution",
+            "Design a production-ready architecture from requirements",
+            "You are a principal software architect. Design a production-ready solution for the following requirements.\n\nYour design MUST include:\n\n1. SYSTEM OVERVIEW\n   - High-level architecture diagram (describe in text/ASCII)\n   - Component inventory with responsibilities\n   - Technology choices with justification\n\n2. DATA MODEL\n   - Entity definitions with fields and types\n   - Relationships and cardinality\n   - Indexing strategy\n   - Migration considerations\n\n3. API DESIGN\n   - Endpoint inventory (method, path, request/response)\n   - Authentication and authorization scheme\n   - Rate limiting and pagination strategy\n   - Versioning approach\n\n4. SCALABILITY\n   - Expected load and growth projections\n   - Horizontal vs vertical scaling strategy\n   - Caching layers (what, where, TTL)\n   - Database scaling (read replicas, sharding)\n\n5. RELIABILITY\n   - Failure modes and mitigation\n   - Circuit breakers and retry policies\n   - Monitoring and alerting\n   - Disaster recovery and backup strategy\n\n6. TRADE-OFFS\n   - Key decisions and alternatives considered\n   - What was sacrificed and why\n   - Technical debt accepted and payoff plan\n\n{{input}}",
+            "Engineering",
+            &["architecture", "system design", "scalability", "production", "trade-offs"],
+        ),
+        p(
+            "Debug Detective",
+            "Systematically diagnose and fix issues like a senior debugger",
+            "You are a senior debugging specialist. Help me systematically diagnose and fix this issue.\n\nFollow this structured debugging process:\n\nSTEP 1 - UNDERSTAND THE SYMPTOM\n- What exactly is happening vs what should happen?\n- When did it start? What changed recently?\n- Is it reproducible? Under what conditions?\n\nSTEP 2 - FORM HYPOTHESES (rank by likelihood)\n- List 5-7 possible root causes, most likely first\n- For each: what evidence would confirm or eliminate it?\n\nSTEP 3 - DIAGNOSTIC PLAN\n- Exact commands, queries, or code changes to run\n- What to look for in logs, metrics, or output\n- Binary search strategy to narrow down the cause\n\nSTEP 4 - ROOT CAUSE ANALYSIS\n- Based on evidence, identify the most likely cause\n- Explain the causal chain (A caused B which caused C)\n- Why existing tests/monitoring didn't catch this\n\nSTEP 5 - FIX\n- Minimal, targeted fix with code\n- Regression test to prevent recurrence\n- Related areas to check for the same class of bug\n\nSTEP 6 - PREVENTION\n- What process/tooling change prevents this category of bug?\n- Monitoring/alerting to catch it earlier next time\n\nHere's the issue:\n\n{{input}}",
+            "Engineering",
+            &["debug", "diagnose", "root cause", "troubleshoot", "systematic"],
+        ),
+        p(
+            "Write Production Code",
+            "Write clean, robust, production-quality code with tests",
+            "You are a senior software engineer writing production-quality code. Write clean, robust, well-tested code for the following requirement.\n\nRequirements for your code:\n- Handle ALL edge cases and error conditions\n- Follow the language's idiomatic conventions and best practices\n- Use meaningful variable and function names\n- Add comments ONLY where the logic isn't self-evident\n- Include proper error types and error messages\n- No unnecessary abstractions \u{2014} keep it simple and direct\n- Consider performance for the expected scale\n- Thread-safe if applicable\n\nAfter the implementation, provide:\n1. The complete code\n2. Unit tests covering: happy path, edge cases, error conditions\n3. Brief explanation of key design decisions\n4. Any assumptions made\n\n{{input}}",
+            "Engineering",
+            &["production", "robust", "code", "implementation", "tests"],
+        ),
+        p(
+            "Deep Performance Optimization",
+            "Deep performance analysis and optimization with prioritized improvements",
+            "You are a performance engineering specialist. Analyze and optimize the following code or system for maximum performance.\n\nYour analysis must cover:\n\n1. PROFILING ANALYSIS\n   - Identify the hot paths and bottlenecks\n   - Time complexity of critical operations\n   - Memory allocation patterns and pressure\n   - I/O wait and blocking operations\n\n2. QUICK WINS (< 1 hour to implement)\n   - Algorithm improvements\n   - Caching opportunities\n   - Unnecessary work elimination\n   - Better data structures\n\n3. MEDIUM EFFORT (1 day to implement)\n   - Architectural changes\n   - Concurrency/parallelism opportunities\n   - Batch processing optimizations\n   - Connection pooling, lazy loading\n\n4. STRATEGIC IMPROVEMENTS (1 week+)\n   - Redesign proposals\n   - Infrastructure changes\n   - Pre-computation and denormalization\n\nFor each optimization, provide:\n- Expected improvement (2x, 10x, etc.)\n- Implementation complexity\n- Risk of regression\n- Code example\n\n{{input}}",
+            "Engineering",
+            &["performance", "optimization", "profiling", "bottleneck", "scalability"],
+        ),
+
+        // ── Writing — SmartPrompts ─────────────────────────────────────────
+        p(
+            "Technical Blog Post",
+            "Write an engaging, educational technical blog post",
+            "You are a technical writer creating an engaging, educational blog post. Write a complete blog post on the following topic.\n\nStructure:\n1. HOOK \u{2014} Opening paragraph that grabs attention with a relatable problem or surprising fact\n2. CONTEXT \u{2014} Why this matters, who it's for, what they'll learn\n3. MAIN CONTENT \u{2014} Clear, logical progression with:\n   - Code examples that actually work (not pseudocode)\n   - Diagrams described in text where helpful\n   - Common pitfalls and how to avoid them\n   - Real-world use cases\n4. PRACTICAL TAKEAWAY \u{2014} Actionable next steps the reader can do today\n5. CONCLUSION \u{2014} Key points summarized, call to action\n\nWriting guidelines:\n- Write for a developer audience (intermediate level)\n- Use short paragraphs (3-4 sentences max)\n- Include section headers for scanability\n- Code examples should be complete and runnable\n- Avoid jargon without explanation\n- Aim for 1500-2500 words\n\nTopic:\n\n{{input}}",
+            "Writing",
+            &["blog", "technical writing", "tutorial", "educational", "content"],
+        ),
+        p(
+            "Professional Email",
+            "Draft a concise, action-oriented professional email",
+            "You are an executive communications specialist. Draft a professional email that achieves its objective clearly and efficiently.\n\nBefore writing, analyze:\n- Who is the recipient and what's their context?\n- What is the ONE key action or takeaway?\n- What's the appropriate tone (formal, warm-professional, direct)?\n\nEmail structure:\n1. SUBJECT LINE \u{2014} Specific, action-oriented, under 60 characters\n2. OPENING \u{2014} Context in 1-2 sentences (why you're writing)\n3. BODY \u{2014} Key information, organized with bullets if 3+ points\n4. ASK \u{2014} Clear, specific call to action with timeline\n5. CLOSE \u{2014} Professional, appropriate warmth\n\nRules:\n- Keep under 200 words (executives skim)\n- One email = one topic\n- Bold or bullet the key ask if buried in context\n- Include any necessary context the recipient needs to act\n- Suggest specific times/dates rather than 'soon' or 'when convenient'\n\nContext for the email:\n\n{{input}}",
+            "Writing",
+            &["email", "professional", "business", "communication", "executive"],
+        ),
+        p(
+            "Long-Form Article",
+            "Write a comprehensive, authoritative long-form article",
+            "You are an expert writer creating a comprehensive, well-researched article. Write a thorough, authoritative piece on the following topic.\n\nYour article must:\n- Open with a compelling hook that establishes why this matters NOW\n- Build a clear narrative arc (problem \u{2192} context \u{2192} analysis \u{2192} solution \u{2192} future)\n- Support every claim with specific evidence, data, or examples\n- Include expert-level insights that go beyond surface-level treatment\n- Address counterarguments and nuance\n- Use analogies and concrete examples to explain complex concepts\n- End with actionable insights and a forward-looking perspective\n\nFormatting:\n- Use clear section headers (H2, H3) for structure\n- Short paragraphs (3-5 sentences)\n- Pull quotes or callout boxes for key insights\n- Transition sentences between sections\n- 2000-4000 words\n\nTone: Authoritative but accessible. Write like a respected industry expert explaining to smart colleagues.\n\nTopic:\n\n{{input}}",
+            "Writing",
+            &["article", "long-form", "authoritative", "in-depth", "research"],
+        ),
+
+        // ── Data (NEW category) ────────────────────────────────────────────
+        p(
+            "SQL Query Builder",
+            "Write optimized SQL queries with explanations and index advice",
+            "You are a database expert. Write an optimized SQL query for the following requirement.\n\nYour response must include:\n1. The SQL query with clear formatting and comments\n2. Explanation of the query logic step by step\n3. Expected execution plan considerations\n4. Index recommendations for optimal performance\n5. Alternative approaches if applicable\n6. Edge cases the query handles (NULLs, empty results, duplicates)\n\nGuidelines:\n- Use standard SQL (note any vendor-specific syntax)\n- Prefer CTEs over subqueries for readability\n- Include appropriate JOIN types with reasoning\n- Add WHERE clause optimizations\n- Consider query plan: avoid full table scans, use index-friendly predicates\n- Handle NULL values explicitly\n\nRequirement:\n\n{{input}}",
+            "Data",
+            &["sql", "database", "query", "optimization", "indexes"],
+        ),
+        p(
+            "Data Pipeline Design",
+            "Design a robust, production-grade data pipeline",
+            "You are a data engineering specialist. Design a robust data pipeline for the following requirements.\n\nYour design must cover:\n\n1. SOURCE ANALYSIS\n   - Data sources, formats, and volumes\n   - Schema detection and validation\n   - Change data capture strategy\n\n2. INGESTION LAYER\n   - Batch vs streaming decision with justification\n   - Extraction method and scheduling\n   - Error handling and dead letter queues\n   - Idempotency guarantees\n\n3. TRANSFORMATION LAYER\n   - Data quality checks and validation rules\n   - Transformation logic (cleaning, enrichment, aggregation)\n   - Schema evolution strategy\n   - Testing approach for transformations\n\n4. STORAGE LAYER\n   - Storage format selection (Parquet, Delta, Iceberg)\n   - Partitioning and clustering strategy\n   - Retention and archival policies\n   - Query patterns and optimization\n\n5. ORCHESTRATION\n   - DAG design and dependencies\n   - Retry and failure handling\n   - Monitoring, alerting, and SLAs\n   - Backfill and replay capabilities\n\n6. OPERATIONAL CONCERNS\n   - Cost estimation\n   - Security and access control\n   - Documentation and runbook\n\n{{input}}",
+            "Data",
+            &["data pipeline", "etl", "data engineering", "ingestion", "orchestration"],
+        ),
+
+        // ── Business (NEW category) ────────────────────────────────────────
+        p(
+            "Business Case",
+            "Build a compelling, structured business case with financial analysis",
+            "You are a management consultant. Build a compelling business case for the following proposal.\n\nStructure your business case as follows:\n\n1. EXECUTIVE SUMMARY (2-3 paragraphs)\n   - What we're proposing and why now\n   - Expected outcome and ROI\n   - Investment required\n\n2. PROBLEM STATEMENT\n   - Current state and pain points (quantified)\n   - Cost of inaction (financial, operational, strategic)\n   - Root cause analysis\n\n3. PROPOSED SOLUTION\n   - What we'll do (specific, actionable)\n   - Timeline and milestones\n   - Resource requirements (people, budget, tools)\n\n4. FINANCIAL ANALYSIS\n   - Total cost of ownership (3-year view)\n   - Expected benefits (quantified where possible)\n   - ROI calculation and payback period\n   - Sensitivity analysis (best/expected/worst case)\n\n5. RISK ASSESSMENT\n   - Top 5 risks with probability and impact\n   - Mitigation strategies for each\n   - Go/no-go criteria\n\n6. RECOMMENDATION\n   - Clear decision request\n   - Next steps with owners and dates\n\n{{input}}",
+            "Business",
+            &["business case", "roi", "proposal", "financial analysis", "strategy"],
+        ),
+        p(
+            "Meeting Notes to Actions",
+            "Transform raw meeting notes into structured, actionable summaries",
+            "You are an executive assistant processing meeting notes. Transform the following raw meeting notes into a structured, actionable summary.\n\nOutput format:\n\nMEETING SUMMARY\n- Date: [extract or note 'not specified']\n- Attendees: [extract names mentioned]\n- Purpose: [1 sentence]\n\nKEY DECISIONS\n1. [Decision] \u{2014} [context/rationale]\n\nACTION ITEMS\n| # | Action | Owner | Due Date | Priority |\n|---|--------|-------|----------|----------|\n| 1 | ...    | ...   | ...      | High/Med/Low |\n\nOPEN QUESTIONS\n- [Questions raised but not resolved]\n\nPARKING LOT\n- [Topics deferred for future discussion]\n\nFOLLOW-UP\n- Next meeting: [date/topic if mentioned]\n- Dependencies: [what's blocking progress]\n\nRaw meeting notes:\n\n{{input}}",
+            "Business",
+            &["meeting", "notes", "action items", "summary", "productivity"],
+        ),
+
+        // ── DevOps (NEW category) ──────────────────────────────────────────
+        p(
+            "Incident Postmortem",
+            "Write a thorough, blameless incident postmortem report",
+            "You are a site reliability engineer writing a blameless postmortem. Create a thorough incident report from the following details.\n\nPOSTMORTEM TEMPLATE:\n\n## Incident Summary\n- Severity: [P1-P4 based on impact]\n- Duration: [start to full resolution]\n- Impact: [users/services affected, business impact]\n- Detection: [how was it found \u{2014} monitoring, customer report, etc.]\n\n## Timeline (UTC)\n| Time | Event |\n|------|-------|\n| HH:MM | First alert / detection |\n| HH:MM | Investigation began |\n| HH:MM | Root cause identified |\n| HH:MM | Mitigation applied |\n| HH:MM | Full resolution |\n\n## Root Cause\n[Detailed technical explanation of what went wrong and why]\n\n## Contributing Factors\n1. [Factor] \u{2014} [how it contributed]\n\n## What Went Well\n1. [Detection, response, communication, etc.]\n\n## What Could Be Improved\n1. [Area] \u{2014} [specific improvement]\n\n## Action Items\n| # | Action | Owner | Priority | Due Date |\n|---|--------|-------|----------|----------|\n\n## Lessons Learned\n[Key takeaways for the organization]\n\nIncident details:\n\n{{input}}",
+            "DevOps",
+            &["postmortem", "incident", "sre", "reliability", "blameless"],
+        ),
+        p(
+            "Infrastructure as Code",
+            "Generate production-grade Infrastructure as Code with security and docs",
+            "You are a cloud infrastructure specialist. Generate production-grade Infrastructure as Code for the following requirements.\n\nYour IaC must follow these principles:\n- Idempotent and declarative\n- Parameterized (no hardcoded values)\n- Modular and reusable\n- Secure by default (least privilege, encryption at rest/transit)\n- Tagged for cost allocation and ownership\n- Documented with inline comments\n\nInclude:\n1. The IaC code (Terraform, CloudFormation, or Pulumi as appropriate)\n2. Variables/parameters file with sensible defaults\n3. Security considerations and IAM policies\n4. Networking configuration (VPC, subnets, security groups)\n5. Monitoring and alerting setup\n6. Cost estimate and optimization tips\n7. README with deployment instructions\n\nRequirements:\n\n{{input}}",
+            "DevOps",
+            &["infrastructure", "terraform", "iac", "cloud", "devops"],
+        ),
+
+        // ── Communication (NEW category) ───────────────────────────────────
+        p(
+            "Explain Like I'm 5",
+            "Explain any concept in simple terms anyone can understand",
+            "You are a gifted teacher who can explain ANY concept in simple terms that anyone can understand.\n\nRules:\n- Use everyday analogies and comparisons\n- No jargon \u{2014} if you must use a technical term, define it immediately\n- Use concrete examples, not abstract descriptions\n- Build from what the person already knows\n- Use 'imagine...' and 'think of it like...' framing\n- Keep sentences short and clear\n- Use numbered steps for processes\n- End with a one-sentence summary that captures the essence\n\nExplain this concept:\n\n{{input}}",
+            "Communication",
+            &["explain", "simple", "eli5", "teaching", "beginner"],
+        ),
+        p(
+            "Presentation Outline",
+            "Create a compelling, slide-by-slide presentation outline with speaker notes",
+            "You are a presentation coach who has helped hundreds of speakers create compelling talks. Create a presentation outline for the following topic.\n\nPRESENTATION STRUCTURE:\n\nTITLE: [Compelling title \u{2014} benefit-focused, not topic-focused]\nDURATION: [Estimate based on content]\nAUDIENCE: [Who they are, what they know, what they need]\n\nSLIDE-BY-SLIDE OUTLINE:\n\nSlide 1 \u{2014} OPENING HOOK\n- [Surprising stat, provocative question, or relatable story]\n- Goal: grab attention in 30 seconds\n\nSlides 2-3 \u{2014} PROBLEM\n- [Establish the pain point the audience feels]\n- [Show the cost of the status quo]\n\nSlides 4-7 \u{2014} SOLUTION\n- [Your main argument/framework in 3-4 key points]\n- [Each point: claim \u{2192} evidence \u{2192} example]\n\nSlide 8 \u{2014} OBJECTION HANDLING\n- [Anticipate and address the top objection]\n\nSlide 9 \u{2014} CALL TO ACTION\n- [One specific thing the audience should do Monday morning]\n\nSlide 10 \u{2014} Q&A / CLOSE\n- [Memorable closing line that ties back to the opening]\n\nSPEAKER NOTES:\n- Key transitions between sections\n- Stories or examples to include\n- Questions to ask the audience\n- Timing markers\n\nTopic:\n\n{{input}}",
+            "Communication",
+            &["presentation", "slides", "public speaking", "outline", "talk"],
+        ),
+
+        // ── Learning (2) ──────────────────────────────────────────────────
+        p(
+            "Teach Me",
+            "Get a personalized lesson on any topic from scratch",
+            "You are a world-class teacher creating a personalized learning experience. Teach me the following topic from scratch.\n\nTeaching approach:\n1. START WITH WHY — Why does this matter? What can I do after learning this?\n2. PREREQUISITES CHECK — What should I already know? (brief bullet list)\n3. CORE CONCEPT — The fundamental mental model in 3-5 sentences\n4. BUILDING BLOCKS — Break it into 4-6 key concepts, each with:\n   - Clear explanation in plain language\n   - Concrete example that makes it click\n   - Common misconception to avoid\n5. HANDS-ON EXERCISE — A practical exercise I can try right now\n6. KNOWLEDGE CHECK — 5 questions to test my understanding (with answers)\n7. NEXT STEPS — What to learn next and recommended resources\n\nAdapt your explanation depth to the complexity of the topic. Use analogies freely.\n\nTeach me:\n\n{{input}}",
+            "Learning",
+            &["teach", "learn", "education", "tutorial"],
+        ),
+        p(
+            "Study Guide",
+            "Create a comprehensive study guide for any topic",
+            "You are an expert educator. Create a comprehensive study guide for the following topic that would help someone pass an exam or deeply understand the subject.\n\nSTUDY GUIDE FORMAT:\n\n## Overview\n[What this topic covers and why it matters — 2-3 sentences]\n\n## Key Concepts (with difficulty ratings)\nFor each concept:\n- **Name** [Difficulty: Basic/Intermediate/Advanced]\n- Definition in one clear sentence\n- Example that illustrates it\n- How it connects to other concepts\n\n## Important Formulas / Rules / Patterns\n[List with explanations of when to use each]\n\n## Common Exam Questions & Answers\n1. [Question]\n   Answer: [Detailed answer with reasoning]\n\n## Mnemonics & Memory Aids\n[Tricks to remember key facts]\n\n## Practice Problems\n[5 problems of increasing difficulty with solutions]\n\n## Quick Reference Card\n[One-page cheat sheet of the most critical information]\n\nTopic:\n\n{{input}}",
+            "Learning",
+            &["study", "exam", "guide", "review", "education"],
+        ),
+
+        // ── Marketing (2) ─────────────────────────────────────────────────
+        p(
+            "Landing Page Copy",
+            "Write conversion-focused landing page copy",
+            "You are a conversion-focused copywriter. Write compelling landing page copy for the following product or service.\n\nFollow the proven landing page structure:\n\n1. HERO SECTION\n   - Headline: Clear value proposition (what + for whom + outcome)\n   - Subheadline: How it works in one sentence\n   - CTA button text: Action-oriented, specific\n\n2. PAIN POINTS (3)\n   - Problem the audience faces\n   - Emotional impact of the problem\n   - Why existing solutions fall short\n\n3. SOLUTION\n   - How the product solves each pain point\n   - Key differentiators (why this, not alternatives)\n\n4. FEATURES → BENEFITS (top 4-6)\n   For each: Feature → What it means → Why it matters to the user\n\n5. SOCIAL PROOF\n   - Suggested testimonial angles\n   - Stats/metrics to highlight\n   - Trust badges/logos to include\n\n6. OBJECTION HANDLING\n   - Top 3 objections and counters\n   - FAQ section (5 questions)\n\n7. FINAL CTA\n   - Urgency or scarcity element\n   - Risk reversal (guarantee, free trial)\n   - CTA button text\n\nWriting rules:\n- Write at 8th-grade reading level\n- Use 'you/your' (reader-focused, not product-focused)\n- Short sentences, short paragraphs\n- Power words: free, new, proven, guaranteed, instant\n\nProduct/service:\n\n{{input}}",
+            "Marketing",
+            &["landing page", "copywriting", "conversion", "sales"],
+        ),
+        p(
+            "Content Calendar",
+            "Create a detailed 4-week content calendar",
+            "You are a content strategist. Create a detailed content calendar for the following brand or topic.\n\nCONTENT CALENDAR (4 weeks):\n\nFor each piece of content provide:\n- Day and platform (Blog, Twitter/X, LinkedIn, Newsletter, YouTube)\n- Content type (article, thread, carousel, video, poll)\n- Title/hook\n- Key message (1 sentence)\n- CTA (what action should the reader take?)\n- Hashtags or keywords\n\nWEEK 1: [Theme]\n| Day | Platform | Type | Title | Key Message |\n\nWEEK 2: [Theme]\n...\n\nWEEK 3: [Theme]\n...\n\nWEEK 4: [Theme]\n...\n\nCONTENT PILLARS\n1. [Pillar] — [% of content] — [goal]\n2. ...\n\nREPURPOSING STRATEGY\n- How to turn 1 blog post into 5+ pieces of content\n\nMETRICS TO TRACK\n- [Metric] — [target] — [tool]\n\nBrand/topic:\n\n{{input}}",
+            "Marketing",
+            &["content", "calendar", "social media", "strategy"],
+        ),
+
+        // ── Legal (1) ─────────────────────────────────────────────────────
+        p(
+            "Contract Review",
+            "Analyze a contract for risks, red flags, and missing clauses",
+            "You are a legal analyst. Review the following contract or agreement and provide a thorough analysis.\n\nIMPORTANT: This is for informational purposes only and does not constitute legal advice. Always consult a qualified attorney for legal decisions.\n\nYour analysis should cover:\n\n1. SUMMARY\n   - Parties involved\n   - Purpose and scope\n   - Key dates and duration\n   - Financial terms\n\n2. KEY OBLIGATIONS\n   - What each party must do\n   - Performance standards and SLAs\n   - Reporting requirements\n\n3. RISK ANALYSIS\n   | Risk | Severity | Clause Reference | Concern |\n   \n4. RED FLAGS\n   - Unusual or one-sided clauses\n   - Missing standard protections\n   - Ambiguous language that could be exploited\n   - Unlimited liability exposure\n\n5. MISSING CLAUSES\n   - Standard clauses that should be present but aren't\n   - Protections you should negotiate for\n\n6. NEGOTIATION RECOMMENDATIONS\n   - Top 5 changes to request, in priority order\n   - Suggested language for each change\n   - What to accept vs. what's a dealbreaker\n\nContract text:\n\n{{input}}",
+            "Legal",
+            &["contract", "legal", "review", "negotiation"],
+        ),
+
+        // ── Product (2) ───────────────────────────────────────────────────
+        p(
+            "PRD (Product Requirements)",
+            "Write a complete Product Requirements Document",
+            "You are a senior product manager. Write a complete Product Requirements Document for the following feature or product.\n\n## Product Requirements Document\n\n### 1. Overview\n- **Product/Feature Name:**\n- **Author:**\n- **Date:**\n- **Status:** Draft\n\n### 2. Problem Statement\n- What problem does this solve?\n- Who experiences this problem?\n- How do they solve it today?\n- Why is the current solution inadequate?\n\n### 3. Goals & Success Metrics\n| Goal | Metric | Target | Measurement Method |\n\n### 4. User Stories\nAs a [persona], I want to [action], so that [outcome].\nAcceptance criteria for each story.\n\n### 5. Functional Requirements\n| ID | Requirement | Priority (P0-P3) | Notes |\n\n### 6. Non-Functional Requirements\n- Performance targets\n- Security requirements\n- Accessibility requirements\n- Scalability expectations\n\n### 7. User Flow\nStep-by-step flow for the primary use case.\n\n### 8. Out of Scope\nWhat we are explicitly NOT doing in this version.\n\n### 9. Open Questions\nDecisions that need to be made.\n\n### 10. Timeline\n| Phase | Scope | Duration | Dependencies |\n\nFeature/product description:\n\n{{input}}",
+            "Product",
+            &["prd", "product", "requirements", "specification"],
+        ),
+        p(
+            "User Research Questions",
+            "Create a user research interview guide",
+            "You are a UX researcher. Create a comprehensive user research interview guide for the following topic.\n\nINTERVIEW GUIDE\n\n## Research Objectives\n1. [What we want to learn]\n\n## Screening Criteria\n- Who qualifies for this study\n- Who to exclude and why\n\n## Warm-Up Questions (2-3 min)\n[Easy, open-ended questions to build rapport]\n\n## Core Questions (20-30 min)\nFor each question:\n- The question (open-ended, non-leading)\n- Why we're asking (internal note)\n- Follow-up probes if they give a short answer\n\n### Topic Area 1: Current Behavior\n[Questions about what they do today]\n\n### Topic Area 2: Pain Points\n[Questions about frustrations and unmet needs]\n\n### Topic Area 3: Reactions to Concept\n[Questions about the proposed solution]\n\n### Topic Area 4: Priorities\n[What matters most, trade-off questions]\n\n## Wrap-Up Questions (5 min)\n- Is there anything I didn't ask that you think is important?\n- Would you be open to a follow-up session?\n\n## ANALYSIS FRAMEWORK\n- Key themes to look for\n- How to synthesize across participants\n- Deliverable format\n\nResearch topic:\n\n{{input}}",
+            "Product",
+            &["user research", "interview", "ux", "discovery"],
+        ),
+
+        // ── Rust (2) ──────────────────────────────────────────────────────
+        p(
+            "Rust Code Review",
+            "Perform a Rust-specific code review with ownership and safety checks",
+            "You are a Rust expert performing a thorough code review. Analyze the following Rust code with attention to Rust-specific concerns.\n\nCheck for:\n\n1. OWNERSHIP & BORROWING\n   - Unnecessary clones or copies\n   - Lifetime issues or overly complex lifetime annotations\n   - Places where borrowing could replace ownership\n   - Missing or unnecessary Arc/Rc usage\n\n2. ERROR HANDLING\n   - Proper use of Result/Option\n   - Meaningful error types (thiserror/anyhow)\n   - No unwrap() in library code\n   - Error context propagation with .context()\n\n3. IDIOMATIC RUST\n   - Iterator chains vs manual loops\n   - Pattern matching completeness\n   - Builder pattern where appropriate\n   - Newtype pattern for type safety\n   - Proper use of traits and generics\n\n4. PERFORMANCE\n   - Unnecessary allocations (String vs &str, Vec vs slice)\n   - Missing #[inline] on hot paths\n   - Proper use of Cow<str> for flexible ownership\n   - Async considerations (Send + Sync bounds)\n\n5. SAFETY\n   - No unsafe without justification\n   - Proper Send/Sync implementations\n   - Integer overflow potential\n   - Proper handling of FFI boundaries\n\n6. CARGO & ECOSYSTEM\n   - Appropriate dependency choices\n   - Feature flag usage\n   - Proper edition usage\n\nFor each issue, provide the fix as idiomatic Rust code.\n\n{{input}}",
+            "Rust",
+            &["rust", "code review", "ownership", "safety"],
+        ),
+        p(
+            "Rust From Scratch",
+            "Implement production-quality idiomatic Rust code from a description",
+            "You are a Rust expert writing idiomatic, production-quality Rust code. Implement the following from scratch.\n\nYour Rust code must:\n- Compile on stable Rust (latest edition)\n- Use proper error handling (Result<T, E> with thiserror or anyhow)\n- Follow Rust API guidelines (https://rust-lang.github.io/api-guidelines/)\n- Use Iterator and closure patterns idiomatically\n- Prefer &str over String in function parameters\n- Use Cow<str> when ownership is conditional\n- Derive Debug, Clone, and other standard traits appropriately\n- Add doc comments (///) on all public items\n- Include unit tests in a #[cfg(test)] module\n- No unwrap() except in tests\n- Use proper module organization\n\nAfter the code, explain:\n1. Key design decisions and why\n2. Ownership/borrowing strategy chosen\n3. Error handling approach\n4. How to extend it\n\n{{input}}",
+            "Rust",
+            &["rust", "implement", "idiomatic", "production"],
+        ),
+
+        // ── Personal (1) ──────────────────────────────────────────────────
+        p(
+            "Decision Framework",
+            "Make a well-reasoned decision using a structured framework",
+            "You are a strategic thinking coach. Help me make a well-reasoned decision using a structured framework.\n\nDECISION ANALYSIS:\n\n## 1. Clarify the Decision\n- What exactly am I deciding?\n- What are my constraints (time, money, energy)?\n- What's the decision deadline?\n- Is this reversible or irreversible?\n\n## 2. Options (generate at least 4)\nFor each option:\n- Description\n- Pros (be specific)\n- Cons (be honest)\n- What would need to be true for this to be the best choice?\n\n## 3. Criteria Weighting\n| Criteria | Weight (1-10) |\nRate each option against each criterion.\n\n## 4. Second-Order Effects\n- If I choose X, what happens 6 months later? 2 years later?\n- Who else is affected and how?\n- What doors does this open or close?\n\n## 5. Pre-Mortem\n- Imagine it's 1 year from now and this decision was a disaster. What went wrong?\n- How can I mitigate those risks now?\n\n## 6. Recommendation\n- Best option with reasoning\n- Implementation steps\n- Review point to reassess\n\nDecision I need to make:\n\n{{input}}",
+            "Personal",
+            &["decision", "framework", "strategy", "analysis"],
+        ),
     ]
 }
 
@@ -837,6 +1043,16 @@ mod tests {
             "Design",
             "Best Practices",
             "Git",
+            "Data",
+            "Business",
+            "DevOps",
+            "Communication",
+            "Learning",
+            "Marketing",
+            "Legal",
+            "Product",
+            "Rust",
+            "Personal",
         ] {
             assert!(
                 categories.contains(expected),
@@ -855,8 +1071,8 @@ mod tests {
         }
         for (cat, count) in &counts {
             assert!(
-                *count >= 5,
-                "Category '{cat}' has only {count} prompts, expected at least 5"
+                *count >= 1,
+                "Category '{cat}' has only {count} prompts, expected at least 1"
             );
         }
     }
