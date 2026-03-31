@@ -333,6 +333,14 @@ async fn event_loop(
     let mut provider: Arc<dyn AiProvider> = Arc::clone(initial_provider);
 
     loop {
+        // Auto-clear status messages after 5 seconds.
+        if let Some(time) = app.status_time {
+            if time.elapsed() > std::time::Duration::from_secs(5) {
+                app.status_message = None;
+                app.status_time = None;
+            }
+        }
+
         // Draw the UI.
         terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -360,6 +368,10 @@ async fn event_loop(
                     crossterm::event::MouseEventKind::ScrollDown => app.scroll_down(),
                     _ => {}
                 },
+                Event::Resize(_, _) => {
+                    // Terminal resized — the next draw call will pick up the new
+                    // dimensions automatically.  Nothing explicit to do here.
+                }
                 _ => {}
             }
         }
@@ -464,7 +476,7 @@ async fn handle_key_event(
     // Escape while streaming = stop generation
     if app.is_streaming && code == KeyCode::Esc {
         app.finish_streaming();
-        app.status_message = Some("Generation stopped".into());
+        app.set_status("Generation stopped");
         return Ok(());
     }
 
@@ -472,6 +484,32 @@ async fn handle_key_event(
     if mods.contains(KeyModifiers::CONTROL) {
         match code {
             KeyCode::Char('c') | KeyCode::Char('d') => {
+                // Graceful shutdown: save state before quitting.
+                let _ = app.clipboard_manager.save();
+                // Save current conversation if it has messages.
+                if !app.current_conversation().messages.is_empty() {
+                    let conv = app.current_conversation();
+                    let record = history::ConversationRecord {
+                        id: conv.id.clone(),
+                        title: conv.title.clone(),
+                        messages: conv
+                            .messages
+                            .iter()
+                            .map(|(role, content)| history::MessageRecord {
+                                role: role.clone(),
+                                content: content.clone(),
+                                timestamp: chrono::Utc::now(),
+                            })
+                            .collect(),
+                        model: app.selected_model.clone(),
+                        created_at: conv.created_at,
+                        updated_at: chrono::Utc::now(),
+                    };
+                    let _ = history::save_conversation(&record);
+                }
+                // Drop the stream receiver to stop any in-progress generation.
+                app.stream_rx = None;
+                app.is_streaming = false;
                 app.should_quit = true;
                 return Ok(());
             }
@@ -520,6 +558,88 @@ async fn handle_key_event(
     Ok(())
 }
 
+// ── Common Ctrl handler ────────────────────────────────────────────────────
+
+/// Handle Ctrl+<key> commands that work in both Normal and Insert modes.
+/// Returns `true` if the key was handled.
+async fn handle_common_ctrl(
+    app: &mut App,
+    code: KeyCode,
+    provider: &Arc<dyn AiProvider>,
+    config: &Config,
+) -> anyhow::Result<bool> {
+    match code {
+        KeyCode::Char('k') => {
+            app.mode = AppMode::CommandBar;
+            app.command_bar_input.clear();
+            app.command_bar_select_index = 0;
+            app.command_bar_category = 0;
+            Ok(true)
+        }
+        KeyCode::Char('n') => {
+            app.new_conversation();
+            Ok(true)
+        }
+        KeyCode::Char('p') => {
+            app.mode = AppMode::PromptPicker;
+            app.prompt_filter.clear();
+            app.prompt_select_index = 0;
+            app.prompt_category_index = 0;
+            app.prompt_focus_right = false;
+            Ok(true)
+        }
+        KeyCode::Char('m') => {
+            app.mode = AppMode::ModelSelect;
+            app.model_select_index = app
+                .available_models
+                .iter()
+                .position(|m| m == &app.selected_model)
+                .unwrap_or(0);
+            Ok(true)
+        }
+        KeyCode::Char('t') => {
+            app.mode = AppMode::ProviderSelect;
+            app.provider_select_index = app
+                .available_providers
+                .iter()
+                .position(|p| p == &app.selected_provider)
+                .unwrap_or(0);
+            Ok(true)
+        }
+        KeyCode::Char('y') => {
+            copy_last_assistant_message(app);
+            Ok(true)
+        }
+        KeyCode::Char('l') => {
+            clear_conversation(app);
+            Ok(true)
+        }
+        KeyCode::Char('b') => {
+            app.mode = AppMode::ClipboardManager;
+            app.clipboard_search.clear();
+            app.clipboard_select_index = 0;
+            Ok(true)
+        }
+        KeyCode::Char('o') => {
+            app.history_entries =
+                history::list_conversations().unwrap_or_default();
+            app.history_select_index = 0;
+            app.history_search.clear();
+            app.mode = AppMode::HistoryBrowser;
+            Ok(true)
+        }
+        KeyCode::Char('r') => {
+            regenerate_response(app, provider, config).await;
+            Ok(true)
+        }
+        KeyCode::Char('e') => {
+            edit_last_message(app);
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 // ── Normal mode ─────────────────────────────────────────────────────────────
 
 async fn handle_normal_mode(
@@ -535,59 +655,10 @@ async fn handle_normal_mode(
         // ── Normal / vim-navigation ─────────────────────────────────────
         InputMode::Normal => {
             if mods.contains(KeyModifiers::CONTROL) {
-                match code {
-                    KeyCode::Char('k') => {
-                        app.mode = AppMode::CommandBar;
-                        app.command_bar_input.clear();
-                        app.command_bar_select_index = 0;
-                        app.command_bar_category = 0;
-                    }
-                    KeyCode::Char('n') => app.new_conversation(),
-                    KeyCode::Char('p') => {
-                        app.mode = AppMode::PromptPicker;
-                        app.prompt_filter.clear();
-                        app.prompt_select_index = 0;
-                        app.prompt_category_index = 0;
-                        app.prompt_focus_right = false;
-                    }
-                    KeyCode::Char('m') => {
-                        app.mode = AppMode::ModelSelect;
-                        app.model_select_index = app
-                            .available_models
-                            .iter()
-                            .position(|m| m == &app.selected_model)
-                            .unwrap_or(0);
-                    }
-                    KeyCode::Char('t') => {
-                        app.mode = AppMode::ProviderSelect;
-                        app.provider_select_index = app
-                            .available_providers
-                            .iter()
-                            .position(|p| p == &app.selected_provider)
-                            .unwrap_or(0);
-                    }
-                    KeyCode::Char('y') => copy_last_assistant_message(app),
-                    KeyCode::Char('l') => clear_conversation(app),
-                    KeyCode::Char('b') => {
-                        app.mode = AppMode::ClipboardManager;
-                        app.clipboard_search.clear();
-                        app.clipboard_select_index = 0;
-                    }
-                    KeyCode::Char('o') => {
-                        app.history_entries =
-                            history::list_conversations().unwrap_or_default();
-                        app.history_select_index = 0;
-                        app.history_search.clear();
-                        app.mode = AppMode::HistoryBrowser;
-                    }
-                    KeyCode::Char('r') => {
-                        regenerate_response(app, provider, config).await;
-                    }
-                    KeyCode::Char('e') => {
-                        edit_last_message(app);
-                    }
-                    _ => {}
+                if handle_common_ctrl(app, code, provider, config).await? {
+                    return Ok(());
                 }
+                // No mode-specific Ctrl keys in Normal mode.
                 return Ok(());
             }
 
@@ -612,57 +683,17 @@ async fn handle_normal_mode(
         // ── Insert / typing mode ────────────────────────────────────────
         InputMode::Insert => {
             if mods.contains(KeyModifiers::CONTROL) {
+                if handle_common_ctrl(app, code, provider, config).await? {
+                    return Ok(());
+                }
+                // Insert-mode-specific Ctrl keys.
                 match code {
-                    KeyCode::Char('k') => {
-                        app.mode = AppMode::CommandBar;
-                        app.command_bar_input.clear();
-                        app.command_bar_select_index = 0;
-                        app.command_bar_category = 0;
-                    }
-                    KeyCode::Char('n') => app.new_conversation(),
-                    KeyCode::Char('p') => {
-                        app.mode = AppMode::PromptPicker;
-                        app.prompt_filter.clear();
-                        app.prompt_select_index = 0;
-                        app.prompt_category_index = 0;
-                        app.prompt_focus_right = false;
-                    }
-                    KeyCode::Char('m') => {
-                        app.mode = AppMode::ModelSelect;
-                        app.model_select_index = app
-                            .available_models
-                            .iter()
-                            .position(|m| m == &app.selected_model)
-                            .unwrap_or(0);
-                    }
-                    KeyCode::Char('t') => {
-                        app.mode = AppMode::ProviderSelect;
-                        app.provider_select_index = app
-                            .available_providers
-                            .iter()
-                            .position(|p| p == &app.selected_provider)
-                            .unwrap_or(0);
-                    }
                     KeyCode::Char('v') => {
                         if let Ok(text) = clipboard::paste_from_clipboard() {
                             for ch in text.chars() {
                                 app.insert_char(ch);
                             }
                         }
-                    }
-                    KeyCode::Char('y') => copy_last_assistant_message(app),
-                    KeyCode::Char('l') => clear_conversation(app),
-                    KeyCode::Char('b') => {
-                        app.mode = AppMode::ClipboardManager;
-                        app.clipboard_search.clear();
-                        app.clipboard_select_index = 0;
-                    }
-                    KeyCode::Char('o') => {
-                        app.history_entries =
-                            history::list_conversations().unwrap_or_default();
-                        app.history_select_index = 0;
-                        app.history_search.clear();
-                        app.mode = AppMode::HistoryBrowser;
                     }
                     KeyCode::Char('w') => {
                         // Delete word before cursor.
@@ -674,12 +705,6 @@ async fn handle_normal_mode(
                             .unwrap_or(0);
                         app.input.drain(new_pos..app.cursor_position);
                         app.cursor_position = new_pos;
-                    }
-                    KeyCode::Char('r') => {
-                        regenerate_response(app, provider, config).await;
-                    }
-                    KeyCode::Char('e') => {
-                        edit_last_message(app);
                     }
                     _ => {}
                 }
@@ -907,7 +932,7 @@ fn handle_model_select(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             if let Some(model) = app.available_models.get(app.model_select_index) {
                 app.selected_model = model.clone();
-                app.status_message = Some(format!("Model set to {model}"));
+                app.set_status(format!("Model set to {model}"));
             }
             app.mode = AppMode::Normal;
         }
@@ -932,7 +957,7 @@ fn handle_provider_select(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some(provider_name) = app.available_providers.get(app.provider_select_index) {
                 app.selected_provider = provider_name.clone();
                 app.provider_changed = true;
-                app.status_message = Some(format!("Provider switched to {}", provider_name));
+                app.set_status(format!("Provider switched to {}", provider_name));
             }
             app.mode = AppMode::Normal;
         }
@@ -1167,6 +1192,11 @@ fn common_prefix(strings: &[&&str]) -> String {
 /// `/url`, `/run`, `/pipe`, `/diff`, `/test`, `/build`, `/git`) before
 /// falling through to the normal AI chat path.
 async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
+    if app.is_streaming {
+        app.set_status("Already streaming \u{2014} press Esc to cancel first");
+        return;
+    }
+
     // ── Slash-command dispatch ──────────────────────────────────────────
     if text.starts_with('/') {
         if handle_slash_command(app, text, provider).await {
@@ -1324,10 +1354,11 @@ System\n\
         match matched {
             Some(model) => {
                 app.selected_model = model.clone();
-                app.status_message = Some(format!("Model set to {model}"));
+                app.set_status(format!("Model set to {model}"));
             }
             None => {
-                app.status_message = Some(format!("Unknown model: {name}"));
+                let available = app.available_models.join(", ");
+                app.set_status(format!("Unknown model: {name}. Available: {available}"));
             }
         }
         return true;
@@ -1380,7 +1411,7 @@ System\n\
         if valid.contains(&name) {
             app.selected_provider = name.to_string();
             app.provider_changed = true;
-            app.status_message = Some(format!("Switched to provider: {name}"));
+            app.set_status(format!("Switched to provider: {name}"));
         } else {
             app.add_assistant_message(format!(
                 "Unknown provider: {name}\nAvailable: claude_code, ollama, openai, openrouter"
@@ -1456,7 +1487,7 @@ System\n\
             if app.selected_provider == "claude_code" || app.selected_provider == "claude" {
                 app.code_mode = true;
                 app.provider_changed = true;
-                app.status_message = Some("Code mode ON - Claude has file & terminal access".into());
+                app.set_status("Code mode ON - Claude has file & terminal access");
             } else {
                 app.add_assistant_message(
                     "Code mode is only available with the claude_code provider.".into(),
@@ -1465,7 +1496,7 @@ System\n\
         } else if rest == "off" {
             app.code_mode = false;
             app.provider_changed = true;
-            app.status_message = Some("Code mode OFF - chat only".into());
+            app.set_status("Code mode OFF - chat only");
         } else {
             let status = if app.code_mode { "ON" } else { "OFF" };
             app.add_assistant_message(format!(
@@ -1948,6 +1979,10 @@ System\n\
             return true;
         }
         let cmd = rest.to_string();
+        if is_dangerous_command(&cmd) {
+            app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
+            return true;
+        }
         app.status_message = Some(format!("Running: {cmd}"));
         match shell::run_command(&cmd) {
             Ok(result) => {
@@ -2567,6 +2602,11 @@ async fn send_to_ai(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
 /// Start a streaming AI request using the current conversation history.
 /// Assumes the caller has already added the user message to the conversation.
 async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) {
+    if app.is_streaming {
+        app.set_status("Already streaming \u{2014} press Esc to cancel first");
+        return;
+    }
+
     // Find the most recent user message for KB context lookup.
     let user_message = app
         .current_conversation()
@@ -2645,7 +2685,7 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
     if let Some(pos) = conv.messages.iter().rposition(|(role, _)| role == "assistant") {
         conv.messages.remove(pos);
     } else {
-        app.status_message = Some("No response to regenerate".into());
+        app.set_status("No response to regenerate");
         return;
     }
 
@@ -2671,7 +2711,7 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
     app.streaming_response.clear();
     app.streaming_start = Some(std::time::Instant::now());
     app.scroll_offset = 0;
-    app.status_message = Some("Regenerating...".into());
+    app.set_status("Regenerating...");
 
     let provider = Arc::clone(provider);
     tokio::spawn(async move {
@@ -2699,9 +2739,9 @@ fn edit_last_message(app: &mut App) {
         app.input = content;
         app.cursor_position = app.input.len();
         app.input_mode = InputMode::Insert;
-        app.status_message = Some("Editing last message — press Enter to resend".into());
+        app.set_status("Editing last message \u{2014} press Enter to resend");
     } else {
-        app.status_message = Some("No message to edit".into());
+        app.set_status("No message to edit");
     }
 }
 
@@ -2722,7 +2762,7 @@ fn delete_last_exchange(app: &mut App) {
         }
     }
 
-    app.status_message = Some("Deleted last exchange".into());
+    app.set_status("Deleted last exchange");
 }
 
 /// Copy the last assistant message to the system clipboard.
@@ -2740,14 +2780,14 @@ fn copy_last_assistant_message(app: &mut App) {
             Ok(()) => {
                 app.clipboard_manager.add(text, ClipboardSource::ManualCopy);
                 let _ = app.clipboard_manager.save();
-                app.status_message = Some("Copied to clipboard".into());
+                app.set_status("Copied to clipboard");
             }
             Err(e) => {
-                app.status_message = Some(format!("Clipboard error: {e}"));
+                app.set_status(format!("Clipboard error: {e}"));
             }
         },
         None => {
-            app.status_message = Some("No assistant message to copy".into());
+            app.set_status("No assistant message to copy");
         }
     }
 }
@@ -2759,7 +2799,7 @@ fn clear_conversation(app: &mut App) {
     app.is_streaming = false;
     app.stream_rx = None;
     app.scroll_offset = 0;
-    app.status_message = Some("Conversation cleared".into());
+    app.set_status("Conversation cleared");
 }
 
 /// Cycle to the next conversation (wraps around).
@@ -2767,7 +2807,7 @@ fn cycle_conversation(app: &mut App) {
     if app.conversations.len() > 1 {
         app.active_conversation = (app.active_conversation + 1) % app.conversations.len();
         app.scroll_offset = 0;
-        app.status_message = Some(format!(
+        app.set_status(format!(
             "Switched to conversation {}",
             app.active_conversation + 1
         ));
@@ -2782,11 +2822,25 @@ fn cycle_conversation_back(app: &mut App) {
             app.active_conversation - 1
         };
         app.scroll_offset = 0;
-        app.status_message = Some(format!(
+        app.set_status(format!(
             "Switched to conversation {}",
             app.active_conversation + 1
         ));
     }
+}
+
+/// Returns `true` if the command matches a well-known destructive pattern
+/// that should never be run from within Nerve.
+fn is_dangerous_command(cmd: &str) -> bool {
+    let dangerous = [
+        "rm -rf /",
+        "rm -rf /*",
+        "mkfs",
+        "dd if=",
+        "> /dev/sd",
+        "chmod -R 777 /",
+    ];
+    dangerous.iter().any(|d| cmd.contains(d))
 }
 
 #[cfg(test)]
@@ -2906,5 +2960,66 @@ mod tests {
         app.search_query = "hello".into();
         update_search_results(&mut app);
         assert_eq!(app.search_results.len(), 1);
+    }
+
+    #[test]
+    fn delete_last_exchange_empty_conversation() {
+        let mut app = App::new();
+        delete_last_exchange(&mut app); // Should not panic
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn regenerate_with_no_assistant_message() {
+        let mut app = App::new();
+        app.add_user_message("hello".into());
+        // No assistant message — edit should still work on user msg
+        edit_last_message(&mut app);
+        assert_eq!(app.input, "hello");
+    }
+
+    #[test]
+    fn expand_file_references_preserves_nonfile_at() {
+        // @username should not be expanded
+        let text = "hello @john how are you";
+        let expanded = files::expand_file_references(text);
+        assert_eq!(expanded, text); // No dots/slashes, so no expansion
+    }
+
+    // ── is_dangerous_command ───────────────────────────────────────────
+
+    #[test]
+    fn dangerous_rm_rf_root() {
+        assert!(is_dangerous_command("rm -rf /"));
+        assert!(is_dangerous_command("rm -rf /*"));
+        assert!(is_dangerous_command("sudo rm -rf /"));
+    }
+
+    #[test]
+    fn dangerous_mkfs() {
+        assert!(is_dangerous_command("mkfs.ext4 /dev/sda1"));
+    }
+
+    #[test]
+    fn dangerous_dd() {
+        assert!(is_dangerous_command("dd if=/dev/zero of=/dev/sda"));
+    }
+
+    #[test]
+    fn safe_commands_pass() {
+        assert!(!is_dangerous_command("ls -la"));
+        assert!(!is_dangerous_command("rm file.txt"));
+        assert!(!is_dangerous_command("cargo test"));
+        assert!(!is_dangerous_command("git status"));
+    }
+
+    // ── set_status auto-clear ─────────────────────────────────────────
+
+    #[test]
+    fn set_status_populates_both_fields() {
+        let mut app = App::new();
+        app.set_status("hello");
+        assert_eq!(app.status_message.as_deref(), Some("hello"));
+        assert!(app.status_time.is_some());
     }
 }
