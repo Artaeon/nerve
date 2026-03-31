@@ -22,15 +22,43 @@ use super::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
 pub struct ClaudeCodeProvider {
     claude_binary: String,
     default_model: String,
+    /// Whether to allow Claude Code to use tools (file access, bash, etc.).
+    enable_tools: bool,
+    /// Optional session ID for session continuity.
+    session_id: Option<String>,
+    /// Working directory for file access when tools are enabled.
+    working_dir: Option<String>,
 }
 
 impl ClaudeCodeProvider {
     /// Create a new provider that looks for `claude` in `$PATH`.
+    /// Tools are disabled (chat-only mode).
     pub fn new() -> Self {
         Self {
             claude_binary: "claude".into(),
             default_model: "sonnet".into(),
+            enable_tools: false,
+            session_id: None,
+            working_dir: None,
         }
+    }
+
+    /// Create a new provider with tools enabled (file access, bash, etc.).
+    /// Uses `--dangerously-skip-permissions` for non-interactive tool use.
+    pub fn with_tools() -> Self {
+        Self {
+            claude_binary: "claude".into(),
+            default_model: "sonnet".into(),
+            enable_tools: true,
+            session_id: None,
+            working_dir: None,
+        }
+    }
+
+    /// Set the working directory for file access (builder pattern).
+    pub fn with_working_dir(mut self, dir: String) -> Self {
+        self.working_dir = Some(dir);
+        self
     }
 
     /// Create a new provider with a specific default model.
@@ -38,7 +66,15 @@ impl ClaudeCodeProvider {
         Self {
             claude_binary: "claude".into(),
             default_model: model,
+            enable_tools: false,
+            session_id: None,
+            working_dir: None,
         }
+    }
+
+    /// Returns whether tools (file access, bash) are enabled.
+    pub fn tools_enabled(&self) -> bool {
+        self.enable_tools
     }
 
     /// Build a single prompt string and an optional system prompt from a slice
@@ -111,22 +147,37 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(());
             }
 
-            let mut args: Vec<&str> = vec![
-                "-p",
-                &prompt,
-                "--output-format",
-                "text",
-                "--model",
-                model,
-                "--allowedTools",
-                "",
-                "--no-session-persistence",
+            let mut args: Vec<String> = vec![
+                "-p".into(),
+                prompt.clone(),
+                "--output-format".into(),
+                "text".into(),
+                "--model".into(),
+                model.into(),
             ];
 
-            // Borrow system_prompt content for the args slice.
+            if self.enable_tools {
+                args.push("--dangerously-skip-permissions".into());
+            } else {
+                args.push("--allowedTools".into());
+                args.push("".into());
+            }
+
+            if let Some(ref session) = self.session_id {
+                args.push("--resume".into());
+                args.push(session.clone());
+            } else {
+                args.push("--no-session-persistence".into());
+            }
+
+            if let Some(ref dir) = self.working_dir {
+                args.push("--add-dir".into());
+                args.push(dir.clone());
+            }
+
             if let Some(ref sys) = system_prompt {
-                args.push("--system-prompt");
-                args.push(sys.as_str());
+                args.push("--system-prompt".into());
+                args.push(sys.clone());
             }
 
             let mut child = Command::new(&self.claude_binary)
@@ -192,21 +243,37 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(String::new());
             }
 
-            let mut args: Vec<&str> = vec![
-                "-p",
-                &prompt,
-                "--output-format",
-                "json",
-                "--model",
-                model,
-                "--allowedTools",
-                "",
-                "--no-session-persistence",
+            let mut args: Vec<String> = vec![
+                "-p".into(),
+                prompt.clone(),
+                "--output-format".into(),
+                "json".into(),
+                "--model".into(),
+                model.into(),
             ];
 
+            if self.enable_tools {
+                args.push("--dangerously-skip-permissions".into());
+            } else {
+                args.push("--allowedTools".into());
+                args.push("".into());
+            }
+
+            if let Some(ref session) = self.session_id {
+                args.push("--resume".into());
+                args.push(session.clone());
+            } else {
+                args.push("--no-session-persistence".into());
+            }
+
+            if let Some(ref dir) = self.working_dir {
+                args.push("--add-dir".into());
+                args.push(dir.clone());
+            }
+
             if let Some(ref sys) = system_prompt {
-                args.push("--system-prompt");
-                args.push(sys.as_str());
+                args.push("--system-prompt".into());
+                args.push(sys.clone());
             }
 
             let output = Command::new(&self.claude_binary)
@@ -232,6 +299,12 @@ impl AiProvider for ClaudeCodeProvider {
             let json: serde_json::Value = serde_json::from_slice(&output.stdout)
                 .context("failed to parse claude JSON output")?;
 
+            // Capture session ID for continuity (logged for now; the trait
+            // returns only a String so we cannot propagate it directly).
+            if let Some(sid) = json["session_id"].as_str() {
+                tracing::info!("Claude Code session: {sid}");
+            }
+
             let result = json["result"]
                 .as_str()
                 .unwrap_or("")
@@ -247,14 +320,14 @@ impl AiProvider for ClaudeCodeProvider {
         Box::pin(async move {
             let models = vec![
                 ModelInfo {
-                    id: "sonnet".into(),
-                    name: "Claude Sonnet 4".into(),
+                    id: "opus".into(),
+                    name: "Claude Opus 4.6".into(),
                     provider: "Claude Code".into(),
-                    context_length: Some(200_000),
+                    context_length: Some(1_000_000),
                 },
                 ModelInfo {
-                    id: "opus".into(),
-                    name: "Claude Opus 4".into(),
+                    id: "sonnet".into(),
+                    name: "Claude Sonnet 4.6".into(),
                     provider: "Claude Code".into(),
                     context_length: Some(200_000),
                 },

@@ -114,6 +114,12 @@ pub struct App {
     pub provider_select_index: usize,
     pub provider_changed: bool,
 
+    // -- code mode --
+    /// When `true`, the Claude Code provider has file & terminal access.
+    pub code_mode: bool,
+    /// Working directory for Claude Code file access.
+    pub working_dir: Option<String>,
+
     // -- misc --
     pub status_message: Option<String>,
     pub should_quit: bool,
@@ -144,8 +150,8 @@ impl App {
 
             selected_model: "sonnet".into(),
             available_models: vec![
-                "sonnet".into(),
                 "opus".into(),
+                "sonnet".into(),
                 "haiku".into(),
                 "gpt-4o".into(),
                 "gpt-4o-mini".into(),
@@ -179,6 +185,9 @@ impl App {
             selected_provider: "claude_code".into(),
             provider_select_index: 0,
             provider_changed: false,
+
+            code_mode: false,
+            working_dir: None,
 
             status_message: None,
             should_quit: false,
