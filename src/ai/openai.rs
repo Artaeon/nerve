@@ -17,6 +17,8 @@ struct ChatCompletionRequest<'a> {
     model: &'a str,
     messages: &'a [ChatMessage],
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<usize>,
 }
 
 // -- Non-streaming response --
@@ -94,6 +96,7 @@ pub struct OpenAiProvider {
     api_key: String,
     base_url: String,
     provider_name: String,
+    max_tokens: Option<usize>,
 }
 
 impl OpenAiProvider {
@@ -105,7 +108,14 @@ impl OpenAiProvider {
             api_key,
             base_url: base_url.trim_end_matches('/').to_string(),
             provider_name,
+            max_tokens: Some(4096),
         }
+    }
+
+    /// Override the `max_tokens` sent with each request.
+    pub fn with_max_tokens(mut self, tokens: usize) -> Self {
+        self.max_tokens = Some(tokens);
+        self
     }
 
     // -- Convenience constructors --------------------------------------------------
@@ -186,6 +196,7 @@ impl AiProvider for OpenAiProvider {
             model: &model,
             messages: &messages,
             stream: true,
+            max_tokens: self.max_tokens,
         };
 
         let response = self
@@ -290,6 +301,7 @@ impl AiProvider for OpenAiProvider {
             model: &model,
             messages: &messages,
             stream: false,
+            max_tokens: self.max_tokens,
         };
 
         let response = self
