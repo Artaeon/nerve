@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-orange.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/Tests-370%20passing-brightgreen.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-450%20passing-brightgreen.svg)](#)
 
 ```
     _   __
@@ -16,18 +16,32 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-A blazing-fast terminal AI assistant. Multi-model, multi-provider, with 130 smart prompts,
-knowledge bases, project scaffolding, and a beautiful TUI. ~7MB binary, 370 tests.
+A blazing-fast terminal AI assistant and coding agent built in Rust.
+6 providers, 130 smart prompts, agent mode with 7 tools, project scaffolding,
+knowledge bases, and a beautiful TUI. 18K lines of Rust, 450 tests, ~7MB binary.
 
-[Features](#features) | [Install](#installation) | [Quick Start](#quick-start) | [Commands](#slash-commands) | [Config](#configuration)
+[Features](#features) | [Install](#installation) | [Quick Start](#quick-start) | [Agent Mode](#agent-mode) | [Docs](docs/GUIDE.md)
 
 </div>
 
 ---
 
+## Why Nerve?
+
+Most AI tools are either cloud-only, Electron-bloated, or require complex setup. Nerve is different:
+
+- **No API keys for Claude** -- Uses your Claude Code subscription directly. Just install Claude Code and go.
+- **6 AI providers** -- Claude Code, OpenAI, OpenRouter, Ollama (local), GitHub Copilot, or any custom endpoint. Switch instantly with Ctrl+T.
+- **Full coding agent** -- Not just chat. Nerve can read files, write code, run commands, search your codebase, and iterate automatically.
+- **Token-efficient** -- Provider-aware context management. Auto-compacts conversations to minimize API costs on OpenAI/OpenRouter.
+- **130 smart prompts** -- Professional templates for code review, architecture design, debugging, writing, marketing, and more. Each prompt is 5-15 lines of detailed instructions.
+- **Terminal-native** -- ~7MB Rust binary. Instant startup. Vim keybindings. No browser, no Electron, no subscriptions beyond your AI provider.
+
+---
+
 ## Screenshots
 
-### Chat with Syntax Highlighting
+### Chat with Syntax-Highlighted Code
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -76,7 +90,7 @@ knowledge bases, project scaffolding, and a beautiful TUI. ~7MB binary, 370 test
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Nerve Bar -- 130 Smart Prompts
+### Nerve Bar -- 130 Smart Prompts with Categories
 
 ```
 ╭─ Nerve Bar ───────────────────────────────────────────────────────────╮
@@ -148,48 +162,123 @@ knowledge bases, project scaffolding, and a beautiful TUI. ~7MB binary, 370 test
 
 ---
 
-## Why Nerve?
-
-- **No API keys required** -- Uses your Claude Code subscription natively. Just install Claude Code and go.
-- **Blazing fast** -- Rust + ratatui. LTO-stripped ~7MB binary with instant startup.
-- **Multi-provider** -- Claude Code, OpenAI, Ollama (local), OpenRouter, GitHub Copilot, any OpenAI-compatible endpoint. Switch on the fly with Ctrl+T.
-- **Terminal-native** -- No browser, no Electron. Designed for developers who live in the terminal.
-- **Smart, not bloated** -- 130 built-in prompts across 20 categories, knowledge base RAG, automations, project scaffolding. All in a single binary.
-- **Open source** -- MIT licensed. Free forever.
-
----
-
 ## Features
 
-### For Developers
+### AI Providers
 
-- **File Context** (`/file`, `@file`) -- Read any file into the conversation, with optional line ranges (`/file src/main.rs:10-50`)
-- **Multi-File Context** (`/files`) -- Read multiple files at once for cross-file analysis
-- **Workspace Awareness** (`/workspace`) -- Auto-detects your project type (Rust, Node, Python, Go, etc.)
-- **Shell Integration** (`/run`, `/pipe`, `/test`, `/build`) -- Execute commands without leaving Nerve
-- **Git Integration** (`/diff`, `/git`) -- Git operations with AI-powered analysis and commit messages
-- **Code Mode** (`/code on`) -- Give Claude full file and terminal access (Claude Code only)
-- **Project Scaffolding** (`/template`, `/scaffold`) -- Generate projects from 8 built-in templates or AI-generate custom ones
+| Provider | Auth | Models | Context | Best For |
+|----------|------|--------|---------|----------|
+| Claude Code | Subscription | opus, sonnet, haiku | 200K-1M | Heavy coding, large context |
+| OpenAI | API key | gpt-4o, gpt-4o-mini | 128K | Reliable, widely supported |
+| OpenRouter | API key | 100+ models | Varies | Model variety, cost control |
+| Ollama | None (local) | llama3, mistral, etc. | 8K-128K | Privacy, offline, free |
+| GitHub Copilot | gh CLI | copilot | 8K | Quick suggestions |
+| Custom | API key + URL | Any OpenAI-compatible | Varies | Self-hosted, specialized |
 
-### AI & Prompts
+Switch providers at any time:
 
-- **Multi-Provider** -- Claude Code (no API key), OpenAI, Ollama, OpenRouter, GitHub Copilot, any OpenAI-compatible endpoint
-- **130 Smart Prompts** -- 20 categories: Writing, Coding, Engineering, Analysis, Creative, Productivity, Design, Git, Rust, DevOps, Best Practices, Business, Communication, Data, Learning, Legal, Marketing, Personal, Product, Translation
-- **Nerve Bar** (Ctrl+K) -- Fuzzy command palette with category tabs, search, and prompt preview
-- **Streaming** -- Responses render token-by-token with full syntax highlighting via syntect
-- **Knowledge Base** (`/kb`) -- RAG with document ingestion, chunking, fuzzy search, and auto-context injection
-- **Automations** (`/auto`) -- Multi-step AI pipelines that chain prompts together
+```
+Ctrl+T               # Visual provider picker
+/provider ollama      # Command
+nerve --provider openai --model gpt-4o  # CLI flag
+```
+
+### Coding Agent (`/agent on`)
+
+Nerve becomes a full coding agent that can autonomously:
+
+| Tool | What It Does |
+|------|-------------|
+| `read_file` | Read any file in the project |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Find-and-replace within files |
+| `run_command` | Execute shell commands |
+| `list_files` | Browse directory contents |
+| `search_code` | Grep across the codebase |
+| `create_directory` | Create directory trees |
+
+The agent runs a plan-execute-observe loop (max 10 iterations):
+
+1. You describe the task
+2. AI reads relevant files to understand the code
+3. AI makes changes using tools
+4. AI verifies changes (reads files, runs tests)
+5. Repeats until complete
+
+Works with ANY provider -- not just Claude Code. The tool format is prompt-based, so it works with OpenAI, Ollama, etc.
+
+### Smart Prompts (130 across 22 categories)
+
+Access via the Nerve Bar (Ctrl+K) with fuzzy search and category filtering:
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Engineering | 20 | Full Code Review, Architect Solution, Debug Detective |
+| Coding | 12 | Explain Code, Fix Bug, Refactor, Write Tests |
+| Writing | 15 | Technical Blog Post, Professional Email, Long-Form Article |
+| Design | 10 | UX Review, Design System, Accessibility Audit |
+| Git | 8 | Commit Message, PR Description, Git Workflow |
+| Best Practices | 10 | SOLID Principles, Clean Code, PR Review |
+| Rust | 2 | Rust Code Review, Rust From Scratch |
+| DevOps | 2 | Incident Postmortem, Infrastructure as Code |
+| Business | 2 | Business Case, Meeting Notes to Actions |
+| Data | 2 | SQL Query Builder, Data Pipeline Design |
+| Marketing | 2 | Landing Page Copy, Content Calendar |
+| Product | 2 | PRD, User Research Questions |
+| [+ 10 more...] | | Translation, Analysis, Creative, Productivity, etc. |
+
+Each prompt is a detailed 5-15 line system prompt -- not a simple one-liner.
+
+### Developer Workflow
+
+```bash
+# Read files into context
+/file src/main.rs              # Full file
+/file src/main.rs:10-50        # Specific lines
+/files src/lib.rs src/app.rs   # Multiple files
+"review @src/main.rs"          # Inline @file reference
+
+# Run commands and use output as context
+/run cargo test                # Show output
+/test                          # Auto-detect test runner
+/build                         # Auto-detect build tool
+/diff                          # Git diff as AI context
+/pipe cargo clippy             # Command output as context
+
+# Project scaffolding
+/template list                 # 8 built-in templates
+/template rust-web myapi       # Create from template
+/scaffold a CLI tool in Go     # AI-generated project
+```
+
+### Workspace Awareness
+
+Nerve auto-detects your project type on startup:
+
+- Reads Cargo.toml, package.json, pyproject.toml, go.mod, etc.
+- Extracts project name, description, and key dependencies
+- Injects project context into the AI system prompt
+- Supports: Rust, Node.js, Python, Go, Java, Ruby, Elixir, Zig, C#, C++
+
+### Context Management
+
+Token-efficient by design:
+
+- Provider-aware limits (Claude 200K, OpenAI 60K, OpenRouter 30K, Ollama 8K)
+- Auto-compacts old messages by summarizing at sentence boundaries
+- Tool results from agent mode compacted aggressively
+- `/tokens` shows usage breakdown, `/compact` for manual optimization
 
 ### Productivity
 
-- **Conversation History** (Ctrl+O) -- Browse, search, and reload past conversations grouped by date
-- **Clipboard Manager** (Ctrl+B) -- Full clipboard history with fuzzy search and source tracking
-- **Search** (Ctrl+F) -- Find text within conversations
-- **Stop / Regenerate / Edit** -- Esc to stop streaming, Ctrl+R to regenerate, Ctrl+E to edit last message
-- **Vim Keybindings** -- i/Esc modes, j/k scroll, / opens Nerve Bar, x deletes last exchange
-- **Export** (`/export`) -- Save conversations as markdown
-- **System Prompts** (`/system`) -- Set, view, or clear per-conversation system prompts
-- **Web Scraping** (`/url`) -- Fetch any URL and inject the content as AI context
+- **Nerve Bar** (Ctrl+K) -- Fuzzy command palette with category tabs and template preview
+- **Conversation History** (Ctrl+O) -- Browse, search, reload past conversations
+- **Clipboard Manager** (Ctrl+B) -- Full history with fuzzy search
+- **In-Chat Search** (Ctrl+F) -- Find text across messages
+- **Stop/Regen/Edit** -- Esc stops, Ctrl+R regenerates, Ctrl+E edits
+- **Export** (`/export`) -- Save conversations as clean markdown
+- **Knowledge Base** (`/kb`) -- RAG with document ingestion
+- **Automations** (`/auto`) -- Multi-step AI pipelines
 
 ---
 
@@ -204,61 +293,72 @@ cargo build --release
 cp target/release/nerve ~/.local/bin/
 ```
 
-### Arch Linux (AUR)
-
-Coming soon.
-
 ### Requirements
 
 - Rust 2024 edition (1.85+)
 - At least one AI provider:
-  - **Claude Code** (recommended) -- Install from [https://claude.ai/code](https://claude.ai/code)
-  - **Ollama** -- Install from [https://ollama.ai](https://ollama.ai)
-  - **OpenAI** or **OpenRouter** API key
+  - **Claude Code** (recommended): [Install Claude Code](https://claude.ai/code)
+  - **Ollama** (local, free): [Install Ollama](https://ollama.ai)
+  - **OpenAI**: Get an API key from [platform.openai.com](https://platform.openai.com)
+  - **OpenRouter**: Get a key from [openrouter.ai](https://openrouter.ai)
+  - **GitHub Copilot**: Install [gh CLI](https://cli.github.com) with Copilot extension
+
+### Build from Source -- Detailed Steps
+
+```bash
+# 1. Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+
+# 2. Clone and build
+git clone https://github.com/Artaeon/nerve.git
+cd nerve
+cargo build --release
+
+# 3. Install the binary
+# Option A: Copy to a directory in your PATH
+cp target/release/nerve ~/.local/bin/
+
+# Option B: Symlink instead (easier to update with git pull + rebuild)
+ln -sf "$(pwd)/target/release/nerve" ~/.local/bin/nerve
+
+# 4. Verify
+nerve --help
+```
+
+The release build uses LTO (link-time optimization) and symbol stripping to produce
+a ~7MB binary with no runtime dependencies beyond libc.
 
 ---
 
 ## Quick Start
 
+### Interactive TUI
+
 ```bash
-# Launch (defaults to Claude Code -- no API key needed)
+# Default: Claude Code (no API key needed)
 nerve
 
-# Read a file and ask about it
-/file src/main.rs
-"What does this code do?"
-
-# Run tests and ask about failures
-/test
-"Why did test X fail?"
-
-# Review git changes
-/diff
-"Write a commit message for these changes"
-
-# Scaffold a new project
-/template rust-cli myapp
-# Or use AI to generate custom projects
-/code on
-/scaffold a REST API in Rust with JWT auth and Postgres
-
-# Use smart prompts
-# Press Ctrl+K, type "review", select "Full Code Review"
-```
-
-### CLI & Pipe Mode
-
-```bash
-# One-shot mode: get an answer and exit
-nerve -n "explain the difference between TCP and UDP"
-
-# Pipe mode: feed content via stdin
-cat src/main.rs | nerve --stdin -n "review this code"
-git diff | nerve --stdin -n "write a commit message for these changes"
-
-# Switch provider from CLI
+# With a specific provider
 nerve --provider ollama --model llama3
 nerve --provider openai --model gpt-4o
+OPENROUTER_API_KEY="sk-or-..." nerve --provider openrouter
+```
+
+### CLI / Pipe Mode
+
+```bash
+# One-shot question
+nerve -n "explain the difference between TCP and UDP"
+
+# Pipe a file
+cat src/main.rs | nerve --stdin -n "review this code for bugs"
+
+# Pipe git diff
+git diff | nerve --stdin -n "write a commit message for these changes"
+
+# Pipe error logs
+cargo test 2>&1 | nerve --stdin -n "explain why these tests failed"
 
 # List available models
 nerve --list-models
@@ -277,159 +377,82 @@ nerve --query "explain monads"
 nerve --stop-daemon
 ```
 
----
+### Inside the TUI
 
-## Slash Commands
+```
+# Chat normally
+"How do I implement a binary search tree in Rust?"
 
-### Chat
+# Use file context
+/file src/auth.rs
+"Find the bug in this authentication handler"
 
-| Command | Description |
-|---------|-------------|
-| `/help` | Show all available commands |
-| `/clear` | Clear current conversation |
-| `/new` | Start new conversation |
-| `/delete` | Delete current conversation |
-| `/delete all` | Delete all conversations |
-| `/rename <title>` | Rename current conversation |
-| `/export` | Export conversation to markdown |
-| `/copy` | Copy last AI response to clipboard |
-| `/copy all` | Copy entire conversation |
-| `/copy last` | Copy last message (any role) |
-| `/system <prompt>` | Set system prompt for conversation |
-| `/system clear` | Remove system prompt |
+# Run tests and ask about failures
+/test
+"Why did test_login fail?"
 
-### AI Provider
+# Enable agent mode for autonomous coding
+/agent on
+"Add input validation to the user registration endpoint"
 
-| Command | Description |
-|---------|-------------|
-| `/provider <name>` | Switch provider |
-| `/providers` | List available providers |
-| `/model <name>` | Switch model |
-| `/models` | List available models |
-| `/code on\|off` | Toggle code mode (Claude Code only) |
-| `/cwd <dir>` | Set working directory for code mode |
-
-### Knowledge & Context
-
-| Command | Description |
-|---------|-------------|
-| `/file <path>` | Read file as context |
-| `/file <path>:S-E` | Read specific line range |
-| `/files <p1> <p2>` | Read multiple files |
-| `/kb add <dir>` | Add directory to knowledge base |
-| `/kb search <query>` | Search knowledge base |
-| `/kb list` | List knowledge bases |
-| `/kb status` | Show KB statistics |
-| `/kb clear` | Clear knowledge base |
-| `/url <url> [question]` | Scrape URL for context |
-
-### Shell & Git
-
-| Command | Description |
-|---------|-------------|
-| `/run <command>` | Run shell command and show output |
-| `/pipe <command>` | Run command and add output as context |
-| `/diff [args]` | Show git diff (adds as context) |
-| `/test` | Auto-detect and run project tests |
-| `/build` | Auto-detect and run project build |
-| `/git [subcommand]` | Quick git operations (status/log/diff/branch) |
-
-### Project Scaffolding
-
-| Command | Description |
-|---------|-------------|
-| `/template list` | List available project templates |
-| `/template <name> [dir]` | Create project from template |
-| `/scaffold <description>` | AI-generate a project from description |
-
-### Automation
-
-| Command | Description |
-|---------|-------------|
-| `/auto list` | List automations |
-| `/auto run <name>` | Run automation |
-| `/auto info <name>` | Show automation details |
-| `/auto create <name>` | Create custom automation |
-| `/auto delete <name>` | Delete custom automation |
-
-### Workspace
-
-| Command | Description |
-|---------|-------------|
-| `/workspace` | Show detected project info |
-| `/status` | Show system status |
+# Use smart prompts
+Ctrl+K -> type "review" -> select "Full Code Review"
+```
 
 ---
 
-## Keybindings
+## Agent Mode
 
-### General
+The most powerful feature. Enable with `/agent on`.
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+C` | Quit |
-| `Ctrl+H` | Toggle help |
-| `Ctrl+K` or `/` | Open Nerve Bar |
-| `Ctrl+T` | Switch provider |
-| `Ctrl+M` | Switch model |
-| `Ctrl+N` | New conversation |
-| `Tab` | Next conversation |
-| `Shift+Tab` | Previous conversation |
-| `Ctrl+O` | History browser |
-| `Ctrl+P` | Prompt picker |
-| `Ctrl+B` | Clipboard manager |
-| `Ctrl+F` | Search in conversation |
-| `Ctrl+R` | Regenerate last response |
-| `Ctrl+E` | Edit last message |
+### Example: Fix a Bug
 
-### Navigation (Normal Mode)
+```
+/agent on
+/file src/auth.rs
+"The login function returns 500 instead of 401 for invalid credentials. Fix it."
+```
 
-| Key | Action |
-|-----|--------|
-| `i` | Enter insert mode |
-| `j` / `k` | Scroll down / up |
-| `x` | Delete last exchange |
-| `q` | Quit |
+The agent will:
 
-### Editing (Insert Mode)
+1. Read src/auth.rs to understand the code
+2. Identify the bug (wrong error mapping)
+3. Edit the file to fix it
+4. Read the file again to verify
+5. Run tests to confirm
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Send message |
-| `Esc` | Normal mode (or stop streaming) |
-| `Ctrl+V` | Paste from clipboard |
-| `Ctrl+Y` | Copy last AI response |
-| `Ctrl+L` | Clear conversation |
+### Example: Add a Feature
 
----
+```
+/agent on
+"Add a /health endpoint to the API that returns system status, uptime, and version"
+```
 
-## AI Providers
+### Example: Scaffold and Code
 
-Nerve supports multiple AI backends and lets you switch between them at runtime with Ctrl+T:
+```
+/template rust-web myapi
+/cd myapi
+/agent on
+"Add JWT authentication middleware and user registration/login endpoints"
+```
 
-| Provider | Type | Auth |
-|----------|------|------|
-| **Claude Code** (default) | CLI integration | Uses your Claude Code subscription -- no API key needed |
-| **OpenAI** | API | `OPENAI_API_KEY` environment variable or config |
-| **OpenRouter** | API | `OPENROUTER_API_KEY` environment variable or config |
-| **Ollama** | Local | No key needed -- runs on `localhost:11434` |
-| **GitHub Copilot** | CLI integration | `gh` CLI with Copilot extension installed |
-| **Custom** | OpenAI-compatible | Any base URL + API key via `config.toml` |
+### Agent vs Code Mode
+
+| | Agent Mode (`/agent on`) | Code Mode (`/code on`) |
+|-|--------------------------|------------------------|
+| **Provider** | Any (OpenAI, Ollama, etc.) | Claude Code only |
+| **How tools work** | AI outputs `<tool_call>` tags | Claude Code's native tools |
+| **Token usage** | Your provider's tokens | Claude subscription |
+| **Best for** | Any provider, token-efficient | Heavy coding tasks |
 
 ---
 
 ## Configuration
 
-Configuration lives at `~/.config/nerve/config.toml` and is auto-generated on first run.
+Config at `~/.config/nerve/config.toml` (auto-generated on first run):
 
 ```toml
-# Nerve - configuration file
-#
-# Paths:
-#   Config  : ~/.config/nerve/config.toml
-#   Prompts : ~/.config/nerve/prompts/   (custom .toml prompt files)
-#   History : ~/.local/share/nerve/history/
-
 default_model = "sonnet"
 default_provider = "claude_code"
 
@@ -443,7 +466,7 @@ accent_color = "#cba6f7"
 enabled = true
 
 [providers.openai]
-api_key = ""
+api_key = ""  # or set OPENAI_API_KEY env var
 base_url = "https://api.openai.com/v1"
 enabled = false
 
@@ -452,14 +475,13 @@ base_url = "http://localhost:11434/v1"
 enabled = true
 
 [providers.openrouter]
-api_key = ""
+api_key = ""  # or set OPENROUTER_API_KEY env var
 base_url = "https://openrouter.ai/api/v1"
 enabled = false
 
-# To add a custom OpenAI-compatible provider:
-#
+# Add custom OpenAI-compatible endpoints:
 # [[providers.custom]]
-# name = "my-provider"
+# name = "My Provider"
 # api_key = "sk-..."
 # base_url = "https://api.example.com/v1"
 
@@ -473,137 +495,153 @@ copy_last = "ctrl+shift+c"
 quit = "ctrl+q"
 ```
 
-### Provider Setup
+---
 
-#### Claude Code (default)
+## Keybindings
 
-No configuration needed. Nerve calls the `claude` CLI directly and uses your existing Claude Code subscription. Just make sure `claude` is in your PATH.
+### General
 
-#### OpenAI
+| Key | Action |
+|-----|--------|
+| Ctrl+C / Ctrl+D | Quit (saves state) |
+| Ctrl+K or / | Open Nerve Bar |
+| Ctrl+T | Switch provider |
+| Ctrl+M | Switch model |
+| Ctrl+N | New conversation |
+| Tab / Shift+Tab | Next/previous conversation |
+| Ctrl+O | History browser |
+| Ctrl+P | Prompt picker |
+| Ctrl+B | Clipboard manager |
+| Ctrl+F | Search in conversation |
+| Ctrl+H | Toggle help |
 
-Set your API key in the config or via environment variable:
+### Chat
 
-```bash
-export OPENAI_API_KEY="sk-..."
-nerve --provider openai
-```
+| Key | Action |
+|-----|--------|
+| Enter | Send message |
+| Shift+Enter | New line in input |
+| Esc (streaming) | Stop generation |
+| Ctrl+R | Regenerate last response |
+| Ctrl+E | Edit last message |
+| Ctrl+Y | Copy last AI response |
+| Ctrl+L | Clear conversation |
+| Ctrl+V | Paste from clipboard |
+| Ctrl+W | Delete word before cursor |
 
-#### OpenRouter
+### Vim Navigation (Normal mode)
 
-```bash
-export OPENROUTER_API_KEY="sk-or-..."
-nerve --provider openrouter
-```
-
-#### Ollama
-
-Start Ollama locally and point Nerve at it:
-
-```bash
-ollama serve
-nerve --provider ollama --model llama3
-```
-
-#### GitHub Copilot
-
-Requires the `gh` CLI with the Copilot extension:
-
-```bash
-gh extension install github/gh-copilot
-nerve --provider copilot
-```
-
-#### Custom OpenAI-Compatible Provider
-
-Add a section to your `config.toml`:
-
-```toml
-[[providers.custom]]
-name = "my-provider"
-api_key = "sk-..."
-base_url = "https://api.example.com/v1"
-```
-
-Then use it with `nerve --provider my-provider`.
+| Key | Action |
+|-----|--------|
+| i | Enter insert mode |
+| j / k | Scroll down / up |
+| x | Delete last exchange |
+| q | Quit |
 
 ---
 
-## Smart Prompts
+## All Slash Commands
 
-130 built-in prompt templates across 20 categories:
+### Chat
 
-| Category | Examples |
-|----------|----------|
-| **Writing** | Summarize, Expand, Rewrite, Fix Grammar, Improve Clarity, Proofread |
-| **Coding** | Explain Code, Fix Bug, Refactor, Add Comments, Write Tests |
-| **Engineering** | Code Review, Architecture Review, Performance Analysis, Tech Debt |
-| **Analysis** | Sentiment, Key Points, SWOT, Fact Check, Root Cause |
-| **Creative** | Brainstorm, Story, Metaphor, Names, Poetry, Slogan |
-| **Productivity** | Action Items, Meeting Summary, Decision Matrix, Report |
-| **Design** | UI Review, Accessibility Audit, Animation Spec |
-| **Git** | Commit Message, PR Description, Changelog |
-| **Rust** | Rust Code Review, Ownership Analysis, Idiomatic Rust |
-| **DevOps** | Dockerfile Review, CI/CD Pipeline, Infrastructure |
-| **Best Practices** | PR Review Checklist, API Design, Error Handling |
-| **Translation** | English, Spanish, French, German, Japanese, Arabic |
-| **Business** | Business Plan, Market Analysis, Competitive Analysis |
-| **Communication** | Presentation, Technical Writing, Documentation |
-| **Data** | Data Analysis, SQL Review, Schema Design |
-| **Learning** | Explain Like I'm 5, Tutorial, Study Guide |
-| **Legal** | Contract Review, Privacy Policy, Terms of Service |
-| **Marketing** | Ad Copy, SEO, Social Media |
-| **Personal** | Resume, Cover Letter, Career Advice |
-| **Product** | PRD, User Stories, Feature Spec |
+| Command | Description |
+|---------|-------------|
+| `/help` | Show all commands |
+| `/clear` | Clear conversation |
+| `/new` | New conversation |
+| `/rename <title>` | Rename conversation |
+| `/delete` | Delete conversation |
+| `/delete all` | Delete all conversations |
+| `/copy [all\|last]` | Copy to clipboard |
+| `/export` | Export as markdown file |
+| `/system <prompt>` | Set system prompt |
+| `/system clear` | Remove system prompt |
+| `/summary` | Conversation statistics |
 
-Browse prompts with the Prompt Picker (Ctrl+P) or search them through the Nerve Bar (Ctrl+K). Create your own reusable prompts as TOML files in `~/.config/nerve/prompts/`:
+### AI
 
-```toml
-name = "My Custom Prompt"
-description = "Does something useful"
-template = "Please do the following with this input:\n\n{{input}}"
-category = "Custom"
-tags = ["custom", "utility"]
-```
+| Command | Description |
+|---------|-------------|
+| `/provider <name>` | Switch provider |
+| `/providers` | List providers |
+| `/model <name>` | Switch model |
+| `/models` | List models |
+| `/code on\|off` | Toggle code mode (Claude only) |
+| `/agent on\|off` | Toggle agent mode |
 
----
+### Files and Context
 
-## Automations
+| Command | Description |
+|---------|-------------|
+| `/file <path>` | Read file as context |
+| `/file <path>:<start>-<end>` | Read line range |
+| `/files <p1> <p2> ...` | Read multiple files |
+| `/url <url> [question]` | Scrape webpage |
+| `/workspace` | Show detected project |
+| `/cd <dir>` | Change directory |
+| `/cwd <dir>` | Set working directory for code mode |
 
-Multi-step AI pipelines that chain prompts together, passing the output of each step as input to the next:
+### Shell
 
-| Automation | Steps | Description |
-|------------|-------|-------------|
-| **Code Review Pipeline** | Analyze, Fix, Generate | Analyze code for bugs, suggest fixes, generate corrected code |
-| **Content Optimizer** | Analyze, Rewrite, Summarize | Analyze content for clarity, rewrite, create summary and headlines |
-| **Research Assistant** | Questions, Analysis, Synthesis | Break down topic, analyze each question, synthesize findings |
-| **Email Drafter** | Context, Draft | Analyze context for tone, draft professional email |
-| **Translate & Localize** | Translate, Localize | Translate text, review for cultural nuances |
+| Command | Description |
+|---------|-------------|
+| `/run <cmd>` | Execute command |
+| `/pipe <cmd>` | Command output as context |
+| `/test` | Auto-detect and run tests |
+| `/build` | Auto-detect and build |
+| `/diff [args]` | Git diff as context |
+| `/git <subcmd>` | Git operations |
 
-Create custom automations as TOML files in `~/.config/nerve/automations/`.
+### Knowledge and Automation
+
+| Command | Description |
+|---------|-------------|
+| `/kb add <dir>` | Ingest documents |
+| `/kb search <query>` | Search knowledge base |
+| `/kb list` | List knowledge bases |
+| `/kb status` | Show KB stats |
+| `/kb clear` | Clear knowledge base |
+| `/auto list` | List automations |
+| `/auto run <name>` | Run automation |
+| `/auto info <name>` | Show automation details |
+| `/auto create <name>` | Create custom automation |
+| `/auto delete <name>` | Delete custom automation |
+| `/template list` | List project templates |
+| `/template <name>` | Create from template |
+| `/scaffold <desc>` | AI-generated project |
+
+### Token Management
+
+| Command | Description |
+|---------|-------------|
+| `/tokens` | Token usage breakdown |
+| `/compact` | Compact conversation |
+| `/context` | Inspect context window |
+| `/status` | System overview |
 
 ---
 
 ## Project Templates
 
-Scaffold new projects instantly with 8 built-in templates:
+8 built-in templates for instant project scaffolding:
 
-| Template | Language | Description |
+| Template | Language | What You Get |
 |----------|----------|-------------|
-| `rust-cli` | Rust | CLI application with clap, error handling, and tests |
-| `rust-lib` | Rust | Library crate with public API and documentation |
-| `rust-web` | Rust | Web server with axum, routes, and middleware |
-| `node-api` | Node.js | Express REST API with middleware and error handling |
-| `node-react` | Node.js | React application with modern tooling |
-| `python-cli` | Python | CLI application with argument parsing |
-| `python-api` | Python | FastAPI REST API with async support |
-| `go-api` | Go | HTTP API with standard library |
+| `rust-cli` | Rust | CLI with clap, error handling, tests |
+| `rust-lib` | Rust | Library crate with docs and tests |
+| `rust-web` | Rust | Axum web API with handlers and routes |
+| `node-api` | Node.js | Express + TypeScript REST API |
+| `node-react` | React | Vite + TypeScript + React app |
+| `python-cli` | Python | CLI with argparse and pyproject.toml |
+| `python-api` | Python | FastAPI with routes and models |
+| `go-api` | Go | HTTP API with net/http |
+
+Usage:
 
 ```bash
-# Use a built-in template
-/template rust-cli myapp
-
-# Or let AI generate a custom project
-/scaffold a REST API in Rust with JWT auth and Postgres
+/template rust-web myapi
+/cd myapi
+cargo build
 ```
 
 ---
@@ -612,8 +650,8 @@ Scaffold new projects instantly with 8 built-in templates:
 
 ```
 nerve/
-├── src/                          34 files, ~16K lines of Rust
-│   ├── main.rs                   Entry point, event loop, slash commands
+├── src/                          38 files, ~18K lines of Rust
+│   ├── main.rs                   Entry point, event loop, 38 slash commands
 │   ├── app.rs                    Application state machine
 │   ├── config.rs                 TOML configuration (load/save/defaults)
 │   ├── daemon.rs                 Background daemon (Unix socket IPC)
@@ -632,6 +670,10 @@ nerve/
 │   │   ├── claude_code.rs        Claude Code CLI integration
 │   │   ├── copilot.rs            GitHub Copilot CLI integration
 │   │   └── openai.rs             OpenAI-compatible API client
+│   ├── agent/
+│   │   ├── mod.rs                Module exports
+│   │   ├── tools.rs              7 agent tools
+│   │   └── context.rs            Token management
 │   ├── ui/
 │   │   ├── mod.rs                Layout and rendering dispatch
 │   │   ├── chat.rs               Syntax-highlighted chat view
@@ -655,54 +697,70 @@ nerve/
 │       └── web.rs                URL fetching and content extraction
 ├── prompts/                      Example prompt templates
 ├── assets/                       ASCII art and screenshots
+├── docs/
+│   └── GUIDE.md                  Comprehensive user guide
 ├── Cargo.toml
 ├── LICENSE
 └── README.md
 ```
 
----
+### Key Dependencies
 
-## Integration with Granit
-
-Nerve is designed as a standalone tool that integrates with [Granit](https://github.com/Artaeon/granit), an open-source knowledge management system.
-
-**Current integration:**
-
-- Nerve can ingest Granit vault directories as knowledge bases (`/kb add ~/my-vault`)
-- Both tools are terminal-native and share the same philosophy
-
-**Planned integration:**
-
-- Launch Nerve from within Granit's command palette
-- Vault-aware AI context (Nerve reads your notes for RAG)
-- HTTP/MCP API for tighter bidirectional communication
+| Crate | Purpose |
+|-------|---------|
+| ratatui + crossterm | Terminal UI rendering |
+| tokio | Async runtime for streaming and I/O |
+| reqwest | HTTP client for OpenAI-compatible APIs |
+| serde + toml + serde_json | Configuration and API serialization |
+| syntect | Syntax highlighting in code blocks |
+| pulldown-cmark | Markdown parsing for rich display |
+| fuzzy-matcher | Fuzzy search in Nerve Bar and KB |
+| clap | CLI argument parsing |
+| arboard | System clipboard access |
+| chrono | Timestamps for conversations and history |
+| uuid | Unique conversation identifiers |
+| anyhow + thiserror | Error handling |
 
 ---
 
 ## Documentation
 
-See the [User Guide](docs/GUIDE.md) for comprehensive documentation including:
-- Provider setup for all 6 providers (Claude Code, OpenAI, Ollama, OpenRouter, GitHub Copilot, custom)
-- Agent mode tutorial
+See the [comprehensive User Guide](docs/GUIDE.md) for:
+
+- Setup tutorials for all 6 providers
+- Agent mode walkthrough with examples
 - Context management for token efficiency
-- Shell and file integration workflows
 - 130 smart prompts reference
+- Shell and file integration workflows
+- Troubleshooting and FAQ
 - Tips and tricks for power users
+
+---
+
+## Integration with Granit
+
+Nerve integrates with [Granit](https://github.com/Artaeon/granit), an open-source knowledge management system:
+
+- **Current:** Ingest Granit vaults as knowledge bases (`/kb add ~/my-vault`)
+- **Planned:** Launch from Granit's command palette, vault-aware AI context, HTTP/MCP API
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss what you would like to change.
+Contributions welcome. Please open an issue first to discuss changes.
 
 ```bash
 git clone https://github.com/Artaeon/nerve.git
 cd nerve
 cargo build
-cargo test
+cargo test  # 450 tests across 38 source files
 ```
 
-The test suite covers 370 tests across all 34 source files.
+The test suite covers all modules: AI provider abstractions, agent tool parsing,
+context management, prompt loading, configuration serialization, file reading with
+line ranges, workspace detection, scaffold templates, knowledge base ingestion,
+clipboard management, keybind parsing, and UI rendering logic.
 
 ---
 
