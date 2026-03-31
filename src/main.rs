@@ -450,7 +450,7 @@ async fn handle_key_event(
     // ── Global keys (always active) ─────────────────────────────────────
     if mods.contains(KeyModifiers::CONTROL) {
         match code {
-            KeyCode::Char('c') => {
+            KeyCode::Char('c') | KeyCode::Char('d') => {
                 app.should_quit = true;
                 return Ok(());
             }
@@ -622,6 +622,17 @@ async fn handle_normal_mode(
                         app.history_select_index = 0;
                         app.history_search.clear();
                         app.mode = AppMode::HistoryBrowser;
+                    }
+                    KeyCode::Char('w') => {
+                        // Delete word before cursor.
+                        let before = &app.input[..app.cursor_position];
+                        let trimmed = before.trim_end();
+                        let new_pos = trimmed
+                            .rfind(|c: char| c.is_whitespace())
+                            .map(|i| i + 1)
+                            .unwrap_or(0);
+                        app.input.drain(new_pos..app.cursor_position);
+                        app.cursor_position = new_pos;
                     }
                     _ => {}
                 }
@@ -1007,27 +1018,41 @@ async fn handle_slash_command(
     // /help — show available commands as an assistant message.
     if trimmed == "/help" {
         let help = "\
-Available commands:\n\
-  /help             — Show this help message\n\
-  /clear            — Clear the current conversation\n\
-  /new              — Start a new conversation\n\
-  /model <name>     — Switch to a different model\n\
-  /models           — List available models\n\
-  /provider <name>  — Switch provider (claude_code, ollama, openai, openrouter)\n\
-  /providers        — List available providers\n\
-  /code on|off      — Toggle code mode (file & terminal access, claude_code only)\n\
-  /cwd <dir>        — Set working directory for Claude Code file access\n\
-  /url <url> [question] — Scrape a URL and use it as context\n\
-  /auto list        — List all automations\n\
-  /auto run <name>  — Run an automation with current input\n\
-  /auto create <name> — Create a custom automation\n\
-  /auto delete <name> — Delete a custom automation\n\
-  /auto info <name> — Show automation details\n\
-  /kb add <directory> — Ingest a directory into the knowledge base\n\
-  /kb list            — List all knowledge bases\n\
-  /kb search <query>  — Search the knowledge base\n\
-  /kb clear           — Clear the default knowledge base\n\
-  /kb status          — Show knowledge base stats";
+Available Commands\n\
+══════════════════\n\
+\n\
+Chat\n\
+  /clear              Clear current conversation\n\
+  /new                Start new conversation\n\
+  /rename <title>     Rename current conversation\n\
+  /export             Export conversation to markdown\n\
+\n\
+AI Provider\n\
+  /provider <name>    Switch provider\n\
+  /providers          List available providers\n\
+  /model <name>       Switch model\n\
+  /models             List available models\n\
+  /code on|off        Toggle code mode (Claude Code only)\n\
+  /cwd <dir>          Set working directory\n\
+\n\
+Knowledge & Context\n\
+  /kb add <dir>       Add directory to knowledge base\n\
+  /kb search <query>  Search knowledge base\n\
+  /kb list            List knowledge bases\n\
+  /kb status          Show KB statistics\n\
+  /kb clear           Clear knowledge base\n\
+  /url <url> [q]      Scrape URL for context\n\
+\n\
+Automation\n\
+  /auto list          List automations\n\
+  /auto run <name>    Run automation\n\
+  /auto info <name>   Show automation details\n\
+  /auto create <name> Create custom automation\n\
+  /auto delete <name> Delete custom automation\n\
+\n\
+System\n\
+  /status             Show system status\n\
+  /help               Show this help";
         app.current_conversation_mut()
             .messages
             .push(("assistant".into(), help.into()));
@@ -1280,6 +1305,118 @@ Available commands:\n\
     // /kb — knowledge base commands.
     if trimmed == "/kb" || trimmed.starts_with("/kb ") {
         handle_kb_command(app, trimmed);
+        return true;
+    }
+
+    // /status — show comprehensive system status.
+    if trimmed == "/status" {
+        let code_status = if app.code_mode { "ON" } else { "OFF" };
+        let conv = app.current_conversation();
+        let conv_title = &conv.title;
+        let conv_msg_count = conv.messages.len();
+
+        // Gather KB stats.
+        let (kb_docs, kb_chunks) = match knowledge::KnowledgeBase::load("default") {
+            Ok(kb) => (kb.documents.len(), kb.total_chunks()),
+            Err(_) => (0, 0),
+        };
+
+        let clip_count = app.clipboard_manager.entries().len();
+        let history_count = history::list_conversations()
+            .map(|v| v.len())
+            .unwrap_or(0);
+
+        let config_path = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from(".config"))
+            .join("nerve")
+            .join("config.toml");
+        let history_path = history::history_dir();
+
+        let status = format!(
+            "Nerve v0.1.0\n\
+             \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\
+             Provider:  {}\n\
+             Model:     {}\n\
+             Code Mode: {}\n\
+             \n\
+             Conversations: {}\n\
+             Current:       \"{}\" ({} messages)\n\
+             \n\
+             Knowledge Base: {} documents, {} chunks\n\
+             Clipboard:      {} entries\n\
+             History:        {} saved conversations\n\
+             \n\
+             Config:  {}\n\
+             History: {}",
+            app.selected_provider,
+            app.selected_model,
+            code_status,
+            app.conversations.len(),
+            conv_title,
+            conv_msg_count,
+            kb_docs,
+            kb_chunks,
+            clip_count,
+            history_count,
+            config_path.display(),
+            history_path.display(),
+        );
+        app.add_assistant_message(status);
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /export — export current conversation to markdown.
+    if trimmed == "/export" {
+        let conv = app.current_conversation();
+        let export_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("nerve")
+            .join("exports");
+        std::fs::create_dir_all(&export_dir).ok();
+
+        let filename = format!(
+            "conversation_{}.md",
+            conv.id.chars().take(8).collect::<String>()
+        );
+        let path = export_dir.join(&filename);
+
+        let mut content = format!(
+            "# {}\nModel: {} | Provider: {}\nDate: {}\n\n---\n\n",
+            conv.title,
+            app.selected_model,
+            app.selected_provider,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M UTC")
+        );
+
+        for (role, msg) in &conv.messages {
+            let label = match role.as_str() {
+                "user" => "You",
+                "assistant" => "AI",
+                "system" => "System",
+                _ => role,
+            };
+            content.push_str(&format!("## {}\n{}\n\n---\n\n", label, msg));
+        }
+
+        match std::fs::write(&path, &content) {
+            Ok(()) => app.status_message = Some(format!("Exported to {}", path.display())),
+            Err(e) => app.status_message = Some(format!("Export error: {e}")),
+        }
+        return true;
+    }
+
+    // /rename <title> — rename the current conversation.
+    if trimmed == "/rename" || trimmed.starts_with("/rename ") {
+        let rest = trimmed.strip_prefix("/rename").unwrap_or("").trim();
+        if rest.is_empty() {
+            app.add_assistant_message("Usage: /rename <new title>".into());
+        } else {
+            let new_title = rest.to_string();
+            app.current_conversation_mut().title = new_title.clone();
+            app.status_message = Some(format!("Renamed to: {new_title}"));
+        }
+        app.scroll_offset = 0;
         return true;
     }
 

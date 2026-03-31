@@ -44,7 +44,7 @@ pub fn render_help(frame: &mut Frame) {
         ("Ctrl+K  /  :", "Open Nerve Bar (command palette)"),
         ("Ctrl+N", "New conversation"),
         ("Ctrl+L", "Clear conversation"),
-        ("Ctrl+C", "Quit"),
+        ("Ctrl+C / Ctrl+D", "Quit"),
         ("Esc", "Close overlay / cancel"),
         ("", ""),
         // -- Navigation --
@@ -66,6 +66,7 @@ pub fn render_help(frame: &mut Frame) {
         ("i", "Enter insert mode"),
         ("Esc", "Return to normal mode"),
         ("Enter", "Send message"),
+        ("Ctrl+W", "Delete word before cursor"),
         ("", ""),
         // -- Clipboard & Copy --
         ("", "Clipboard"),
