@@ -212,6 +212,25 @@ fn create_provider(
     }
 }
 
+/// Create a provider using app state (respects code_mode for claude_code).
+fn create_provider_from_app(config: &Config, app: &App) -> anyhow::Result<Box<dyn AiProvider>> {
+    let provider_name = &app.selected_provider;
+    match provider_name.as_str() {
+        "claude_code" | "claude" => {
+            if app.code_mode {
+                let mut p = ClaudeCodeProvider::with_tools();
+                if let Some(ref dir) = app.working_dir {
+                    p = p.with_working_dir(dir.clone());
+                }
+                Ok(Box::new(p))
+            } else {
+                Ok(Box::new(ClaudeCodeProvider::new()))
+            }
+        }
+        _ => create_provider(config, Some(provider_name)),
+    }
+}
+
 /// Resolve an API key: prefer the config value, fall back to an environment
 /// variable. Returns an error if neither is set.
 fn resolve_api_key(config_value: Option<&str>, env_var: &str) -> anyhow::Result<String> {
@@ -305,7 +324,7 @@ async fn event_loop(
 
         // Check if provider needs to be recreated.
         if app.provider_changed {
-            match create_provider(config, Some(&app.selected_provider)) {
+            match create_provider_from_app(config, app) {
                 Ok(new_provider) => {
                     provider = Arc::from(new_provider);
                 }
@@ -611,11 +630,17 @@ async fn handle_normal_mode(
 
             match code {
                 KeyCode::Enter => {
-                    if app.is_streaming {
-                        return Ok(());
-                    }
-                    if let Some(text) = app.submit_input() {
-                        submit_message(app, &text, provider).await;
+                    if mods.contains(KeyModifiers::SHIFT) || mods.contains(KeyModifiers::ALT) {
+                        // Insert newline for multi-line input
+                        app.insert_char('\n');
+                    } else {
+                        // Submit message
+                        if app.is_streaming {
+                            return Ok(());
+                        }
+                        if let Some(text) = app.submit_input() {
+                            submit_message(app, &text, provider).await;
+                        }
                     }
                 }
                 KeyCode::Esc => app.input_mode = InputMode::Normal,
@@ -990,6 +1015,8 @@ Available commands:\n\
   /models           — List available models\n\
   /provider <name>  — Switch provider (claude_code, ollama, openai, openrouter)\n\
   /providers        — List available providers\n\
+  /code on|off      — Toggle code mode (file & terminal access, claude_code only)\n\
+  /cwd <dir>        — Set working directory for Claude Code file access\n\
   /url <url> [question] — Scrape a URL and use it as context\n\
   /auto list        — List all automations\n\
   /auto run <name>  — Run an automation with current input\n\
@@ -1186,6 +1213,61 @@ Available commands:\n\
                 app.status_message = Some(format!("Scrape failed: {e}"));
             }
         }
+        return true;
+    }
+
+    // /code — toggle code mode (tool/file access for Claude Code).
+    if trimmed == "/code" || trimmed.starts_with("/code ") {
+        let rest = trimmed.strip_prefix("/code").unwrap_or("").trim();
+        if rest == "on" {
+            if app.selected_provider == "claude_code" || app.selected_provider == "claude" {
+                app.code_mode = true;
+                app.provider_changed = true;
+                app.status_message = Some("Code mode ON - Claude has file & terminal access".into());
+            } else {
+                app.add_assistant_message(
+                    "Code mode is only available with the claude_code provider.".into(),
+                );
+            }
+        } else if rest == "off" {
+            app.code_mode = false;
+            app.provider_changed = true;
+            app.status_message = Some("Code mode OFF - chat only".into());
+        } else {
+            let status = if app.code_mode { "ON" } else { "OFF" };
+            app.add_assistant_message(format!(
+                "Code mode: {status}\n\
+                 Use /code on to enable file & terminal access.\n\
+                 Use /code off for chat-only mode."
+            ));
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /cwd <dir> — set working directory for Claude Code file access.
+    if trimmed == "/cwd" || trimmed.starts_with("/cwd ") {
+        let rest = trimmed.strip_prefix("/cwd").unwrap_or("").trim();
+        if rest.is_empty() {
+            let current = app
+                .working_dir
+                .as_deref()
+                .unwrap_or("(not set)");
+            app.add_assistant_message(format!(
+                "Working directory: {current}\n\
+                 Use /cwd <path> to set a directory for Claude Code file access."
+            ));
+        } else {
+            let path = std::path::Path::new(rest);
+            if path.is_dir() {
+                app.working_dir = Some(rest.to_string());
+                app.provider_changed = true;
+                app.status_message = Some(format!("Working directory set to {rest}"));
+            } else {
+                app.status_message = Some(format!("Not a directory: {rest}"));
+            }
+        }
+        app.scroll_offset = 0;
         return true;
     }
 

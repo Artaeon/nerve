@@ -41,12 +41,30 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     // ── Standard three-part layout: top bar | chat | bottom ─────────
+
+    // Calculate how many lines the input text needs so the box grows dynamically.
+    let input_width = area.width.saturating_sub(10) as usize; // account for borders, padding, mode indicator
+    let input_lines = if app.input.is_empty() {
+        1
+    } else {
+        // Count wrapped lines
+        let mut lines = 0;
+        for line in app.input.lines() {
+            lines += 1 + line.len() / input_width.max(1);
+        }
+        lines.max(1)
+    };
+    // Clamp: minimum 3 (1 line + borders), maximum 40% of screen height
+    let input_height = (input_lines as u16 + 2) // +2 for borders
+        .clamp(3, area.height * 40 / 100);
+    let bottom_height = input_height + 1; // +1 for status bar
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // top bar
-            Constraint::Min(1),    // chat area
-            Constraint::Length(5), // input + status
+            Constraint::Length(3),            // top bar
+            Constraint::Min(1),              // chat area
+            Constraint::Length(bottom_height), // input + status (DYNAMIC)
         ])
         .split(area);
 
@@ -199,13 +217,14 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     let is_empty = app.input.is_empty();
 
     // Build the displayed text with a cursor indicator or placeholder.
-    let input_line = if is_empty && app.input_mode == InputMode::Insert {
+    // For multi-line input we build a Vec<Line> so that explicit newlines are honoured.
+    let input_lines: Vec<Line<'_>> = if is_empty && app.input_mode == InputMode::Insert {
         // Show placeholder text when empty in insert mode
-        Line::from(vec![
+        vec![Line::from(vec![
             mode_indicator,
             Span::raw(" "),
             Span::styled(
-                "Type your message... (Enter to send, Esc for normal mode)",
+                "Type your message... (Enter to send, Shift+Enter for newline)",
                 Style::default().fg(Color::DarkGray),
             ),
             Span::styled(
@@ -214,17 +233,17 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::SLOW_BLINK),
             ),
-        ])
+        ])]
     } else if is_empty && app.input_mode == InputMode::Normal {
         // Hint in normal mode when empty
-        Line::from(vec![
+        vec![Line::from(vec![
             mode_indicator,
             Span::raw(" "),
             Span::styled(
                 "Press i to start typing, / for Nerve Bar",
                 Style::default().fg(Color::DarkGray),
             ),
-        ])
+        ])]
     } else {
         let before_cursor = &app.input[..app.cursor_position];
         let after_cursor = &app.input[app.cursor_position..];
@@ -234,18 +253,92 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             ""
         };
 
-        Line::from(vec![
-            mode_indicator,
-            Span::raw(" "),
-            Span::styled(before_cursor, Style::default().fg(Color::White)),
-            Span::styled(
-                cursor_char,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::SLOW_BLINK),
-            ),
-            Span::styled(after_cursor, Style::default().fg(Color::White)),
-        ])
+        // Split the input by newlines and build a Line per logical line.
+        // The cursor sits at the boundary between before_cursor and after_cursor,
+        // which may themselves span multiple lines.
+        let before_lines: Vec<&str> = before_cursor.split('\n').collect();
+        let after_lines: Vec<&str> = after_cursor.split('\n').collect();
+
+        let mut result: Vec<Line<'_>> = Vec::new();
+
+        // Lines entirely before the cursor line
+        for (i, line) in before_lines.iter().enumerate() {
+            if i == 0 {
+                // First line gets the mode indicator prefix
+                if i == before_lines.len() - 1 {
+                    // Cursor is on the first line — combine with after_cursor
+                    let first_after = after_lines.first().copied().unwrap_or("");
+                    let spans = vec![
+                        mode_indicator.clone(),
+                        Span::raw(" "),
+                        Span::styled(line.to_string(), Style::default().fg(Color::White)),
+                        Span::styled(
+                            cursor_char.to_string(),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::SLOW_BLINK),
+                        ),
+                        Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
+                    ];
+                    result.push(Line::from(spans));
+                    // Remaining after-cursor lines
+                    for after_line in after_lines.iter().skip(1) {
+                        result.push(Line::from(Span::styled(
+                            after_line.to_string(),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                } else {
+                    // First line, but cursor is on a later line
+                    result.push(Line::from(vec![
+                        mode_indicator.clone(),
+                        Span::raw(" "),
+                        Span::styled(line.to_string(), Style::default().fg(Color::White)),
+                    ]));
+                }
+            } else if i < before_lines.len() - 1 {
+                // Middle lines before cursor line
+                result.push(Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(Color::White),
+                )));
+            } else {
+                // Last before-cursor line — this is where the cursor sits
+                let first_after = after_lines.first().copied().unwrap_or("");
+                result.push(Line::from(vec![
+                    Span::styled(line.to_string(), Style::default().fg(Color::White)),
+                    Span::styled(
+                        cursor_char.to_string(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::SLOW_BLINK),
+                    ),
+                    Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
+                ]));
+                // Remaining after-cursor lines
+                for after_line in after_lines.iter().skip(1) {
+                    result.push(Line::from(Span::styled(
+                        after_line.to_string(),
+                        Style::default().fg(Color::White),
+                    )));
+                }
+            }
+        }
+
+        result
+    };
+
+    // Calculate scroll offset for the input widget when text exceeds visible area.
+    // We want to keep the cursor line visible.
+    let visible_input_height = area.height.saturating_sub(2); // subtract borders
+    let cursor_line = app.input[..app.cursor_position]
+        .chars()
+        .filter(|c| *c == '\n')
+        .count() as u16;
+    let input_scroll = if cursor_line >= visible_input_height {
+        cursor_line - visible_input_height + 1
+    } else {
+        0
     };
 
     // Word count
@@ -257,7 +350,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
     // Hint text for bottom line
     let hint = match app.input_mode {
-        InputMode::Insert => "Enter: send | Esc: normal mode",
+        InputMode::Insert => "Enter: send | Shift+Enter: newline | Esc: normal mode",
         InputMode::Normal => "i: insert | /: Nerve Bar | q: quit",
     };
 
@@ -287,9 +380,10 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(border_color))
         .padding(Padding::horizontal(1));
 
-    let input_widget = Paragraph::new(input_line)
+    let input_widget = Paragraph::new(input_lines)
         .block(input_block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((input_scroll, 0));
 
     frame.render_widget(input_widget, area);
 }
@@ -365,7 +459,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .constraints([Constraint::Min(1), Constraint::Length(right_width)])
             .split(area);
 
-        let left_line = Line::from(vec![
+        let mut left_spans = vec![
             left_status,
             sep.clone(),
             Span::styled(
@@ -377,7 +471,20 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 format!("Model: {}", app.selected_model),
                 Style::default().fg(Color::DarkGray),
             ),
-        ]);
+        ];
+
+        if app.code_mode {
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                "CODE",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
+        let left_line = Line::from(left_spans);
 
         frame.render_widget(Paragraph::new(left_line), chunks[0]);
         frame.render_widget(
