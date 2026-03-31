@@ -442,10 +442,17 @@ async fn handle_key_event(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     provider: &Arc<dyn AiProvider>,
-    _config: &Config,
+    config: &Config,
 ) -> anyhow::Result<()> {
     let code = key.code;
     let mods = key.modifiers;
+
+    // Escape while streaming = stop generation
+    if app.is_streaming && code == KeyCode::Esc {
+        app.finish_streaming();
+        app.status_message = Some("Generation stopped".into());
+        return Ok(());
+    }
 
     // ── Global keys (always active) ─────────────────────────────────────
     if mods.contains(KeyModifiers::CONTROL) {
@@ -462,13 +469,20 @@ async fn handle_key_event(
                 }
                 return Ok(());
             }
+            KeyCode::Char('f') => {
+                app.mode = AppMode::SearchOverlay;
+                app.search_query.clear();
+                app.search_results.clear();
+                app.search_current = 0;
+                return Ok(());
+            }
             _ => {}
         }
     }
 
     // ── Dispatch by mode ────────────────────────────────────────────────
     match app.mode {
-        AppMode::Normal => handle_normal_mode(app, key, provider).await?,
+        AppMode::Normal => handle_normal_mode(app, key, provider, config).await?,
         AppMode::CommandBar => handle_command_bar(app, key),
         AppMode::PromptPicker => handle_prompt_picker(app, key),
         AppMode::ModelSelect => handle_model_select(app, key),
@@ -486,6 +500,7 @@ async fn handle_key_event(
         }
         AppMode::ClipboardManager => handle_clipboard_manager(app, key),
         AppMode::HistoryBrowser => handle_history_browser(app, key),
+        AppMode::SearchOverlay => handle_search(app, key),
     }
 
     Ok(())
@@ -497,6 +512,7 @@ async fn handle_normal_mode(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     provider: &Arc<dyn AiProvider>,
+    config: &Config,
 ) -> anyhow::Result<()> {
     let code = key.code;
     let mods = key.modifiers;
@@ -550,6 +566,12 @@ async fn handle_normal_mode(
                         app.history_search.clear();
                         app.mode = AppMode::HistoryBrowser;
                     }
+                    KeyCode::Char('r') => {
+                        regenerate_response(app, provider, config).await;
+                    }
+                    KeyCode::Char('e') => {
+                        edit_last_message(app);
+                    }
                     _ => {}
                 }
                 return Ok(());
@@ -566,7 +588,9 @@ async fn handle_normal_mode(
                 KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
                 KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
                 KeyCode::Tab => cycle_conversation(app),
+                KeyCode::BackTab => cycle_conversation_back(app),
                 KeyCode::Char('q') => app.should_quit = true,
+                KeyCode::Char('x') => delete_last_exchange(app),
                 _ => {}
             }
         }
@@ -637,6 +661,12 @@ async fn handle_normal_mode(
                         app.input.drain(new_pos..app.cursor_position);
                         app.cursor_position = new_pos;
                     }
+                    KeyCode::Char('r') => {
+                        regenerate_response(app, provider, config).await;
+                    }
+                    KeyCode::Char('e') => {
+                        edit_last_message(app);
+                    }
                     _ => {}
                 }
                 return Ok(());
@@ -661,6 +691,41 @@ async fn handle_normal_mode(
                 KeyCode::Backspace => app.delete_char(),
                 KeyCode::Left => app.move_cursor_left(),
                 KeyCode::Right => app.move_cursor_right(),
+                KeyCode::Tab => {
+                    if app.input.starts_with('/') {
+                        let partial = &app.input[1..]; // strip the /
+                        let commands = [
+                            "help", "clear", "new", "model", "models", "provider",
+                            "providers", "code", "cwd", "url", "kb", "auto", "status",
+                            "export", "rename", "system",
+                        ];
+                        let matches: Vec<&&str> = commands
+                            .iter()
+                            .filter(|cmd| cmd.starts_with(partial))
+                            .collect();
+
+                        if matches.len() == 1 {
+                            // Exact completion
+                            app.input = format!("/{} ", matches[0]);
+                            app.cursor_position = app.input.len();
+                        } else if matches.len() > 1 {
+                            // Show options in status
+                            let options = matches
+                                .iter()
+                                .map(|c| format!("/{c}"))
+                                .collect::<Vec<_>>()
+                                .join("  ");
+                            app.status_message = Some(options);
+
+                            // Complete common prefix
+                            let common = common_prefix(&matches);
+                            if common.len() > partial.len() {
+                                app.input = format!("/{common}");
+                                app.cursor_position = app.input.len();
+                            }
+                        }
+                    }
+                }
                 KeyCode::Char(c) => app.insert_char(c),
                 _ => {}
             }
@@ -1014,6 +1079,71 @@ fn filtered_history_entries(app: &App) -> Vec<history::ConversationRecord> {
         .collect()
 }
 
+// ── Search overlay ─────────────────────────────────────────────────────────
+
+fn handle_search(app: &mut App, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+        }
+        KeyCode::Enter => {
+            // Jump to next match
+            if !app.search_results.is_empty() {
+                app.search_current = (app.search_current + 1) % app.search_results.len();
+                app.status_message = Some(format!(
+                    "Match {}/{}",
+                    app.search_current + 1,
+                    app.search_results.len()
+                ));
+            }
+        }
+        KeyCode::Backspace => {
+            app.search_query.pop();
+            update_search_results(app);
+        }
+        KeyCode::Char(c) => {
+            app.search_query.push(c);
+            update_search_results(app);
+        }
+        _ => {}
+    }
+}
+
+fn update_search_results(app: &mut App) {
+    let query = app.search_query.to_lowercase();
+    if query.is_empty() {
+        app.search_results.clear();
+        return;
+    }
+    app.search_results = app
+        .current_conversation()
+        .messages
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, content))| content.to_lowercase().contains(&query))
+        .map(|(i, _)| i)
+        .collect();
+    app.search_current = 0;
+}
+
+/// Find the longest common prefix among a set of string slices.
+fn common_prefix(strings: &[&&str]) -> String {
+    if strings.is_empty() {
+        return String::new();
+    }
+    let first = strings[0];
+    let mut prefix_len = first.len();
+    for s in &strings[1..] {
+        prefix_len = first
+            .chars()
+            .zip(s.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(prefix_len);
+    }
+    first[..prefix_len].to_string()
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 /// Submit the user's message and spawn a streaming response task.
@@ -1050,8 +1180,16 @@ Available Commands\n\
 Chat\n\
   /clear              Clear current conversation\n\
   /new                Start new conversation\n\
+  /delete             Delete current conversation\n\
+  /delete all         Delete all conversations\n\
   /rename <title>     Rename current conversation\n\
   /export             Export conversation to markdown\n\
+  /copy               Copy last AI response to clipboard\n\
+  /copy all           Copy entire conversation\n\
+  /copy last          Copy last message (any role)\n\
+  /system <prompt>    Set system prompt for conversation\n\
+  /system             Show current system prompt\n\
+  /system clear       Remove system prompt\n\
 \n\
 AI Provider\n\
   /provider <name>    Switch provider\n\
@@ -1075,6 +1213,15 @@ Automation\n\
   /auto info <name>   Show automation details\n\
   /auto create <name> Create custom automation\n\
   /auto delete <name> Delete custom automation\n\
+\n\
+Keybindings\n\
+  Esc (streaming)     Stop generation\n\
+  Ctrl+R              Regenerate last response\n\
+  Ctrl+E              Edit last message\n\
+  Ctrl+F              Search in conversation\n\
+  Tab                 Next conversation\n\
+  Shift+Tab           Previous conversation\n\
+  x (Normal mode)     Delete last exchange\n\
 \n\
 System\n\
   /status             Show system status\n\
@@ -1432,6 +1579,33 @@ System\n\
         return true;
     }
 
+    // /system — set, show, or clear a custom system prompt.
+    if trimmed == "/system" || trimmed.starts_with("/system ") {
+        let rest = trimmed.strip_prefix("/system").unwrap_or("").trim();
+        if rest.is_empty() {
+            // Show current system prompt
+            let sys = app.current_conversation().messages.iter()
+                .find(|(r, _)| r == "system")
+                .map(|(_, c)| c.clone());
+            match sys {
+                Some(prompt) => app.add_assistant_message(format!("Current system prompt:\n\n{prompt}")),
+                None => app.add_assistant_message("No system prompt set. Use /system <prompt> to set one.".into()),
+            }
+        } else if rest == "clear" {
+            app.current_conversation_mut().messages.retain(|(r, _)| r != "system");
+            app.status_message = Some("System prompt cleared".into());
+        } else {
+            let prompt = rest.to_string();
+            // Remove any existing system prompt
+            app.current_conversation_mut().messages.retain(|(r, _)| r != "system");
+            // Insert at the beginning
+            app.current_conversation_mut().messages.insert(0, ("system".into(), prompt));
+            app.status_message = Some("System prompt set".into());
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
     // /rename <title> — rename the current conversation.
     if trimmed == "/rename" || trimmed.starts_with("/rename ") {
         let rest = trimmed.strip_prefix("/rename").unwrap_or("").trim();
@@ -1446,6 +1620,71 @@ System\n\
         return true;
     }
 
+
+    // /delete — delete current conversation (or all).
+    if trimmed == "/delete" || trimmed.starts_with("/delete ") {
+        let rest = trimmed.strip_prefix("/delete").unwrap_or("").trim();
+        if rest == "all" {
+            app.conversations.clear();
+            app.conversations.push(app::Conversation::new());
+            app.active_conversation = 0;
+            app.scroll_offset = 0;
+            app.status_message = Some("All conversations deleted".into());
+        } else {
+            if app.conversations.len() <= 1 {
+                // Last conversation — clear it instead
+                app.current_conversation_mut().messages.clear();
+                app.current_conversation_mut().title = "New Conversation".into();
+                app.status_message = Some("Conversation cleared".into());
+            } else {
+                app.conversations.remove(app.active_conversation);
+                if app.active_conversation >= app.conversations.len() {
+                    app.active_conversation = app.conversations.len() - 1;
+                }
+                app.scroll_offset = 0;
+                app.status_message = Some("Conversation deleted".into());
+            }
+        }
+        return true;
+    }
+
+    // /copy — copy messages to clipboard.
+    if trimmed == "/copy" || trimmed.starts_with("/copy ") {
+        let rest = trimmed.strip_prefix("/copy").unwrap_or("").trim();
+        let conv = app.current_conversation();
+        let text = match rest {
+            "all" => {
+                conv.messages
+                    .iter()
+                    .map(|(role, content)| format!("{}: {}", role, content))
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
+            "last" => conv
+                .messages
+                .last()
+                .map(|(_, c)| c.clone())
+                .unwrap_or_default(),
+            _ => {
+                // Default: last AI response
+                conv.messages
+                    .iter()
+                    .rev()
+                    .find(|(r, _)| r == "assistant")
+                    .map(|(_, c)| c.clone())
+                    .unwrap_or_default()
+            }
+        };
+        if text.is_empty() {
+            app.status_message = Some("Nothing to copy".into());
+        } else {
+            match clipboard::copy_to_clipboard(&text) {
+                Ok(()) => app.status_message = Some("Copied to clipboard".into()),
+                Err(e) => app.status_message = Some(format!("Clipboard error: {e}")),
+            }
+        }
+        return true;
+    }
     false
 }
 
@@ -1866,6 +2105,7 @@ async fn run_automation(
             app.stream_rx = Some(rx);
             app.is_streaming = true;
             app.streaming_response.clear();
+            app.streaming_start = Some(std::time::Instant::now());
 
             let provider = Arc::clone(provider);
             tokio::spawn(async move {
@@ -1965,6 +2205,7 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
     app.stream_rx = Some(rx);
     app.is_streaming = true;
     app.streaming_response.clear();
+    app.streaming_start = Some(std::time::Instant::now());
 
     let provider = Arc::clone(provider);
     tokio::spawn(async move {
@@ -1972,6 +2213,92 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
             let _ = tx.send(StreamEvent::Error(e.to_string()));
         }
     });
+}
+
+/// Regenerate the last assistant response by removing it and re-sending.
+async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _config: &Config) {
+    if app.is_streaming { return; }
+
+    let conv = app.current_conversation_mut();
+    // Remove the last assistant message
+    if let Some(pos) = conv.messages.iter().rposition(|(role, _)| role == "assistant") {
+        conv.messages.remove(pos);
+    } else {
+        app.status_message = Some("No response to regenerate".into());
+        return;
+    }
+
+    // Rebuild messages and re-send
+    let messages: Vec<ChatMessage> = app.current_conversation()
+        .messages
+        .iter()
+        .filter_map(|(role, content)| match role.as_str() {
+            "user" => Some(ChatMessage::user(content)),
+            "assistant" => Some(ChatMessage::assistant(content)),
+            "system" => Some(ChatMessage::system(content)),
+            _ => None,
+        })
+        .collect();
+
+    let model = app.selected_model.clone();
+    let (tx, rx) = mpsc::unbounded_channel();
+    app.stream_rx = Some(rx);
+    app.is_streaming = true;
+    app.streaming_response.clear();
+    app.streaming_start = Some(std::time::Instant::now());
+    app.scroll_offset = 0;
+    app.status_message = Some("Regenerating...".into());
+
+    let provider = Arc::clone(provider);
+    tokio::spawn(async move {
+        if let Err(e) = provider.chat_stream(&messages, &model, tx.clone()).await {
+            let _ = tx.send(StreamEvent::Error(e.to_string()));
+        }
+    });
+}
+
+/// Edit the last user message: load it back into the input buffer and remove
+/// it (plus any assistant response after it) from the conversation.
+fn edit_last_message(app: &mut App) {
+    if app.is_streaming { return; }
+
+    let conv = app.current_conversation_mut();
+
+    // Find the last user message
+    if let Some(pos) = conv.messages.iter().rposition(|(role, _)| role == "user") {
+        let (_, content) = conv.messages[pos].clone();
+
+        // Remove the user message and everything after it (the response)
+        conv.messages.truncate(pos);
+
+        // Load into input
+        app.input = content;
+        app.cursor_position = app.input.len();
+        app.input_mode = InputMode::Insert;
+        app.status_message = Some("Editing last message — press Enter to resend".into());
+    } else {
+        app.status_message = Some("No message to edit".into());
+    }
+}
+
+/// Delete the last message exchange (assistant + preceding user message).
+fn delete_last_exchange(app: &mut App) {
+    if app.is_streaming { return; }
+    let conv = app.current_conversation_mut();
+    if conv.messages.is_empty() { return; }
+
+    // Remove last message
+    let last_role = conv.messages.last().map(|(r, _)| r.clone());
+    conv.messages.pop();
+
+    // If we removed an assistant message, also remove the preceding user message
+    if last_role.as_deref() == Some("assistant") {
+        if conv.messages.last().map(|(r, _)| r.as_str()) == Some("user") {
+            conv.messages.pop();
+        }
+    }
+
+    app.status_message = Some("Deleted last exchange".into());
 }
 
 /// Copy the last assistant message to the system clipboard.
@@ -2020,5 +2347,140 @@ fn cycle_conversation(app: &mut App) {
             "Switched to conversation {}",
             app.active_conversation + 1
         ));
+    }
+}
+
+fn cycle_conversation_back(app: &mut App) {
+    if app.conversations.len() > 1 {
+        app.active_conversation = if app.active_conversation == 0 {
+            app.conversations.len() - 1
+        } else {
+            app.active_conversation - 1
+        };
+        app.scroll_offset = 0;
+        app.status_message = Some(format!(
+            "Switched to conversation {}",
+            app.active_conversation + 1
+        ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_common_prefix_single() {
+        let strs = ["hello"];
+        let refs: Vec<&&str> = strs.iter().collect();
+        assert_eq!(common_prefix(&refs), "hello");
+    }
+
+    #[test]
+    fn test_common_prefix_multiple() {
+        let strs = ["model", "models"];
+        let refs: Vec<&&str> = strs.iter().collect();
+        assert_eq!(common_prefix(&refs), "model");
+    }
+
+    #[test]
+    fn test_common_prefix_none() {
+        let strs = ["abc", "xyz"];
+        let refs: Vec<&&str> = strs.iter().collect();
+        assert_eq!(common_prefix(&refs), "");
+    }
+
+    #[test]
+    fn test_common_prefix_empty() {
+        let refs: Vec<&&str> = vec![];
+        assert_eq!(common_prefix(&refs), "");
+    }
+
+    #[test]
+    fn edit_last_message_loads_input() {
+        let mut app = App::new();
+        app.add_user_message("hello world".into());
+        app.add_assistant_message("hi there".into());
+        edit_last_message(&mut app);
+        assert_eq!(app.input, "hello world");
+        assert_eq!(app.cursor_position, 11);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn edit_last_message_no_messages() {
+        let mut app = App::new();
+        edit_last_message(&mut app);
+        assert!(app.input.is_empty());
+        assert_eq!(app.status_message.as_deref(), Some("No message to edit"));
+    }
+
+    #[test]
+    fn delete_last_exchange_removes_pair() {
+        let mut app = App::new();
+        app.add_user_message("question".into());
+        app.add_assistant_message("answer".into());
+        delete_last_exchange(&mut app);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn delete_last_exchange_single_message() {
+        let mut app = App::new();
+        app.add_user_message("question".into());
+        delete_last_exchange(&mut app);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn cycle_conversation_wraps() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        assert_eq!(app.active_conversation, 2);
+        cycle_conversation(&mut app);
+        assert_eq!(app.active_conversation, 0); // wraps
+    }
+
+    #[test]
+    fn cycle_conversation_back_wraps() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        // active_conversation is 2 (last)
+        // Go to first
+        app.active_conversation = 0;
+        cycle_conversation_back(&mut app);
+        assert_eq!(app.active_conversation, 2); // wraps to last
+    }
+
+    #[test]
+    fn update_search_results_finds_matches() {
+        let mut app = App::new();
+        app.add_user_message("hello world".into());
+        app.add_assistant_message("goodbye world".into());
+        app.add_user_message("hello again".into());
+        app.search_query = "hello".into();
+        update_search_results(&mut app);
+        assert_eq!(app.search_results.len(), 2);
+        assert_eq!(app.search_results, vec![0, 2]);
+    }
+
+    #[test]
+    fn update_search_results_empty_query() {
+        let mut app = App::new();
+        app.add_user_message("test".into());
+        app.search_query = String::new();
+        update_search_results(&mut app);
+        assert!(app.search_results.is_empty());
+    }
+
+    #[test]
+    fn update_search_results_case_insensitive() {
+        let mut app = App::new();
+        app.add_user_message("Hello World".into());
+        app.search_query = "hello".into();
+        update_search_results(&mut app);
+        assert_eq!(app.search_results.len(), 1);
     }
 }

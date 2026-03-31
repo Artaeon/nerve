@@ -12,7 +12,7 @@ pub fn render_help(frame: &mut Frame) {
 
     // ── Popup dimensions ─────────────────────────────────────────────
     let popup_width = 64u16.min(area.width.saturating_sub(4));
-    let popup_height = 38u16.min(area.height.saturating_sub(4));
+    let popup_height = 44u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -46,6 +46,13 @@ pub fn render_help(frame: &mut Frame) {
         ("Ctrl+L", "Clear conversation"),
         ("Ctrl+C / Ctrl+D", "Quit"),
         ("Esc", "Close overlay / cancel"),
+        ("", ""),
+        // -- Chat interaction --
+        ("", "Chat Interaction"),
+        ("Esc (streaming)", "Stop generation"),
+        ("Ctrl+R", "Regenerate last response"),
+        ("Ctrl+E", "Edit last message"),
+        ("x (Normal mode)", "Delete last exchange"),
         ("", ""),
         // -- Navigation --
         ("", "Navigation"),
