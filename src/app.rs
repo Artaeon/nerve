@@ -97,6 +97,8 @@ pub struct App {
     // -- command bar --
     pub command_bar_input: String,
     pub command_bar_select_index: usize,
+    /// Active category filter tab (0 = All, 1+ = specific category).
+    pub command_bar_category: usize,
 
     // -- clipboard manager --
     pub clipboard_manager: crate::clipboard_manager::ClipboardManager,
@@ -166,6 +168,7 @@ impl App {
 
             command_bar_input: String::new(),
             command_bar_select_index: 0,
+            command_bar_category: 0,
 
             clipboard_manager: crate::clipboard_manager::ClipboardManager::load()
                 .unwrap_or_else(|_| crate::clipboard_manager::ClipboardManager::new(100)),

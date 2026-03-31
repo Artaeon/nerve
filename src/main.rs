@@ -510,6 +510,7 @@ async fn handle_normal_mode(
                         app.mode = AppMode::CommandBar;
                         app.command_bar_input.clear();
                         app.command_bar_select_index = 0;
+                        app.command_bar_category = 0;
                     }
                     KeyCode::Char('n') => app.new_conversation(),
                     KeyCode::Char('p') => {
@@ -560,6 +561,7 @@ async fn handle_normal_mode(
                     app.mode = AppMode::CommandBar;
                     app.command_bar_input.clear();
                     app.command_bar_select_index = 0;
+                    app.command_bar_category = 0;
                 }
                 KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
                 KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
@@ -577,6 +579,7 @@ async fn handle_normal_mode(
                         app.mode = AppMode::CommandBar;
                         app.command_bar_input.clear();
                         app.command_bar_select_index = 0;
+                        app.command_bar_category = 0;
                     }
                     KeyCode::Char('n') => app.new_conversation(),
                     KeyCode::Char('p') => {
@@ -688,6 +691,29 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.status_message = Some(format!("Loaded prompt: {}", prompt.name));
             }
             app.mode = AppMode::Normal;
+        }
+        KeyCode::Tab => {
+            let cat_count = prompts::categories().len() + 1; // +1 for "All"
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                app.command_bar_category = if app.command_bar_category == 0 {
+                    cat_count - 1
+                } else {
+                    app.command_bar_category - 1
+                };
+            } else {
+                app.command_bar_category = (app.command_bar_category + 1) % cat_count;
+            }
+            app.command_bar_select_index = 0;
+        }
+        KeyCode::BackTab => {
+            // Shift+Tab also reported as BackTab on some terminals.
+            let cat_count = prompts::categories().len() + 1;
+            app.command_bar_category = if app.command_bar_category == 0 {
+                cat_count - 1
+            } else {
+                app.command_bar_category - 1
+            };
+            app.command_bar_select_index = 0;
         }
         KeyCode::Backspace => {
             app.command_bar_input.pop();
