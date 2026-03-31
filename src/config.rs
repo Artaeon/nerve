@@ -174,8 +174,18 @@ impl Config {
         }
 
         let contents = fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&contents)?;
-        Ok(config)
+        match toml::from_str::<Config>(&contents) {
+            Ok(config) => Ok(config),
+            Err(e) => {
+                tracing::warn!(
+                    "Config parse error ({}): {e}. Using defaults.",
+                    path.display()
+                );
+                // Old config format or corrupt file — fall back to defaults
+                // so the app can still start.
+                Ok(Config::default())
+            }
+        }
     }
 
     /// Persist the configuration to disk, creating parent directories as
