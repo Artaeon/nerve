@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "Raw AI power in your terminal"
 license = "MIT"
+repository = "https://github.com/Artaeon/nerve"
+homepage = "https://github.com/Artaeon/nerve"
+keywords = ["ai", "tui", "terminal", "assistant", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+readme = "README.md"
 
 [[bin]]
 name = "nerve"
