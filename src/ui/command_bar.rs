@@ -125,28 +125,69 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     );
     frame.render_widget(input_paragraph, chunks[0]);
 
-    // ── 2. Category tabs ────────────────────────────────────────────────
+    // ── 2. Category tabs (horizontally scrolled to keep active visible) ─
     let tabs = category_tabs();
-    let tab_spans: Vec<Span> = tabs
+    let available_width = chunks[1].width as usize;
+
+    // Build tab labels with their character widths so we can compute scroll.
+    let tab_labels: Vec<(String, bool)> = tabs
         .iter()
         .enumerate()
-        .flat_map(|(i, name)| {
-            let is_active = i == app.command_bar_category;
-            let style = if is_active {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            let label = format!(" {} ", name);
-            vec![
-                Span::styled(label, style),
-                Span::raw("  "),
-            ]
-        })
+        .map(|(i, name)| (format!(" {} ", name), i == app.command_bar_category))
         .collect();
+
+    // Calculate the character offset of the active tab and the total width.
+    let mut active_start = 0usize;
+    let mut active_end = 0usize;
+    let mut cursor = 0usize;
+    for (label, is_active) in &tab_labels {
+        let w = label.len() + 2; // +2 for the "  " spacer
+        if *is_active {
+            active_start = cursor;
+            active_end = cursor + w;
+        }
+        cursor += w;
+    }
+
+    // Determine horizontal scroll offset so the active tab is visible.
+    // Try to center the active tab, but clamp to valid range.
+    let scroll_x = if active_end <= available_width {
+        0
+    } else {
+        let center = active_start.saturating_sub(available_width / 3);
+        center.min(cursor.saturating_sub(available_width))
+    };
+
+    // Build visible spans with scroll offset applied.
+    let mut tab_spans: Vec<Span> = Vec::new();
+    let mut pos = 0usize;
+    if scroll_x > 0 {
+        tab_spans.push(Span::styled("\u{25c0} ", Style::default().fg(Color::DarkGray)));
+    }
+    for (i, (label, _is_active)) in tab_labels.iter().enumerate() {
+        let w = label.len() + 2;
+        let end = pos + w;
+        // Skip tabs entirely before the scroll window.
+        if end <= scroll_x {
+            pos = end;
+            continue;
+        }
+        let is_active = i == app.command_bar_category;
+        let style = if is_active {
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        tab_spans.push(Span::styled(label.clone(), style));
+        tab_spans.push(Span::raw("  "));
+        pos = end;
+    }
+    if cursor > scroll_x + available_width {
+        tab_spans.push(Span::styled(" \u{25b6}", Style::default().fg(Color::DarkGray)));
+    }
 
     let tab_line = Paragraph::new(Line::from(tab_spans));
     frame.render_widget(tab_line, chunks[1]);
