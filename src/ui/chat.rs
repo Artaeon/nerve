@@ -454,6 +454,10 @@ fn code_footer_line() -> Line<'static> {
 
 // ── Syntax highlighting ──────────────────────────────────────────────────────
 
+/// Maximum number of lines to syntax-highlight in a single code block.
+/// Beyond this limit lines are rendered as plain text for performance.
+const MAX_HIGHLIGHT_LINES: usize = 200;
+
 /// Syntax-highlight a code block and return styled `Line`s with line numbers.
 fn highlight_code(
     code: &str,
@@ -476,8 +480,17 @@ fn highlight_code(
     let line_num_style = Style::default().fg(Color::DarkGray).bg(CODE_BG);
     let pipe_style = Style::default().fg(Color::DarkGray).bg(CODE_BG);
 
+    let total_lines = code.lines().count();
+
     for (line_idx, line) in code.lines().enumerate() {
-        let ranges = h.highlight_line(line, ss).unwrap_or_default();
+        // Limit syntax highlighting to first MAX_HIGHLIGHT_LINES lines for
+        // performance — syntect can be expensive on very large blocks.
+        let ranges = if line_idx < MAX_HIGHLIGHT_LINES {
+            h.highlight_line(line, ss).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         let mut spans: Vec<Span<'static>> = Vec::new();
 
         // Prefix: `   │ 1 │ ` — chrome + line number + pipe
@@ -494,15 +507,38 @@ fn highlight_code(
             pipe_style,
         ));
 
-        for (style, text) in ranges {
-            let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+        if line_idx < MAX_HIGHLIGHT_LINES {
+            for (style, text) in ranges {
+                let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
+                spans.push(Span::styled(
+                    text.to_string(),
+                    Style::default().fg(fg).bg(CODE_BG),
+                ));
+            }
+        } else {
+            // Past the highlight limit — render as plain text on code background.
             spans.push(Span::styled(
-                text.to_string(),
-                Style::default().fg(fg).bg(CODE_BG),
+                line.to_string(),
+                Style::default().fg(Color::White).bg(CODE_BG),
             ));
         }
 
         lines.push(Line::from(spans));
+    }
+
+    // If truncated, add a note about unhighlighted lines.
+    if total_lines > MAX_HIGHLIGHT_LINES {
+        let note = format!(
+            "   [... syntax highlighting skipped for {} lines above]",
+            total_lines - MAX_HIGHLIGHT_LINES
+        );
+        lines.push(Line::from(Span::styled(
+            note,
+            Style::default()
+                .fg(Color::DarkGray)
+                .bg(CODE_BG)
+                .add_modifier(Modifier::ITALIC),
+        )));
     }
 
     lines

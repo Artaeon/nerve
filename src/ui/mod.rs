@@ -500,20 +500,32 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             )
         };
 
-        // Calculate total word count across all messages in current conversation
+        // Calculate total word count and token estimate across all messages in current conversation
         let total_words: usize = app
             .current_conversation()
             .messages
             .iter()
             .map(|(_, content)| content.split_whitespace().count())
             .sum();
-        let reading_min = (total_words + 249) / 250; // round up, ~250 wpm
+        let total_tokens: usize = app
+            .current_conversation()
+            .messages
+            .iter()
+            .map(|(_, content)| content.len() / 4 + 1)
+            .sum();
 
         // Format word count with thousands separator
         let words_display = if total_words >= 1_000 {
             format!("{},{:03}", total_words / 1_000, total_words % 1_000)
         } else {
             format!("{}", total_words)
+        };
+
+        // Format token count with thousands separator
+        let tokens_display = if total_tokens >= 1_000 {
+            format!("{},{:03}", total_tokens / 1_000, total_tokens % 1_000)
+        } else {
+            format!("{}", total_tokens)
         };
 
         let right_text = format!(
@@ -536,12 +548,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             left_status,
             sep.clone(),
             Span::styled(
-                format!("{} words", words_display),
+                format!("~{} tokens", tokens_display),
                 Style::default().fg(Color::DarkGray),
             ),
             sep.clone(),
             Span::styled(
-                format!("~{} min read", reading_min.max(1)),
+                format!("{} words", words_display),
                 Style::default().fg(Color::DarkGray),
             ),
             sep.clone(),
