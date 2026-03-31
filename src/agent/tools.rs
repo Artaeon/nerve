@@ -121,26 +121,63 @@ pub fn parse_tool_calls(text: &str) -> Vec<ToolCall> {
 fn parse_single_tool_call(block: &str) -> Option<ToolCall> {
     let mut tool_name = None;
     let mut args = std::collections::HashMap::new();
+    let lines: Vec<&str> = block.lines().collect();
+    let mut i = 0;
 
-    for line in block.lines() {
-        let line = line.trim();
+    while i < lines.len() {
+        let line = lines[i].trim();
         if line.is_empty() {
+            i += 1;
             continue;
         }
 
         if let Some((key, value)) = line.split_once(':') {
             let key = key.trim();
-            let value = value.trim().to_string();
+            let value = value.trim();
 
             if key == "tool" {
-                tool_name = Some(value);
+                tool_name = Some(value.to_string());
+                i += 1;
+            } else if is_multiline_arg(key) {
+                // Collect all lines until the next known key or end
+                let mut full_value = value.to_string();
+                i += 1;
+                while i < lines.len() {
+                    let next_line = lines[i].trim();
+                    // Check if this is a new argument
+                    if next_line
+                        .split_once(':')
+                        .map(|(k, _)| is_known_arg(k.trim()))
+                        .unwrap_or(false)
+                    {
+                        break;
+                    }
+                    full_value.push('\n');
+                    full_value.push_str(lines[i]); // Keep original indentation
+                    i += 1;
+                }
+                args.insert(key.to_string(), full_value);
             } else {
-                args.insert(key.to_string(), value);
+                args.insert(key.to_string(), value.to_string());
+                i += 1;
             }
+        } else {
+            i += 1;
         }
     }
 
     tool_name.map(|name| ToolCall { tool: name, args })
+}
+
+fn is_multiline_arg(key: &str) -> bool {
+    matches!(key, "content" | "old_text" | "new_text")
+}
+
+fn is_known_arg(key: &str) -> bool {
+    matches!(
+        key,
+        "tool" | "path" | "content" | "old_text" | "new_text" | "command" | "pattern"
+    )
 }
 
 /// Execute a tool call and return the result
@@ -485,5 +522,101 @@ mod tests {
         let result = execute_tool(&call);
         assert!(result.success);
         assert!(result.output.contains("main"));
+    }
+
+    #[test]
+    fn parse_tool_call_with_multiline_content() {
+        let text = r#"<tool_call>
+tool: write_file
+path: src/hello.rs
+content: fn main() {
+    println!("hello");
+}
+</tool_call>"#;
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "write_file");
+        assert!(calls[0].args.get("content").unwrap().contains("println"));
+    }
+
+    #[test]
+    fn parse_edit_file_with_multiline() {
+        let text = r#"<tool_call>
+tool: edit_file
+path: src/main.rs
+old_text: fn old() {
+    old_code();
+}
+new_text: fn new() {
+    new_code();
+}
+</tool_call>"#;
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].args.get("old_text").unwrap().contains("old_code"));
+        assert!(calls[0].args.get("new_text").unwrap().contains("new_code"));
+    }
+
+    #[test]
+    fn execute_edit_file_not_found() {
+        let call = ToolCall {
+            tool: "edit_file".into(),
+            args: [
+                ("path".into(), "/nonexistent.rs".into()),
+                ("old_text".into(), "foo".into()),
+                ("new_text".into(), "bar".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+    }
+
+    #[test]
+    fn execute_edit_file_text_not_found() {
+        let dir = std::env::temp_dir().join("nerve_edit_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.txt");
+        std::fs::write(&path, "hello world").unwrap();
+
+        let call = ToolCall {
+            tool: "edit_file".into(),
+            args: [
+                ("path".into(), path.to_string_lossy().into()),
+                ("old_text".into(), "nonexistent".into()),
+                ("new_text".into(), "replacement".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("not found"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn execute_edit_file_success() {
+        let dir = std::env::temp_dir().join("nerve_edit_test2");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.txt");
+        std::fs::write(&path, "hello world").unwrap();
+
+        let call = ToolCall {
+            tool: "edit_file".into(),
+            args: [
+                ("path".into(), path.to_string_lossy().into()),
+                ("old_text".into(), "hello".into()),
+                ("new_text".into(), "goodbye".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "goodbye world");
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
