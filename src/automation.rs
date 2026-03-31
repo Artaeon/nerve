@@ -269,3 +269,200 @@ pub fn all_automations() -> Vec<Automation> {
     }
     all
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_new_has_correct_fields() {
+        let a = Automation::new("Test Auto".to_string(), "A test automation".to_string());
+        assert_eq!(a.name, "Test Auto");
+        assert_eq!(a.description, "A test automation");
+        assert!(a.steps.is_empty());
+    }
+
+    #[test]
+    fn automation_add_step_appends() {
+        let mut a = Automation::new("Test".to_string(), "Desc".to_string());
+        assert!(a.steps.is_empty());
+
+        a.add_step(AutomationStep {
+            name: "Step 1".to_string(),
+            prompt_template: "Do {{input}}".to_string(),
+            model: None,
+        });
+        assert_eq!(a.steps.len(), 1);
+        assert_eq!(a.steps[0].name, "Step 1");
+
+        a.add_step(AutomationStep {
+            name: "Step 2".to_string(),
+            prompt_template: "Then {{prev_output}}".to_string(),
+            model: Some("gpt-4".to_string()),
+        });
+        assert_eq!(a.steps.len(), 2);
+        assert_eq!(a.steps[1].name, "Step 2");
+        assert_eq!(a.steps[1].model.as_deref(), Some("gpt-4"));
+    }
+
+    #[test]
+    fn builtin_automations_returns_five() {
+        let builtins = builtin_automations();
+        assert_eq!(builtins.len(), 5, "Expected 5 built-in automations");
+    }
+
+    #[test]
+    fn all_builtin_automations_have_required_fields() {
+        for a in builtin_automations() {
+            assert!(!a.name.is_empty(), "Automation has empty name");
+            assert!(
+                !a.description.is_empty(),
+                "Automation '{}' has empty description",
+                a.name
+            );
+            assert!(
+                !a.steps.is_empty(),
+                "Automation '{}' has no steps",
+                a.name
+            );
+        }
+    }
+
+    #[test]
+    fn all_builtin_steps_have_input_or_prev_output_placeholder() {
+        for a in builtin_automations() {
+            for step in &a.steps {
+                let has_input = step.prompt_template.contains("{{input}}");
+                let has_prev = step.prompt_template.contains("{{prev_output}}");
+                assert!(
+                    has_input || has_prev,
+                    "Step '{}' in automation '{}' has no {{{{input}}}} or {{{{prev_output}}}} placeholder",
+                    step.name,
+                    a.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_automation_names_are_unique() {
+        let builtins = builtin_automations();
+        let mut names = std::collections::HashSet::new();
+        for a in &builtins {
+            assert!(
+                names.insert(&a.name),
+                "Duplicate builtin automation name: {}",
+                a.name
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_filename_basic() {
+        assert_eq!(sanitize_filename("Hello World"), "hello-world");
+        assert_eq!(sanitize_filename("Code Review Pipeline"), "code-review-pipeline");
+        assert_eq!(sanitize_filename("test_name"), "test_name");
+        assert_eq!(sanitize_filename("special!@#chars"), "special---chars");
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_alphanumeric_and_dashes() {
+        let result = sanitize_filename("my-automation-123");
+        assert_eq!(result, "my-automation-123");
+    }
+
+    #[test]
+    fn automation_serialization_roundtrip() {
+        let mut a = Automation::new("Test Ser".to_string(), "Serialization test".to_string());
+        a.add_step(AutomationStep {
+            name: "Step 1".to_string(),
+            prompt_template: "Do {{input}}".to_string(),
+            model: None,
+        });
+
+        let toml_str = toml::to_string_pretty(&a).expect("serialize to TOML");
+        let deserialized: Automation = toml::from_str(&toml_str).expect("deserialize from TOML");
+
+        assert_eq!(deserialized.name, a.name);
+        assert_eq!(deserialized.description, a.description);
+        assert_eq!(deserialized.steps.len(), 1);
+        assert_eq!(deserialized.steps[0].name, "Step 1");
+    }
+
+    #[test]
+    fn all_automations_includes_builtins() {
+        let all = all_automations();
+        let builtin_count = builtin_automations().len();
+        assert!(
+            all.len() >= builtin_count,
+            "all_automations() ({}) should include at least {} builtins",
+            all.len(),
+            builtin_count
+        );
+
+        // Verify each builtin name is present in all_automations
+        let all_names: std::collections::HashSet<&str> =
+            all.iter().map(|a| a.name.as_str()).collect();
+        for b in builtin_automations() {
+            assert!(
+                all_names.contains(b.name.as_str()),
+                "Builtin '{}' missing from all_automations()",
+                b.name
+            );
+        }
+    }
+
+    #[test]
+    fn find_automation_finds_builtin_case_insensitive() {
+        let result = find_automation("code review pipeline");
+        assert!(result.is_ok(), "Should find builtin by lowercase name");
+        assert_eq!(result.unwrap().name, "Code Review Pipeline");
+    }
+
+    #[test]
+    fn find_automation_missing_returns_error() {
+        let result = find_automation("nonexistent automation xyz");
+        assert!(result.is_err(), "Should return error for missing automation");
+    }
+
+    #[test]
+    fn save_and_load_automation_roundtrip() {
+        let mut a = Automation::new(
+            format!("Test Save {}", uuid::Uuid::new_v4()),
+            "Roundtrip test".to_string(),
+        );
+        a.add_step(AutomationStep {
+            name: "Only Step".to_string(),
+            prompt_template: "Process: {{input}}".to_string(),
+            model: None,
+        });
+
+        save_automation(&a).expect("save");
+        let loaded = load_automation(&a.name).expect("load");
+
+        assert_eq!(loaded.name, a.name);
+        assert_eq!(loaded.description, a.description);
+        assert_eq!(loaded.steps.len(), 1);
+
+        // Cleanup
+        delete_automation(&a.name).expect("cleanup");
+    }
+
+    #[test]
+    fn delete_automation_removes_file() {
+        let name = format!("Test Delete {}", uuid::Uuid::new_v4());
+        let a = Automation::new(name.clone(), "Delete test".to_string());
+        save_automation(&a).expect("save");
+
+        delete_automation(&name).expect("delete");
+
+        let result = load_automation(&name);
+        assert!(result.is_err(), "Loading deleted automation should fail");
+    }
+
+    #[test]
+    fn delete_missing_automation_returns_error() {
+        let result = delete_automation("nonexistent_automation_xyz_12345");
+        assert!(result.is_err(), "Deleting nonexistent automation should error");
+    }
+}

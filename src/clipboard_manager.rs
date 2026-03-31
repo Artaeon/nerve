@@ -152,3 +152,194 @@ fn data_file_path() -> anyhow::Result<std::path::PathBuf> {
         dirs::data_dir().context("could not determine XDG data directory")?;
     Ok(data_dir.join("nerve").join("clipboard.json"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_clipboard_manager_is_empty() {
+        let cm = ClipboardManager::new(50);
+        assert!(cm.entries().is_empty());
+        assert_eq!(cm.max_entries, 50);
+    }
+
+    #[test]
+    fn add_creates_entry_with_correct_fields() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("Hello, world!".to_string(), ClipboardSource::AiResponse);
+
+        assert_eq!(cm.entries().len(), 1);
+        let entry = &cm.entries()[0];
+        assert_eq!(entry.content, "Hello, world!");
+        assert_eq!(entry.preview, "Hello, world!");
+        assert!(matches!(entry.source, ClipboardSource::AiResponse));
+    }
+
+    #[test]
+    fn add_generates_preview_with_truncation() {
+        let mut cm = ClipboardManager::new(10);
+        let long_content = "a".repeat(200);
+        cm.add(long_content.clone(), ClipboardSource::UserCopy);
+
+        let entry = &cm.entries()[0];
+        assert_eq!(entry.preview.len(), 100);
+        assert_eq!(entry.preview, "a".repeat(100));
+    }
+
+    #[test]
+    fn add_generates_preview_replacing_newlines() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("line1\nline2\rline3".to_string(), ClipboardSource::UserCopy);
+
+        let entry = &cm.entries()[0];
+        assert_eq!(entry.preview, "line1 line2 line3");
+        assert!(!entry.preview.contains('\n'));
+        assert!(!entry.preview.contains('\r'));
+    }
+
+    #[test]
+    fn add_respects_max_entries_limit() {
+        let mut cm = ClipboardManager::new(3);
+        cm.add("first".to_string(), ClipboardSource::AiResponse);
+        cm.add("second".to_string(), ClipboardSource::AiResponse);
+        cm.add("third".to_string(), ClipboardSource::AiResponse);
+        cm.add("fourth".to_string(), ClipboardSource::AiResponse);
+
+        assert_eq!(cm.entries().len(), 3);
+        // The oldest ("first") should have been removed
+        assert_eq!(cm.entries()[0].content, "fourth");
+        assert_eq!(cm.entries()[1].content, "third");
+        assert_eq!(cm.entries()[2].content, "second");
+    }
+
+    #[test]
+    fn entries_returns_newest_first() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("older".to_string(), ClipboardSource::AiResponse);
+        cm.add("newer".to_string(), ClipboardSource::AiResponse);
+
+        assert_eq!(cm.entries()[0].content, "newer");
+        assert_eq!(cm.entries()[1].content, "older");
+    }
+
+    #[test]
+    fn search_finds_matching_entries() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("rust programming language".to_string(), ClipboardSource::AiResponse);
+        cm.add("python scripting".to_string(), ClipboardSource::UserCopy);
+        cm.add("rust cargo build".to_string(), ClipboardSource::PromptTemplate);
+
+        let results = cm.search("rust");
+        assert!(
+            results.len() >= 2,
+            "Should find at least 2 entries containing 'rust', got {}",
+            results.len()
+        );
+        for (_, entry) in &results {
+            assert!(
+                entry.content.contains("rust") || entry.content.contains("Rust"),
+                "Search result should match query"
+            );
+        }
+    }
+
+    #[test]
+    fn search_returns_empty_for_no_matches() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("hello world".to_string(), ClipboardSource::AiResponse);
+
+        let results = cm.search("zzzznotfound");
+        assert!(results.is_empty(), "Should find no matches for nonsense query");
+    }
+
+    #[test]
+    fn search_empty_query_returns_all() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("one".to_string(), ClipboardSource::AiResponse);
+        cm.add("two".to_string(), ClipboardSource::UserCopy);
+
+        let results = cm.search("");
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn remove_removes_correct_entry() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("first".to_string(), ClipboardSource::AiResponse);
+        cm.add("second".to_string(), ClipboardSource::UserCopy);
+        cm.add("third".to_string(), ClipboardSource::PromptTemplate);
+
+        // Remove index 1 ("second", since newest-first: third=0, second=1, first=2)
+        cm.remove(1);
+
+        assert_eq!(cm.entries().len(), 2);
+        assert_eq!(cm.entries()[0].content, "third");
+        assert_eq!(cm.entries()[1].content, "first");
+    }
+
+    #[test]
+    fn remove_out_of_bounds_is_noop() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("only".to_string(), ClipboardSource::AiResponse);
+        cm.remove(99);
+        assert_eq!(cm.entries().len(), 1);
+    }
+
+    #[test]
+    fn clear_removes_all_entries() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("one".to_string(), ClipboardSource::AiResponse);
+        cm.add("two".to_string(), ClipboardSource::UserCopy);
+        cm.clear();
+        assert!(cm.entries().is_empty());
+    }
+
+    #[test]
+    fn make_preview_truncates_at_100_chars() {
+        let long = "x".repeat(250);
+        let preview = make_preview(&long);
+        assert_eq!(preview.len(), 100);
+    }
+
+    #[test]
+    fn make_preview_replaces_newlines_with_spaces() {
+        let content = "hello\nworld\r!";
+        let preview = make_preview(content);
+        assert_eq!(preview, "hello world !");
+    }
+
+    #[test]
+    fn clipboard_source_badge_display() {
+        assert_eq!(ClipboardSource::AiResponse.badge(), "[AI]");
+        assert_eq!(ClipboardSource::UserCopy.badge(), "[Copy]");
+        assert_eq!(ClipboardSource::PromptTemplate.badge(), "[Prompt]");
+        assert_eq!(ClipboardSource::ManualCopy.badge(), "[Manual]");
+    }
+
+    #[test]
+    fn get_returns_entry_at_index() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("one".to_string(), ClipboardSource::AiResponse);
+        cm.add("two".to_string(), ClipboardSource::UserCopy);
+
+        assert_eq!(cm.get(0).unwrap().content, "two");
+        assert_eq!(cm.get(1).unwrap().content, "one");
+        assert!(cm.get(2).is_none());
+    }
+
+    #[test]
+    fn clipboard_entry_serialization_roundtrip() {
+        let entry = ClipboardEntry {
+            content: "test content".to_string(),
+            source: ClipboardSource::AiResponse,
+            timestamp: Utc::now(),
+            preview: "test content".to_string(),
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        let deserialized: ClipboardEntry =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.content, entry.content);
+        assert_eq!(deserialized.preview, entry.preview);
+    }
+}
