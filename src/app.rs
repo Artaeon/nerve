@@ -25,6 +25,8 @@ pub enum AppMode {
     HistoryBrowser,
     /// Picking an AI provider.
     ProviderSelect,
+    /// In-conversation search overlay (Ctrl+F).
+    SearchOverlay,
 }
 
 /// Whether the user is navigating (Normal / vim-style) or typing.
@@ -77,6 +79,7 @@ pub struct App {
     pub streaming_response: String,
     pub is_streaming: bool,
     pub stream_rx: Option<mpsc::UnboundedReceiver<StreamEvent>>,
+    pub streaming_start: Option<std::time::Instant>,
 
     // -- viewport --
     pub scroll_offset: u16,
@@ -122,6 +125,11 @@ pub struct App {
     /// Working directory for Claude Code file access.
     pub working_dir: Option<String>,
 
+    // -- search overlay --
+    pub search_query: String,
+    pub search_results: Vec<usize>,
+    pub search_current: usize,
+
     // -- misc --
     pub status_message: Option<String>,
     pub should_quit: bool,
@@ -147,6 +155,7 @@ impl App {
             streaming_response: String::new(),
             is_streaming: false,
             stream_rx: None,
+            streaming_start: None,
 
             scroll_offset: 0,
 
@@ -191,6 +200,10 @@ impl App {
 
             code_mode: false,
             working_dir: None,
+
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_current: 0,
 
             status_message: None,
             should_quit: false,
@@ -252,6 +265,7 @@ impl App {
         }
         self.is_streaming = false;
         self.stream_rx = None;
+        self.streaming_start = None;
     }
 
     // ── Cursor / editing ────────────────────────────────────────────────

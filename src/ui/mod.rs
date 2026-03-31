@@ -4,6 +4,7 @@ pub mod command_bar;
 pub mod help;
 pub mod history_browser;
 pub mod prompt_picker;
+pub mod search;
 
 use ratatui::{
     Frame,
@@ -79,6 +80,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         AppMode::ModelSelect => render_model_selector(frame, app),
         AppMode::ProviderSelect => render_provider_selector(frame, app),
         AppMode::ClipboardManager => clipboard_manager::render_clipboard_manager(frame, app),
+        AppMode::SearchOverlay => search::render_search(frame, app),
         _ => {}
     }
 }
@@ -96,6 +98,19 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Calculate message count for the badge
     let msg_count = app.current_conversation().messages.len();
     let provider_label = provider_display_name(&app.selected_provider);
+
+    // Build the conversation tab indicator
+    let conv_count = app.conversations.len();
+    let conv_num = app.active_conversation + 1;
+    let conv_indicator = if conv_count > 1 {
+        format!(
+            "\u{25c4} {}/{} \u{25ba} ",
+            conv_num, conv_count
+        )
+    } else {
+        String::new()
+    };
+
     let right_display = format!(
         "{} \u{203a} {} \u{2502} {} msgs ",
         provider_label,
@@ -109,7 +124,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(15),        // branding + version
             Constraint::Length(3),          // separator
-            Constraint::Min(1),            // conversation title
+            Constraint::Min(1),            // conversation indicator + title
             Constraint::Length(right_len), // provider/model + msg count
         ])
         .split(inner);
@@ -137,14 +152,22 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     )));
     frame.render_widget(sep, chunks[1]);
 
-    // Conversation title
+    // Conversation indicator + title
     let title = &app.current_conversation().title;
-    let title_widget = Paragraph::new(Line::from(Span::styled(
+    let mut title_spans = Vec::new();
+    if !conv_indicator.is_empty() {
+        title_spans.push(Span::styled(
+            conv_indicator,
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    title_spans.push(Span::styled(
         title.to_string(),
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
-    )));
+    ));
+    let title_widget = Paragraph::new(Line::from(title_spans));
     frame.render_widget(title_widget, chunks[2]);
 
     // Right side: provider > model | msg count
@@ -393,15 +416,29 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let sep = Span::styled(" \u{2502} ", Style::default().fg(Color::Rgb(60, 60, 70)));
 
     if app.is_streaming {
-        // Streaming status bar with progress animation
-        // Cycle through animation frames based on streaming response length
+        // Streaming status bar with progress animation and stats
         let anim_chars = ['\u{2591}', '\u{2592}', '\u{2593}', '\u{2588}'];
         let tick = app.streaming_response.len() % 4;
-        let progress: String = (0..8)
+        let progress: String = (0..6)
             .map(|i| anim_chars[(tick + i) % 4])
             .collect();
 
-        let line = Line::from(vec![
+        // Approximate token count: words * 4/3
+        let word_count = app.streaming_response.split_whitespace().count();
+        let approx_tokens = word_count * 4 / 3;
+
+        // Elapsed time and speed
+        let elapsed_secs = app
+            .streaming_start
+            .map(|start| start.elapsed().as_secs_f64())
+            .unwrap_or(0.0);
+        let tok_per_sec = if elapsed_secs > 0.1 {
+            approx_tokens as f64 / elapsed_secs
+        } else {
+            0.0
+        };
+
+        let mut spans = vec![
             Span::styled(
                 " Streaming... ",
                 Style::default()
@@ -414,24 +451,44 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             sep.clone(),
             Span::styled(
-                format!("{} \u{203a} {}", provider_label, app.selected_model),
+                format!("~{} tokens", approx_tokens),
+                Style::default().fg(Color::Cyan),
+            ),
+            sep.clone(),
+            Span::styled(
+                format!("{:.1}s", elapsed_secs),
                 Style::default().fg(Color::DarkGray),
             ),
             sep.clone(),
             Span::styled(
-                format!(
-                    "Conv {}/{}",
-                    app.active_conversation + 1,
-                    app.conversations.len(),
-                ),
+                format!("{:.0} tok/s", tok_per_sec),
                 Style::default().fg(Color::DarkGray),
             ),
+            sep.clone(),
+            Span::styled(
+                app.selected_model.to_string(),
+                Style::default().fg(Color::Yellow),
+            ),
             Span::raw(" "),
-        ]);
+        ];
 
-        frame.render_widget(Paragraph::new(line), area);
+        if app.code_mode {
+            spans.insert(spans.len() - 1, sep.clone());
+            spans.insert(
+                spans.len() - 1,
+                Span::styled(
+                    "CODE",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            );
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(spans)), area);
     } else {
-        // Normal status bar
+        // Normal status bar with conversation stats
         let left_status = if let Some(ref msg) = app.status_message {
             Span::styled(format!(" {msg}"), Style::default().fg(Color::Yellow))
         } else {
@@ -443,8 +500,24 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             )
         };
 
+        // Calculate total word count across all messages in current conversation
+        let total_words: usize = app
+            .current_conversation()
+            .messages
+            .iter()
+            .map(|(_, content)| content.split_whitespace().count())
+            .sum();
+        let reading_min = (total_words + 249) / 250; // round up, ~250 wpm
+
+        // Format word count with thousands separator
+        let words_display = if total_words >= 1_000 {
+            format!("{},{:03}", total_words / 1_000, total_words % 1_000)
+        } else {
+            format!("{}", total_words)
+        };
+
         let right_text = format!(
-            "Conv {}/{} \u{2502} Ctrl+K: Nerve Bar \u{2502} F1: Help ",
+            "Conv {}/{} \u{2502} Ctrl+K: Nerve Bar ",
             app.active_conversation + 1,
             app.conversations.len(),
         );
@@ -463,12 +536,17 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             left_status,
             sep.clone(),
             Span::styled(
-                format!("Provider: {}", provider_label),
+                format!("{} words", words_display),
                 Style::default().fg(Color::DarkGray),
             ),
             sep.clone(),
             Span::styled(
-                format!("Model: {}", app.selected_model),
+                format!("~{} min read", reading_min.max(1)),
+                Style::default().fg(Color::DarkGray),
+            ),
+            sep.clone(),
+            Span::styled(
+                format!("{} \u{203a} {}", provider_label, app.selected_model),
                 Style::default().fg(Color::DarkGray),
             ),
         ];
@@ -494,13 +572,127 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+// ─── Model info helper ──────────────────────────────────────────────────────
+
+/// Returns (display_name, provider_group, context) for a known model ID.
+fn model_info(id: &str) -> (&str, &str, &str) {
+    match id {
+        "opus" => ("Claude Opus 4.6", "Claude Code", "1M ctx"),
+        "sonnet" => ("Claude Sonnet 4.6", "Claude Code", "200K ctx"),
+        "haiku" => ("Claude Haiku 4.5", "Claude Code", "200K ctx"),
+        "gpt-4o" => ("GPT-4o", "OpenAI", "128K ctx"),
+        "gpt-4o-mini" => ("GPT-4o Mini", "OpenAI", "128K ctx"),
+        "llama3" => ("Llama 3", "Ollama", "8K ctx"),
+        other => (other, "Other", ""),
+    }
+}
+
 // ─── Model selector overlay ──────────────────────────────────────────────────
 
 fn render_model_selector(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    let popup_width = 44u16.min(area.width.saturating_sub(4));
-    let popup_height = (app.available_models.len() as u16 + 4).min(area.height.saturating_sub(4));
+    // Group models by provider, preserving the order defined here.
+    let provider_groups: &[(&str, &[&str])] = &[
+        ("Claude Code", &["opus", "sonnet", "haiku"]),
+        ("OpenAI", &["gpt-4o", "gpt-4o-mini"]),
+        ("Ollama", &["llama3"]),
+        ("Other", &[]),
+    ];
+
+    // Build lines and track which line indices correspond to selectable models.
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    let mut model_index: usize = 0;
+    // Map from flat model index -> line index (for scroll tracking).
+    let mut _model_line_map: Vec<usize> = Vec::new();
+
+    // Collect "other" models not in any predefined group.
+    let known: std::collections::HashSet<&str> = [
+        "opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini", "llama3",
+    ]
+    .iter()
+    .copied()
+    .collect();
+    let other_models: Vec<&str> = app
+        .available_models
+        .iter()
+        .filter(|m| !known.contains(m.as_str()))
+        .map(|m| m.as_str())
+        .collect();
+
+    for &(provider_name, group_models) in provider_groups {
+        // Determine which models in this group are actually available.
+        let models_in_group: Vec<&str> = if provider_name == "Other" {
+            other_models.clone()
+        } else {
+            group_models
+                .iter()
+                .filter(|id| app.available_models.contains(&id.to_string()))
+                .copied()
+                .collect()
+        };
+        if models_in_group.is_empty() {
+            continue;
+        }
+
+        // Blank line before group (except at top)
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+
+        // Provider header
+        lines.push(Line::from(Span::styled(
+            format!("  {}", provider_name),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        // Underline
+        let underline_len = provider_name.len().min(40);
+        lines.push(Line::from(Span::styled(
+            format!("  {}", "\u{2500}".repeat(underline_len)),
+            Style::default().fg(Color::DarkGray),
+        )));
+
+        for model_id in &models_in_group {
+            let (display_name, _, ctx) = model_info(model_id);
+            let is_selected = model_index == app.model_select_index;
+            let is_active = *model_id == app.selected_model;
+
+            let marker = if is_selected { "\u{25ba} " } else { "  " };
+            let active_badge = if is_active { " [active]" } else { "" };
+
+            // Pad model_id to 13 chars, display_name to 20 chars for alignment
+            let id_padded = format!("{:<13}", model_id);
+            let name_padded = format!("{:<20}", display_name);
+            let label = format!(
+                "  {}{} {} {}{}",
+                marker, id_padded, name_padded, ctx, active_badge
+            );
+
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_active {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            _model_line_map.push(lines.len());
+            lines.push(Line::from(Span::styled(label, style)));
+            model_index += 1;
+        }
+    }
+
+    // Calculate popup dimensions
+    let content_height = lines.len() as u16 + 2; // +2 for top/bottom borders
+    let popup_width = 60u16.min(area.width.saturating_sub(4));
+    let popup_height = (content_height + 2).min(area.height.saturating_sub(4)); // +2 for title/footer padding
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -517,51 +709,34 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
             ))
             .alignment(Alignment::Center),
         )
+        .title_bottom(
+            Line::from(Span::styled(
+                " Enter: Select | Esc: Cancel ",
+                Style::default().fg(Color::DarkGray),
+            ))
+            .alignment(Alignment::Center),
+        )
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan))
         .padding(Padding::horizontal(1));
 
-    let items: Vec<ListItem<'_>> = app
-        .available_models
-        .iter()
-        .enumerate()
-        .map(|(i, model)| {
-            let is_selected = i == app.model_select_index;
-            let is_active = *model == app.selected_model;
-            let style = if is_selected {
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_active {
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            let marker = if is_active { " * " } else { "   " };
-            ListItem::new(Line::from(Span::styled(
-                format!("{marker}{model}"),
-                style,
-            )))
-        })
-        .collect();
+    // Calculate scroll offset to keep the selected model visible.
+    let inner_height = popup_height.saturating_sub(4) as usize; // borders + padding
+    let selected_line = _model_line_map
+        .get(app.model_select_index)
+        .copied()
+        .unwrap_or(0);
+    let scroll = if selected_line >= inner_height {
+        (selected_line - inner_height + 1) as u16
+    } else {
+        0
+    };
 
-    let list = List::new(items)
+    let paragraph = Paragraph::new(lines)
         .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
+        .scroll((scroll, 0));
 
-    // Use ListState for automatic scroll tracking.
-    let mut state = ListState::default();
-    state.select(Some(app.model_select_index));
-
-    frame.render_stateful_widget(list, popup_area, &mut state);
+    frame.render_widget(paragraph, popup_area);
 }
 
 // ─── Provider selector overlay ───────────────────────────────────────────────
