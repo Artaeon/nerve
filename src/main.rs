@@ -1,3 +1,4 @@
+mod agent;
 mod ai;
 mod app;
 mod automation;
@@ -436,6 +437,117 @@ async fn event_loop(
                                 let _ = history::save_conversation(&record);
                             }
 
+
+                            // Agent mode: check for tool calls and execute them
+                            if app.agent_mode {
+                                let last_response = app
+                                    .current_conversation()
+                                    .messages
+                                    .last()
+                                    .filter(|(r, _)| r == "assistant")
+                                    .map(|(_, c)| c.clone());
+
+                                if let Some(response) = last_response {
+                                    let tool_calls =
+                                        crate::agent::tools::parse_tool_calls(&response);
+
+                                    if !tool_calls.is_empty()
+                                        && app.agent_iterations < 10
+                                    {
+                                        app.agent_iterations += 1;
+                                        app.set_status(format!(
+                                            "Agent executing {} tool(s)... (iteration {})",
+                                            tool_calls.len(),
+                                            app.agent_iterations
+                                        ));
+
+                                        // Execute tools and build results message
+                                        let mut results =
+                                            String::from("Tool execution results:\n\n");
+                                        for call in &tool_calls {
+                                            let result =
+                                                crate::agent::tools::execute_tool(call);
+                                            let status = if result.success {
+                                                "SUCCESS"
+                                            } else {
+                                                "FAILED"
+                                            };
+                                            results.push_str(&format!(
+                                                "<tool_result>\ntool: {}\nstatus: {status}\noutput:\n{}\n</tool_result>\n\n",
+                                                result.tool, result.output
+                                            ));
+                                        }
+
+                                        // Add tool results as a user message
+                                        app.add_user_message(results);
+
+                                        // Apply context compaction before sending
+                                        let context_mgr =
+                                            crate::agent::context::ContextManager::new(
+                                                50_000,
+                                            );
+                                        let compacted = context_mgr.compact_messages(
+                                            &app.current_conversation().messages,
+                                        );
+                                        let messages: Vec<ChatMessage> = compacted
+                                            .iter()
+                                            .filter_map(|(role, content)| {
+                                                match role.as_str() {
+                                                    "user" => {
+                                                        Some(ChatMessage::user(content))
+                                                    }
+                                                    "assistant" => {
+                                                        Some(ChatMessage::assistant(
+                                                            content,
+                                                        ))
+                                                    }
+                                                    "system" => {
+                                                        Some(ChatMessage::system(content))
+                                                    }
+                                                    _ => None,
+                                                }
+                                            })
+                                            .collect();
+
+                                        // Trigger another AI call
+                                        let model = app.selected_model.clone();
+                                        let (tx, new_rx) =
+                                            tokio::sync::mpsc::unbounded_channel();
+                                        app.stream_rx = Some(new_rx);
+                                        app.is_streaming = true;
+                                        app.streaming_response.clear();
+                                        app.streaming_start =
+                                            Some(std::time::Instant::now());
+
+                                        let provider_clone = Arc::clone(&provider);
+                                        tokio::spawn(async move {
+                                            if let Err(e) = provider_clone
+                                                .chat_stream(
+                                                    &messages,
+                                                    &model,
+                                                    tx.clone(),
+                                                )
+                                                .await
+                                            {
+                                                let _ = tx.send(
+                                                    StreamEvent::Error(e.to_string()),
+                                                );
+                                            }
+                                        });
+
+                                        // Do not mark finished; loop continues
+                                        // with the new stream receiver
+                                        break;
+                                    } else if app.agent_iterations > 0 {
+                                        // No more tool calls or max iterations
+                                        app.set_status(format!(
+                                            "Agent completed in {} iteration(s)",
+                                            app.agent_iterations
+                                        ));
+                                        app.agent_iterations = 0;
+                                    }
+                                }
+                            }
                             finished = true;
                             break;
                         }
@@ -738,6 +850,7 @@ async fn handle_normal_mode(
                             "providers", "code", "cwd", "url", "kb", "auto", "status",
                             "export", "rename", "system", "workspace", "run",
                             "pipe", "diff", "test", "build", "git",
+                            "agent", "cd", "summary", "compact", "context",
                         ];
                         let matches: Vec<&&str> = commands
                             .iter()
@@ -1243,12 +1356,17 @@ AI Provider\n\
   /model <name>       Switch model\n\
   /models             List available models\n\
   /code on|off        Toggle code mode (Claude Code only)\n\
+  /agent on|off       Toggle agent mode (AI tool loop)\n\
   /cwd <dir>          Set working directory\n\
+  /cd <dir>           Change working directory\n\
 \n\
 Knowledge & Context\n\
   /file <path>        Read file as context\n\
   /file <path>:S-E    Read specific line range\n\
   /files <p1> <p2>    Read multiple files\n\
+  /summary            Summarize current conversation\n\
+  /compact            Compact conversation (save tokens)\n\
+  /context            Show current AI context window\n\
   /kb add <dir>       Add directory to knowledge base\n\
   /kb search <query>  Search knowledge base\n\
   /kb list            List knowledge bases\n\
@@ -1477,6 +1595,96 @@ System\n\
                 app.status_message = Some(format!("Scrape failed: {e}"));
             }
         }
+        return true;
+    }
+
+    // /agent — toggle agent mode (AI can use tools in a loop).
+    if trimmed == "/agent" || trimmed.starts_with("/agent ") {
+        let rest = trimmed.strip_prefix("/agent").unwrap_or("").trim();
+        match rest {
+            "on" => {
+                app.agent_mode = true;
+                // Inject tools system prompt
+                let tools_prompt = crate::agent::tools::tools_system_prompt();
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| {
+                        !(r == "system"
+                            && c.contains("You have access to the following tools"))
+                    });
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), tools_prompt));
+                app.set_status(
+                    "Agent mode ON \u{2014} AI can read/write files, run commands",
+                );
+            }
+            "off" => {
+                app.agent_mode = false;
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| {
+                        !(r == "system"
+                            && c.contains("You have access to the following tools"))
+                    });
+                app.set_status("Agent mode OFF \u{2014} chat only");
+            }
+            _ => {
+                let status = if app.agent_mode { "ON" } else { "OFF" };
+                app.add_assistant_message(format!(
+                    "Agent mode: {status}\n\n\
+                     When ON, the AI can:\n\
+                     - Read and write files\n\
+                     - Run shell commands\n\
+                     - Search code\n\
+                     - Create directories\n\n\
+                     Usage: /agent on | /agent off"
+                ));
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /cd — change working directory.
+    if trimmed == "/cd" || trimmed.starts_with("/cd ") {
+        let rest = trimmed.strip_prefix("/cd").unwrap_or("").trim();
+        if rest.is_empty() {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            app.add_assistant_message(format!(
+                "Current directory: {}",
+                cwd.display()
+            ));
+        } else {
+            let target = rest;
+            let target_path = if target.starts_with("~/") {
+                dirs::home_dir()
+                    .unwrap_or_default()
+                    .join(&target[2..])
+            } else {
+                std::path::PathBuf::from(target)
+            };
+
+            match std::env::set_current_dir(&target_path) {
+                Ok(()) => {
+                    app.set_status(format!(
+                        "Changed to {}",
+                        target_path.display()
+                    ));
+                    // Re-detect workspace
+                    if let Some(ws) = crate::workspace::detect_workspace() {
+                        app.set_status(format!(
+                            "Changed to {} \u{2014} detected {:?} project: {}",
+                            target_path.display(),
+                            ws.project_type,
+                            ws.name
+                        ));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+        app.scroll_offset = 0;
         return true;
     }
 
@@ -2136,6 +2344,89 @@ System\n\
         return true;
     }
 
+    // /summary — generate a summary of the current conversation.
+    if trimmed == "/summary" {
+        let conv = app.current_conversation();
+        if conv.messages.is_empty() {
+            app.add_assistant_message("No messages to summarize.".into());
+            return true;
+        }
+
+        let mut summary = format!("Conversation Summary: {}\n", conv.title);
+        summary.push_str(&format!("{}\n\n", "=".repeat(40)));
+
+        let user_count = conv.messages.iter().filter(|(r, _)| r == "user").count();
+        let ai_count = conv.messages.iter().filter(|(r, _)| r == "assistant").count();
+        let total_words: usize = conv.messages.iter().map(|(_, c)| c.split_whitespace().count()).sum();
+        let total_tokens = conv.messages.iter().map(|(_, c)| c.len() / 4 + 1).sum::<usize>();
+
+        summary.push_str(&format!("Messages: {} user, {} AI\n", user_count, ai_count));
+        summary.push_str(&format!("Words: {}\n", total_words));
+        summary.push_str(&format!("Estimated tokens: ~{}\n\n", total_tokens));
+
+        summary.push_str("Topics discussed:\n");
+        // Extract topics from user messages
+        for (i, (role, content)) in conv.messages.iter().enumerate() {
+            if role == "user" {
+                let brief: String = content.chars().take(80).collect();
+                summary.push_str(&format!("  {}. {}", i / 2 + 1, brief));
+                if content.len() > 80 { summary.push_str("..."); }
+                summary.push('\n');
+            }
+        }
+
+        app.add_assistant_message(summary);
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /compact — manually trigger context compaction.
+    if trimmed == "/compact" {
+        let cm = crate::agent::context::ContextManager::new(50_000);
+        let messages = app.current_conversation().messages.clone();
+        let compacted = cm.compact_messages(&messages);
+
+        let before = messages.len();
+        let after = compacted.len();
+
+        if before == after {
+            app.set_status("Conversation already compact");
+        } else {
+            app.current_conversation_mut().messages = compacted;
+            let saved_tokens = crate::agent::context::ContextManager::conversation_tokens(&messages)
+                - crate::agent::context::ContextManager::conversation_tokens(&app.current_conversation().messages);
+            app.set_status(format!("Compacted: {} \u{2192} {} messages (~{} tokens saved)", before, after, saved_tokens));
+        }
+        return true;
+    }
+
+    // /context — show what context the AI currently has.
+    if trimmed == "/context" {
+        let conv = app.current_conversation();
+        let mut ctx = String::from("Current AI Context:\n\n");
+
+        for (i, (role, content)) in conv.messages.iter().enumerate() {
+            let tokens = content.len() / 4 + 1;
+            let preview: String = content.chars().take(60).collect();
+            let ellipsis = if content.len() > 60 { "..." } else { "" };
+
+            ctx.push_str(&format!("  {:>3}. [{}] ~{} tokens: {}{}\n",
+                i + 1, role, tokens, preview, ellipsis));
+        }
+
+        let total: usize = conv.messages.iter().map(|(_, c)| c.len() / 4 + 1).sum();
+        ctx.push_str(&format!("\nTotal: {} messages, ~{} tokens estimated\n", conv.messages.len(), total));
+
+        // Show workspace if detected
+        if let Some(ws) = crate::workspace::detect_workspace() {
+            ctx.push_str(&format!("Workspace: {} ({:?})\n", ws.name, ws.project_type));
+        }
+
+        app.add_assistant_message(ctx);
+        app.scroll_offset = 0;
+        return true;
+    }
+
     false
 }
 
@@ -2660,6 +2951,31 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         }
     }
 
+    // Auto-compact if conversation is very long
+    let token_estimate: usize = messages.iter().map(|m| m.content.len() / 4 + 1).sum();
+    if token_estimate > 100_000 {
+        let cm = crate::agent::context::ContextManager::new(80_000);
+        let compacted = cm.compact_messages(&app.current_conversation().messages);
+        // Use compacted messages for the AI call
+        messages = compacted.iter()
+            .filter_map(|(role, content)| match role.as_str() {
+                "user" => Some(ChatMessage::user(content)),
+                "assistant" => Some(ChatMessage::assistant(content)),
+                "system" => Some(ChatMessage::system(content)),
+                _ => None,
+            })
+            .collect();
+        app.set_status("Auto-compacted long conversation for token efficiency");
+    }
+
+    // Update total_tokens_used tracker
+    app.total_tokens_used = app
+        .current_conversation()
+        .messages
+        .iter()
+        .map(|(_, c)| c.len() / 4 + 1)
+        .sum();
+
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();
 
@@ -3021,5 +3337,37 @@ mod tests {
         app.set_status("hello");
         assert_eq!(app.status_message.as_deref(), Some("hello"));
         assert!(app.status_time.is_some());
+    }
+
+    // ── is_dangerous_command: additional safe commands ────────────────
+
+    #[test]
+    fn test_is_dangerous_command_safe_commands() {
+        assert!(!is_dangerous_command("ls -la"));
+        assert!(!is_dangerous_command("cargo test"));
+        assert!(!is_dangerous_command("git status"));
+        assert!(!is_dangerous_command("echo hello"));
+    }
+
+    #[test]
+    fn test_is_dangerous_command_dangerous() {
+        assert!(is_dangerous_command("rm -rf /"));
+        assert!(is_dangerous_command("rm -rf /*"));
+        assert!(is_dangerous_command("sudo rm -rf /home; rm -rf /"));
+    }
+
+    #[test]
+    fn test_is_dangerous_command_chmod_root() {
+        assert!(is_dangerous_command("chmod -R 777 /"));
+    }
+
+    #[test]
+    fn test_is_dangerous_command_dd() {
+        assert!(is_dangerous_command("dd if=/dev/urandom of=/dev/sda"));
+    }
+
+    #[test]
+    fn test_is_dangerous_redirect_to_dev() {
+        assert!(is_dangerous_command("echo foo > /dev/sda"));
     }
 }
