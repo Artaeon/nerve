@@ -200,4 +200,47 @@ mod tests {
         // The Rust chunk mentions both "systems" and "safety"
         assert!(results[0].chunk.content.contains("systems"));
     }
+
+    #[test]
+    fn search_with_special_characters() {
+        let mut kb = KnowledgeBase::new("test".into());
+        let doc = Document {
+            id: "d1".into(),
+            title: "Test".into(),
+            source_path: "/tmp/t".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 10,
+        };
+        let chunks = vec![Chunk {
+            id: "c1".into(),
+            document_id: "d1".into(),
+            content: "fn main() { println!(\"hello\"); }".into(),
+            index: 0,
+            word_count: 5,
+        }];
+        kb.add_document(doc, chunks);
+
+        // Search for code patterns — "println" should match
+        let results = search_knowledge(&kb, "println", 5);
+        assert!(!results.is_empty());
+    }
+
+    #[test]
+    fn search_with_punctuation_only_query() {
+        let kb = make_search_kb();
+        // A query that is only punctuation should be stripped to nothing and
+        // return empty results rather than panic.
+        let results = search_knowledge(&kb, "!@#$%", 5);
+        // Should not panic; result may or may not be empty depending on
+        // whether fuzzy matcher finds anything.
+        let _ = results;
+    }
+
+    #[test]
+    fn search_single_char_query() {
+        let kb = make_search_kb();
+        // Very short queries should not panic.
+        let results = search_knowledge(&kb, "a", 5);
+        let _ = results;
+    }
 }

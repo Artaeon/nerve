@@ -588,4 +588,74 @@ mod tests {
         let expanded = expand_file_references(text);
         assert_eq!(expanded, text);
     }
+
+    // ── resolve_path edge cases ───────────────────────────────────────
+
+    #[test]
+    fn resolve_path_parent_directory() {
+        // ../foo should resolve to an absolute path ending with ../foo
+        let p = resolve_path("../foo/bar.rs");
+        assert!(p.is_absolute());
+        assert!(p.to_string_lossy().contains("foo/bar.rs"));
+    }
+
+    #[test]
+    fn resolve_path_with_spaces() {
+        let p = resolve_path("/tmp/my folder/my file.txt");
+        assert_eq!(p, PathBuf::from("/tmp/my folder/my file.txt"));
+    }
+
+    #[test]
+    fn resolve_path_dot_current_dir() {
+        let p = resolve_path("./test.txt");
+        assert!(p.is_absolute());
+        assert!(p.to_string_lossy().ends_with("test.txt"));
+    }
+
+    #[test]
+    fn resolve_path_empty_string() {
+        // Empty path should still resolve to an absolute path (cwd).
+        let p = resolve_path("");
+        assert!(p.is_absolute());
+    }
+
+    #[test]
+    fn read_file_context_with_spaces_in_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("my dir");
+        fs::create_dir(&subdir).unwrap();
+        let file_path = subdir.join("my file.rs");
+        fs::write(&file_path, "fn main() {}").unwrap();
+
+        let fc = read_file_context(file_path.to_str().unwrap()).unwrap();
+        assert_eq!(fc.language, "rust");
+        assert!(fc.content.contains("fn main()"));
+    }
+
+    #[test]
+    fn read_file_context_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.txt");
+        let link = dir.path().join("link.txt");
+        fs::write(&real, "content via symlink").unwrap();
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            let fc = read_file_context(link.to_str().unwrap()).unwrap();
+            assert!(fc.content.contains("content via symlink"));
+        }
+    }
+
+    #[test]
+    fn read_file_range_start_zero_treated_as_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("lines.txt");
+        fs::write(&file_path, "line1\nline2\nline3\n").unwrap();
+
+        // start=0 should be clamped (saturating_sub(1) = 0, same as start=1)
+        let fc = read_file_range(file_path.to_str().unwrap(), 0, 2).unwrap();
+        assert!(fc.content.contains("line1"));
+        assert!(fc.content.contains("line2"));
+    }
 }

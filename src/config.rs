@@ -656,4 +656,34 @@ mod tests {
         assert_eq!(cfg.default_model, "haiku");
         assert_eq!(cfg.default_provider, "ollama");
     }
+
+    #[test]
+    fn config_load_with_missing_fields_uses_defaults() {
+        // Test that partial TOML is handled gracefully — missing required
+        // fields cause a parse error, but Config::load would fall back to
+        // defaults. The important thing is it does not panic.
+        let partial = r#"
+default_model = "gpt-4o"
+default_provider = "openai"
+"#;
+        let result = toml::from_str::<Config>(partial);
+        // It is expected to error (missing [theme], [providers], [keybinds]),
+        // but must not panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn config_load_with_completely_invalid_toml() {
+        // Completely garbage input should produce an Err, never a panic.
+        let garbage = "{{{{not valid toml at all!!!!";
+        let result = toml::from_str::<Config>(garbage);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_load_with_empty_string() {
+        let result = toml::from_str::<Config>("");
+        // Empty TOML is missing all required fields — should fail gracefully.
+        assert!(result.is_err());
+    }
 }

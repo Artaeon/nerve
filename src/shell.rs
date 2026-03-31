@@ -298,4 +298,41 @@ mod tests {
         assert!(ctx.contains("success"));
         assert!(ctx.contains("```"));
     }
+
+    #[test]
+    fn long_output_is_truncated() {
+        // Generate output longer than 5000 lines
+        let result = run_command("seq 1 10000").unwrap();
+        let lines: Vec<&str> = result.stdout.lines().collect();
+        // Output should be truncated to ~MAX_OUTPUT_LINES plus the notice
+        assert!(
+            lines.len() <= MAX_OUTPUT_LINES + 3,
+            "Output should be truncated to ~{} lines, got {}",
+            MAX_OUTPUT_LINES,
+            lines.len()
+        );
+    }
+
+    #[test]
+    fn truncate_output_exact_boundary() {
+        // Build a string with exactly MAX_OUTPUT_LINES lines — should not truncate.
+        let text: String = (0..MAX_OUTPUT_LINES)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = truncate_output(&text, MAX_OUTPUT_LINES);
+        assert!(!result.contains("truncated"));
+    }
+
+    #[test]
+    fn truncate_output_one_over_boundary() {
+        // One line over the limit should trigger truncation.
+        let text: String = (0..MAX_OUTPUT_LINES + 1)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let result = truncate_output(&text, MAX_OUTPUT_LINES);
+        assert!(result.contains("truncated"));
+        assert!(result.contains("1 lines truncated"));
+    }
 }
