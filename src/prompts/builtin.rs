@@ -805,6 +805,36 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             &["performance", "optimization", "profiling", "bottleneck", "scalability"],
         ),
 
+        // ── Engineering — Scaffold & Feature Prompts ──────────────────────
+        p(
+            "Scaffold Project",
+            "Generate a complete, production-ready project from requirements",
+            "You are a senior software architect creating a production-ready project from scratch.\n\nCreate a complete, well-structured project for the following requirements. Your project MUST include:\n\nPROJECT STRUCTURE:\n- Logical directory organization following language conventions\n- Separation of concerns (routes, handlers, models, config, utils)\n- Environment-based configuration (.env.example, not .env)\n\nCODE QUALITY:\n- Proper error handling throughout (no unwrap/panic in Rust, no unhandled promises in JS)\n- Input validation on all external boundaries\n- Consistent naming conventions\n- Type safety where the language supports it\n\nCONFIGURATION:\n- Build/package file with all dependencies pinned to specific versions\n- Development and production configurations\n- Environment variable support for secrets\n\nTESTING:\n- Unit tests for core logic\n- Integration test for the main flow\n- Test configuration (test runner, fixtures)\n\nDOCUMENTATION:\n- README.md with: description, prerequisites, installation, usage, API reference, development guide\n- Inline comments for non-obvious logic\n- API documentation if applicable\n\nDEVOPS:\n- .gitignore appropriate for the language and framework\n- Dockerfile (multi-stage build, non-root user)\n- Basic CI config (.github/workflows/ci.yml)\n\nDo NOT use placeholder comments like '// TODO' or '// implement later'. Every file must contain real, working code.\n\nRequirements:\n\n{{input}}",
+            "Engineering",
+            &["scaffold", "project", "generate", "boilerplate", "new project"],
+        ),
+        p(
+            "Add Feature",
+            "Add a feature to an existing codebase following existing patterns",
+            "You are a senior developer adding a feature to an existing codebase.\n\nBefore writing code, analyze:\n1. Existing code structure and patterns\n2. How similar features are implemented\n3. What files need to be created or modified\n4. What tests need to be added or updated\n\nThen implement the feature following these rules:\n- Match the existing code style exactly\n- Add the minimum code necessary\n- Include proper error handling\n- Add or update tests\n- Update documentation if needed\n- Do NOT refactor unrelated code\n\nProvide:\n1. List of files to create/modify\n2. The complete code for each file\n3. New tests\n4. Any migration or setup steps needed\n\nFeature request:\n\n{{input}}",
+            "Engineering",
+            &["feature", "add", "implement", "extend", "codebase"],
+        ),
+        p(
+            "Refactor Code",
+            "Refactor code without changing external behavior using a structured checklist",
+            "You are a refactoring specialist. Improve the following code without changing its external behavior.\n\nRefactoring checklist:\n1. NAMING: Rename unclear variables, functions, and types to be self-documenting\n2. EXTRACTION: Break large functions into focused, single-responsibility units\n3. SIMPLIFICATION: Replace complex conditionals with early returns or pattern matching\n4. DUPLICATION: Identify and eliminate duplicated logic\n5. ABSTRACTIONS: Introduce interfaces/traits only if they reduce complexity (not for hypothetical future use)\n6. ERROR HANDLING: Replace generic errors with specific, actionable ones\n7. TYPES: Strengthen type safety (use newtypes, enums over strings, Option over null)\n8. DEAD CODE: Remove unused imports, variables, functions, and commented-out code\n\nFor EACH change:\n- What you changed\n- Why it's better\n- Risk level (safe/low/medium)\n\nShow the complete refactored code, not just snippets.\n\nCode to refactor:\n\n{{input}}",
+            "Engineering",
+            &["refactor", "improve", "clean", "restructure", "simplify"],
+        ),
+        p(
+            "Comprehensive Test Suite",
+            "Write thorough, maintainable tests covering all edge cases",
+            "You are a testing expert. Write thorough, maintainable tests for the following code.\n\nTest categories to cover:\n1. HAPPY PATH: Normal usage with valid inputs\n2. EDGE CASES: Empty inputs, boundary values, maximum lengths\n3. ERROR CASES: Invalid inputs, missing data, network failures\n4. SECURITY: Injection attempts, unauthorized access, malformed data\n5. CONCURRENCY: Race conditions, deadlocks (if applicable)\n6. REGRESSION: Specific bugs that were fixed (if mentioned)\n\nFor each test:\n- Descriptive name that explains what's being tested\n- Arrange-Act-Assert pattern\n- One assertion per test (prefer many focused tests over few large ones)\n- Independent (no test depends on another test's state)\n\nInclude:\n- Test fixtures/helpers if patterns repeat\n- Mock/stub setup for external dependencies\n- Comments explaining non-obvious test logic\n\nCode to test:\n\n{{input}}",
+            "Engineering",
+            &["tests", "testing", "coverage", "edge cases", "quality assurance"],
+        ),
+
         // ── Writing — SmartPrompts ─────────────────────────────────────────
         p(
             "Technical Blog Post",
