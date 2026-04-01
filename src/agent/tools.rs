@@ -1706,4 +1706,9 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
         let _ = result;
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn exactly_nine_tools() {
+        assert_eq!(available_tools().len(), 9);
+    }
 }

@@ -2413,4 +2413,9 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn exactly_eight_templates() {
+        assert_eq!(builtin_templates().len(), 8);
+    }
 }

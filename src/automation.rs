@@ -535,4 +535,9 @@ mod tests {
         assert!(code_review.is_some());
         assert!(code_review.unwrap().steps.len() >= 3);
     }
+
+    #[test]
+    fn exactly_five_builtin_automations() {
+        assert_eq!(builtin_automations().len(), 5);
+    }
 }

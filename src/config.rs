@@ -845,4 +845,9 @@ default_provider = "openai"
             }
         }
     }
+
+    #[test]
+    fn exactly_eight_theme_presets() {
+        assert_eq!(theme_presets().len(), 8);
+    }
 }
