@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::prompts;
+use crate::prompts::{self, BUILTIN_CACHE};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -195,7 +195,9 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     // ── 3. Prompt list ──────────────────────────────────────────────────
     let scored = filtered_prompts(app);
     let match_count = scored.len();
-    let total = prompts::all_prompts().len();
+    // Use the cached builtin count + custom prompts instead of rebuilding
+    // the full list a second time.
+    let total = BUILTIN_CACHE.len() + prompts::custom::load_custom_prompts().len();
 
     // Available width inside the prompt list area (for right-aligning badges).
     let list_width = chunks[2].width as usize;

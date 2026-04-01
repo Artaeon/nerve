@@ -1,6 +1,8 @@
 pub mod builtin;
 pub mod custom;
 
+use std::sync::LazyLock;
+
 use serde::{Deserialize, Serialize};
 
 /// A reusable prompt template ("SmartPrompt") for the Nerve assistant.
@@ -17,13 +19,16 @@ pub struct SmartPrompt {
     pub tags: Vec<String>,
 }
 
+/// Cached built-in prompts (loaded once, never changes at runtime).
+pub static BUILTIN_CACHE: LazyLock<Vec<SmartPrompt>> = LazyLock::new(builtin::builtin_prompts);
+
 /// Return the combined set of built-in and user-defined custom prompts.
 ///
-/// Custom prompts are appended after built-in prompts. If a custom prompt
-/// shares the same name as a built-in, both are kept (the UI can decide
-/// how to handle duplicates).
+/// Built-in prompts are served from a lazily-initialised cache (zero
+/// per-call allocation). Custom prompts are still loaded fresh each time
+/// because they may change on disk.
 pub fn all_prompts() -> Vec<SmartPrompt> {
-    let mut prompts = builtin::builtin_prompts();
+    let mut prompts = BUILTIN_CACHE.clone();
     prompts.extend(custom::load_custom_prompts());
     prompts
 }
@@ -31,10 +36,8 @@ pub fn all_prompts() -> Vec<SmartPrompt> {
 /// Return a sorted, deduplicated list of every category present across
 /// all built-in and custom prompts.
 pub fn categories() -> Vec<String> {
-    let mut cats: Vec<String> = all_prompts()
-        .iter()
-        .map(|p| p.category.clone())
-        .collect();
+    let all = all_prompts();
+    let mut cats: Vec<String> = all.iter().map(|p| p.category.clone()).collect();
     cats.sort();
     cats.dedup();
     cats

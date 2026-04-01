@@ -40,7 +40,8 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let conversation = app.current_conversation();
 
     // ── Build styled lines from conversation history ──────────────────
-    let mut lines: Vec<Line<'_>> = Vec::new();
+    let estimated_lines = conversation.messages.len() * 5 + 20;
+    let mut lines: Vec<Line<'_>> = Vec::with_capacity(estimated_lines);
 
     if conversation.messages.is_empty() && !app.is_streaming {
         // Empty state — show a branded welcome screen.
@@ -196,11 +197,17 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     // Thin dim separator that spans the usable chat width (minus block borders
     // and horizontal padding = 4 columns).
     let sep_width = area.width.saturating_sub(4) as usize;
+    let separator_str = "\u{2500}".repeat(sep_width);
     let separator_line = Line::from(Span::styled(
-        "\u{2500}".repeat(sep_width),
+        separator_str.clone(),
         Style::default()
             .fg(Color::Rgb(50, 50, 60))
             .add_modifier(Modifier::DIM),
+    ));
+    // Indented separator reused for user messages and streaming header.
+    let user_separator_line = Line::from(Span::styled(
+        format!("   {separator_str}"),
+        Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
     ));
 
     let msg_count = conversation.messages.len();
@@ -232,12 +239,8 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 
         match role.as_str() {
             "user" => {
-                // Thin separator before user message
-                let user_sep_width = area.width.saturating_sub(4) as usize;
-                lines.push(Line::from(Span::styled(
-                    format!("   {}", "\u{2500}".repeat(user_sep_width)),
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
-                )));
+                // Thin separator before user message (precomputed).
+                lines.push(user_separator_line.clone());
 
                 // Header: number badge + role badge + timestamp
                 let mut header_spans = vec![];
@@ -320,12 +323,8 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         }
         lines.push(Line::from(""));
 
-        // Separator
-        let stream_sep_width = area.width.saturating_sub(4) as usize;
-        lines.push(Line::from(Span::styled(
-            format!("   {}", "\u{2500}".repeat(stream_sep_width)),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
-        )));
+        // Separator (precomputed).
+        lines.push(user_separator_line.clone());
 
         // Streaming header with animated spinner and word counter
         let spinner_frames = ["\u{25dc}", "\u{25dd}", "\u{25de}", "\u{25df}"]; // ◜ ◝ ◞ ◟

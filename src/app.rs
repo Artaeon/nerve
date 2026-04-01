@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use tokio::sync::mpsc;
 
 use crate::ai::provider::StreamEvent;
@@ -176,11 +178,21 @@ pub struct App {
     // -- workspace --
     /// Human-readable summary of the detected project workspace.
     pub detected_workspace: Option<String>,
+    /// Full cached workspace info (avoids re-scanning the filesystem).
+    pub cached_workspace: Option<crate::workspace::WorkspaceInfo>,
 
     // -- animation --
     /// Frame counter for animated UI elements (spinners, pulsing indicators).
     /// Incremented every draw cycle; wraps on overflow.
     pub thinking_frame: usize,
+
+    // -- input history --
+    pub input_history: Vec<String>,
+    pub input_history_index: Option<usize>,  // None = current input, Some(n) = nth previous
+    pub input_saved: String,  // Saves current input when browsing history
+
+    // -- aliases --
+    pub aliases: HashMap<String, String>,
 
     // -- misc --
     pub status_message: Option<String>,
@@ -281,8 +293,15 @@ impl App {
             theme_index: 0,
 
             detected_workspace: None,
+            cached_workspace: None,
 
             thinking_frame: 0,
+
+            input_history: Vec::new(),
+            input_history_index: None,
+            input_saved: String::new(),
+
+            aliases: HashMap::new(),
 
             status_message: None,
             status_time: None,
@@ -425,13 +444,19 @@ impl App {
 
     /// Take the current input text, clear the input buffer, and return it.
     /// Returns `None` if the input was empty (whitespace-only).
+    /// Non-empty submissions are saved to input history for arrow-key recall.
     pub fn submit_input(&mut self) -> Option<String> {
         let text = self.input.trim().to_string();
         if text.is_empty() {
             return None;
         }
+        // Save to input history (avoid duplicates of the last entry)
+        if self.input_history.last().map(|s| s.as_str()) != Some(&text) {
+            self.input_history.push(text.clone());
+        }
         self.input.clear();
         self.cursor_position = 0;
+        self.input_history_index = None;
         Some(text)
     }
 
@@ -1669,5 +1694,69 @@ mod tests {
         assert!(app.status_time.is_some());
         // The timer should be very recent
         assert!(app.status_time.unwrap().elapsed().as_secs() < 1);
+    }
+
+    // ── Input history ──────────────────────────────────────────────────
+
+    #[test]
+    fn input_history_records_submissions() {
+        let mut app = App::new();
+        app.input = "first command".into();
+        app.submit_input();
+        app.input = "second command".into();
+        app.submit_input();
+        assert_eq!(app.input_history.len(), 2);
+        assert_eq!(app.input_history[0], "first command");
+        assert_eq!(app.input_history[1], "second command");
+    }
+
+    #[test]
+    fn input_history_no_consecutive_duplicates() {
+        let mut app = App::new();
+        app.input = "same command".into();
+        app.submit_input();
+        app.input = "same command".into();
+        app.submit_input();
+        assert_eq!(app.input_history.len(), 1); // No duplicate
+    }
+
+    #[test]
+    fn input_history_empty_not_recorded() {
+        let mut app = App::new();
+        app.input = "   ".into();
+        app.submit_input();
+        assert!(app.input_history.is_empty());
+    }
+
+    #[test]
+    fn input_history_resets_index_on_submit() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.submit_input();
+        app.input_history_index = Some(0); // Simulate browsing history
+        app.input = "world".into();
+        app.submit_input();
+        assert!(app.input_history_index.is_none());
+    }
+
+    #[test]
+    fn input_history_allows_non_consecutive_duplicates() {
+        let mut app = App::new();
+        app.input = "aaa".into();
+        app.submit_input();
+        app.input = "bbb".into();
+        app.submit_input();
+        app.input = "aaa".into();
+        app.submit_input();
+        assert_eq!(app.input_history.len(), 3);
+    }
+
+    #[test]
+    fn new_app_has_empty_history_and_aliases() {
+        let app = App::new();
+        assert!(app.input_history.is_empty());
+        assert!(app.input_history_index.is_none());
+        assert!(app.input_saved.is_empty());
+        assert!(app.aliases.is_empty());
     }
 }
