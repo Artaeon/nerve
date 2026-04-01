@@ -255,6 +255,88 @@ impl Config {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Theme presets
+// ---------------------------------------------------------------------------
+
+/// Built-in theme presets. Returns `(name, theme)` pairs.
+pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
+    vec![
+        (
+            "Catppuccin Mocha",
+            ThemeConfig {
+                user_color: "#89b4fa".into(),
+                assistant_color: "#a6e3a1".into(),
+                border_color: "#585b70".into(),
+                accent_color: "#cba6f7".into(),
+            },
+        ),
+        (
+            "Tokyo Night",
+            ThemeConfig {
+                user_color: "#7aa2f7".into(),
+                assistant_color: "#9ece6a".into(),
+                border_color: "#3b4261".into(),
+                accent_color: "#bb9af7".into(),
+            },
+        ),
+        (
+            "Gruvbox Dark",
+            ThemeConfig {
+                user_color: "#83a598".into(),
+                assistant_color: "#b8bb26".into(),
+                border_color: "#504945".into(),
+                accent_color: "#d3869b".into(),
+            },
+        ),
+        (
+            "Nord",
+            ThemeConfig {
+                user_color: "#88c0d0".into(),
+                assistant_color: "#a3be8c".into(),
+                border_color: "#4c566a".into(),
+                accent_color: "#b48ead".into(),
+            },
+        ),
+        (
+            "Solarized Dark",
+            ThemeConfig {
+                user_color: "#268bd2".into(),
+                assistant_color: "#859900".into(),
+                border_color: "#586e75".into(),
+                accent_color: "#6c71c4".into(),
+            },
+        ),
+        (
+            "Dracula",
+            ThemeConfig {
+                user_color: "#8be9fd".into(),
+                assistant_color: "#50fa7b".into(),
+                border_color: "#6272a4".into(),
+                accent_color: "#ff79c6".into(),
+            },
+        ),
+        (
+            "One Dark",
+            ThemeConfig {
+                user_color: "#61afef".into(),
+                assistant_color: "#98c379".into(),
+                border_color: "#5c6370".into(),
+                accent_color: "#c678dd".into(),
+            },
+        ),
+        (
+            "Rose Pine",
+            ThemeConfig {
+                user_color: "#9ccfd8".into(),
+                assistant_color: "#31748f".into(),
+                border_color: "#524f67".into(),
+                accent_color: "#c4a7e7".into(),
+            },
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
