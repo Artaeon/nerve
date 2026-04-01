@@ -197,7 +197,17 @@ impl Config {
 
         let path = Self::config_file();
         let contents = self.to_commented_toml();
-        fs::write(path, contents)?;
+        fs::write(&path, contents)?;
+
+        // Restrict file permissions on Unix (config contains API keys)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path)?.permissions();
+            perms.set_mode(0o600); // Owner read/write only
+            fs::set_permissions(&path, perms)?;
+        }
+
         Ok(())
     }
 
