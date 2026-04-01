@@ -17,6 +17,15 @@ use ratatui::{
 
 use crate::app::{App, AppMode, InputMode};
 
+// ── UI Color Constants ──────────────────────────────────────────────────
+const ACCENT: Color = Color::Cyan;
+const USER_BADGE_BG: Color = Color::Blue;
+const AI_BADGE_BG: Color = Color::Green;
+const SEPARATOR: Color = Color::Rgb(60, 60, 80);
+const DIM_TEXT: Color = Color::DarkGray;
+const ACTIVE_BORDER: Color = Color::Cyan;
+const INACTIVE_BORDER: Color = Color::DarkGray;
+
 // ─── Public entry point ──────────────────────────────────────────────────────
 
 /// Main draw function — called once per frame by the event loop.
@@ -92,7 +101,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(SEPARATOR));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -154,12 +163,12 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             " Nerve ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             " v0.1",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(DIM_TEXT),
         ),
     ];
     if !badge_spans.is_empty() {
@@ -172,7 +181,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Separator
     let sep = Paragraph::new(Line::from(Span::styled(
         " \u{2502} ",
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(SEPARATOR),
     )));
     frame.render_widget(sep, chunks[1]);
 
@@ -188,7 +197,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     if !conv_indicator.is_empty() {
         title_spans.push(Span::styled(
             conv_indicator,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(DIM_TEXT),
         ));
     }
     title_spans.push(Span::styled(
@@ -208,7 +217,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             "\u{203a} ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(SEPARATOR),
         ),
         Span::styled(
             app.selected_model.to_string(),
@@ -218,11 +227,11 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             " \u{2502} ",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(SEPARATOR),
         ),
         Span::styled(
             format!("{} msgs ", msg_count),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(ACCENT),
         ),
     ]))
     .alignment(Alignment::Right);
@@ -249,22 +258,22 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         InputMode::Normal => Span::styled(
             " NOR ",
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Blue)
+                .fg(Color::White)
+                .bg(USER_BADGE_BG)
                 .add_modifier(Modifier::BOLD),
         ),
         InputMode::Insert => Span::styled(
             " INS ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Green)
+                .bg(AI_BADGE_BG)
                 .add_modifier(Modifier::BOLD),
         ),
     };
 
     let border_color = match app.input_mode {
-        InputMode::Insert => Color::Cyan,
-        InputMode::Normal => Color::DarkGray,
+        InputMode::Insert => ACTIVE_BORDER,
+        InputMode::Normal => INACTIVE_BORDER,
     };
 
     let is_empty = app.input.is_empty();
@@ -278,12 +287,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
             Span::styled(
                 "Type your message... (Enter to send, Shift+Enter for newline)",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(DIM_TEXT),
             ),
             Span::styled(
                 "\u{258c}",
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(ACCENT)
                     .add_modifier(Modifier::SLOW_BLINK),
             ),
         ])]
@@ -294,7 +303,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
             Span::styled(
                 "Press i to start typing, / for Nerve Bar",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(DIM_TEXT),
             ),
         ])]
     } else {
@@ -331,7 +340,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                         Span::styled(
                             cursor_char.to_string(),
                             Style::default()
-                                .fg(Color::Cyan)
+                                .fg(ACCENT)
                                 .add_modifier(Modifier::SLOW_BLINK),
                         ),
                         Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
@@ -366,7 +375,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                     Span::styled(
                         cursor_char.to_string(),
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(ACCENT)
                             .add_modifier(Modifier::SLOW_BLINK),
                     ),
                     Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
@@ -421,13 +430,13 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             format!("({} words) ", word_count),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(DIM_TEXT),
         ),
     ]);
     let bottom_line = Line::from(vec![
         Span::styled(
             format!(" {} ", hint),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(DIM_TEXT),
         ),
     ]);
 
@@ -448,15 +457,26 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let provider_label = provider_display_name(&app.selected_provider);
-    let sep = Span::styled(" \u{2502} ", Style::default().fg(Color::Rgb(60, 60, 70)));
+    let sep = Span::styled(" \u{2502} ", Style::default().fg(SEPARATOR));
 
     if app.is_streaming {
-        // Streaming status bar with progress animation and stats
-        let anim_chars = ['\u{2591}', '\u{2592}', '\u{2593}', '\u{2588}'];
-        let tick = app.streaming_response.len() % 4;
-        let progress: String = (0..6)
-            .map(|i| anim_chars[(tick + i) % 4])
-            .collect();
+        // Streaming status bar with animated bouncing progress bar
+        let bar_width: usize = 8;
+        let bar_pos = (app.thinking_frame / 3) % (bar_width * 2);
+        let mut progress = String::new();
+        for i in 0..bar_width {
+            let dist = if bar_pos < bar_width {
+                (bar_pos as i32 - i as i32).unsigned_abs() as usize
+            } else {
+                ((bar_width * 2 - bar_pos) as i32 - i as i32).unsigned_abs() as usize
+            };
+            progress.push(match dist {
+                0 => '\u{2588}',
+                1 => '\u{2593}',
+                2 => '\u{2592}',
+                _ => '\u{2591}',
+            });
+        }
 
         // Approximate token count: words * 4/3
         let word_count = app.streaming_response.split_whitespace().count();
@@ -484,9 +504,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             spans.push(sep.clone());
         }
 
+        let spinner_frames = ["\u{25dc}", "\u{25dd}", "\u{25de}", "\u{25df}"];
+        let spinner = spinner_frames[(app.thinking_frame / 4) % 4];
+
         spans.extend_from_slice(&[
             Span::styled(
-                " Streaming... ",
+                format!(" {spinner} Streaming... "),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -502,7 +525,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             sep.clone(),
             Span::styled(
-                format!("{:.1}s", elapsed_secs),
+                format_elapsed(elapsed_secs),
                 Style::default().fg(Color::DarkGray),
             ),
             sep.clone(),
@@ -613,13 +636,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         if app.scroll_offset > 0 {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
-                format!("{} lines above bottom", app.scroll_offset),
-                Style::default().fg(Color::Cyan),
+                format!(" \u{2191} {} lines above ", app.scroll_offset),
+                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ));
-            left_spans.push(sep.clone());
             left_spans.push(Span::styled(
-                "j/k to scroll",
-                Style::default().fg(Color::DarkGray),
+                "j/k",
+                Style::default().fg(DIM_TEXT),
             ));
         }
 
@@ -682,6 +704,21 @@ pub(crate) fn model_info(id: &str) -> (&str, &str, &str) {
         "llama3" => ("Llama 3", "Ollama", "8K ctx"),
         other => (other, "Other", ""),
     }
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/// Format elapsed seconds into a compact human-readable string.
+fn format_elapsed(secs: f64) -> String {
+    if secs < 1.0 {
+        return "<1s".into();
+    }
+    if secs < 60.0 {
+        return format!("{:.0}s", secs);
+    }
+    let mins = (secs / 60.0).floor() as u64;
+    let remaining = (secs % 60.0).floor() as u64;
+    format!("{mins}m{remaining:02}s")
 }
 
 // ─── Model selector overlay ──────────────────────────────────────────────────
