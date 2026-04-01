@@ -111,6 +111,23 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
 
+    // Mode badges (shown next to branding when active)
+    let mut badge_spans: Vec<Span> = vec![];
+    if app.agent_mode {
+        badge_spans.push(Span::styled(
+            " AGENT ",
+            Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if app.code_mode {
+        badge_spans.push(Span::styled(
+            " CODE ",
+            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    }
+    let badge_width: u16 = badge_spans.iter().map(|s| s.width() as u16).sum();
+    let brand_width = 15 + badge_width;
+
     let right_display = format!(
         "{} \u{203a} {} \u{2502} {} msgs ",
         provider_label,
@@ -122,15 +139,15 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(15),        // branding + version
+            Constraint::Length(brand_width), // branding + version + badges
             Constraint::Length(3),          // separator
             Constraint::Min(1),            // conversation indicator + title
             Constraint::Length(right_len), // provider/model + msg count
         ])
         .split(inner);
 
-    // Branding
-    let brand = Paragraph::new(Line::from(vec![
+    // Branding + mode badges
+    let mut brand_spans = vec![
         Span::styled(
             " Nerve ",
             Style::default()
@@ -142,7 +159,12 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             " v0.1",
             Style::default().fg(Color::DarkGray),
         ),
-    ]));
+    ];
+    if !badge_spans.is_empty() {
+        brand_spans.push(Span::raw(" "));
+        brand_spans.extend(badge_spans);
+    }
+    let brand = Paragraph::new(Line::from(brand_spans));
     frame.render_widget(brand, chunks[0]);
 
     // Separator
@@ -438,7 +460,18 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             0.0
         };
 
-        let mut spans = vec![
+        let mut spans = vec![];
+
+        // Agent iteration badge (shown before streaming indicator when active)
+        if app.agent_mode && app.agent_iterations > 0 {
+            spans.push(Span::styled(
+                format!(" AGENT {}/10 ", app.agent_iterations),
+                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(sep.clone());
+        }
+
+        spans.extend_from_slice(&[
             Span::styled(
                 " Streaming... ",
                 Style::default()
@@ -470,7 +503,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Yellow),
             ),
             Span::raw(" "),
-        ];
+        ]);
 
         if app.code_mode {
             spans.insert(spans.len() - 1, sep.clone());
@@ -545,6 +578,15 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .split(area);
 
         let mut left_spans = vec![left_status];
+
+        // Agent iteration badge (shown when agent is active with iterations)
+        if app.agent_mode && app.agent_iterations > 0 {
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                format!(" AGENT {}/10 ", app.agent_iterations),
+                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+            ));
+        }
 
         // Show scroll position when user has scrolled up from the bottom
         if app.scroll_offset > 0 {

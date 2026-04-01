@@ -314,9 +314,9 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
         app.current_conversation_mut()
             .messages
             .insert(0, ("system".into(), sys_prompt));
-        app.status_message = Some(format!(
-            "Detected {:?} project: {}",
-            ws.project_type, ws.name
+        app.set_status(format!(
+            "{:?} project '{}' | {} > {} | /help for commands",
+            ws.project_type, ws.name, app.selected_provider, app.selected_model
         ));
     }
 
@@ -2101,12 +2101,14 @@ System\n\
             .join("config.toml");
         let history_path = history::history_dir();
 
-        let status = format!(
+        let agent_status = if app.agent_mode { "ON" } else { "OFF" };
+        let mut status = format!(
             "Nerve v0.1.0\n\
              \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\
-             Provider:  {}\n\
-             Model:     {}\n\
-             Code Mode: {}\n\
+             Provider:   {}\n\
+             Model:      {}\n\
+             Code Mode:  {}\n\
+             Agent Mode: {}\n\
              \n\
              Conversations: {}\n\
              Current:       \"{}\" ({} messages)\n\
@@ -2120,6 +2122,7 @@ System\n\
             app.selected_provider,
             app.selected_model,
             code_status,
+            agent_status,
             app.conversations.len(),
             conv_title,
             conv_msg_count,
@@ -2130,6 +2133,17 @@ System\n\
             config_path.display(),
             history_path.display(),
         );
+
+        // Usage section
+        status.push_str("\n\nUsage\n");
+        status.push_str(&format!("  Requests: {}\n", app.usage_stats.total_requests));
+        status.push_str(&format!("  Tokens:   ~{} sent, ~{} received\n",
+            app.usage_stats.total_tokens_sent, app.usage_stats.total_tokens_received));
+        status.push_str(&format!("  Cost:     {}\n", app.usage_stats.format_cost()));
+        if app.spending_limit.enabled {
+            status.push_str(&format!("  Limit:    ${:.2}/session\n", app.spending_limit.max_cost_usd));
+        }
+
         app.add_assistant_message(status);
         app.scroll_offset = 0;
         return true;

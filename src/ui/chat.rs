@@ -130,7 +130,9 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             ("Ctrl+P", "Browse prompts"),
             ("Ctrl+O", "History browser"),
             ("Ctrl+B", "Clipboard manager"),
+            ("Ctrl+F", "Search in conversation"),
             ("Ctrl+H", "Help & keybindings"),
+            ("1-9", "Copy message to clipboard"),
         ];
         for (key, desc) in &shortcuts {
             lines.push(Line::from(vec![
@@ -144,13 +146,16 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         // Slash commands
         let commands = [
             ("/help", "Show all slash commands"),
+            ("/agent on", "Enable coding agent"),
+            ("/usage", "Show API cost & token usage"),
+            ("/branch save", "Save conversation branch"),
             ("/url", "Scrape a webpage for context"),
             ("/kb", "Manage knowledge base"),
             ("/auto", "Run automations"),
         ];
         for (cmd, desc) in &commands {
             lines.push(Line::from(vec![
-                Span::styled(format!("   {:<10}", cmd), key_style),
+                Span::styled(format!("   {:<15}", cmd), key_style),
                 Span::styled(desc.to_string(), desc_style),
             ]));
         }
