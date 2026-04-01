@@ -471,6 +471,202 @@ fn detect_cpp(dir: &Path) -> WorkspaceInfo {
     }
 }
 
+// ─── Project map generation ───────────────────────────────────────────────
+
+/// Generate a compact project map: file tree with key symbols
+pub fn generate_project_map(root: &std::path::Path, max_depth: usize) -> String {
+    let mut map = String::new();
+    map.push_str(&format!("Project: {}\n", root.display()));
+    map.push_str(&format!("{}\n\n", "=".repeat(40)));
+
+    // File tree
+    map.push_str("File structure:\n");
+    build_tree(root, root, &mut map, 0, max_depth);
+
+    // Key symbols (functions, structs, etc.) from important files
+    map.push_str("\nKey definitions:\n");
+    extract_key_symbols(root, &mut map);
+
+    map
+}
+
+pub(crate) fn build_tree(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    output: &mut String,
+    depth: usize,
+    max_depth: usize,
+) {
+    if depth > max_depth {
+        return;
+    }
+
+    let mut entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(entries) => entries.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+
+        // Skip hidden files/dirs, target/, node_modules/, __pycache__, .git
+        if name.starts_with('.')
+            || name == "target"
+            || name == "node_modules"
+            || name == "__pycache__"
+            || name == "vendor"
+            || name == "dist"
+            || name == "build"
+            || name == ".git"
+        {
+            continue;
+        }
+
+        let indent = "  ".repeat(depth);
+        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+        if is_dir {
+            output.push_str(&format!("{indent}{name}/\n"));
+            build_tree(root, &entry.path(), output, depth + 1, max_depth);
+        } else {
+            // Show file with size
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let size_str = if size < 1024 {
+                format!("{size}B")
+            } else if size < 1024 * 1024 {
+                format!("{}K", size / 1024)
+            } else {
+                format!("{}M", size / (1024 * 1024))
+            };
+            output.push_str(&format!("{indent}{name}  ({size_str})\n"));
+        }
+    }
+}
+
+pub(crate) fn extract_key_symbols(root: &std::path::Path, output: &mut String) {
+    // Scan important source files for key definitions
+    let extensions = ["rs", "py", "js", "ts", "go", "java", "rb"];
+
+    let mut files_to_scan: Vec<std::path::PathBuf> = Vec::new();
+    collect_source_files(root, &mut files_to_scan, &extensions, 0, 3);
+
+    // Limit to first 20 files to keep context manageable
+    files_to_scan.truncate(20);
+
+    for file in &files_to_scan {
+        let rel_path = file.strip_prefix(root).unwrap_or(file);
+        let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        if let Ok(content) = std::fs::read_to_string(file) {
+            let symbols = extract_symbols_from_content(&content, ext);
+            if !symbols.is_empty() {
+                output.push_str(&format!("\n{}:\n", rel_path.display()));
+                for sym in &symbols {
+                    output.push_str(&format!("  {sym}\n"));
+                }
+            }
+        }
+    }
+}
+
+fn collect_source_files(
+    dir: &std::path::Path,
+    files: &mut Vec<std::path::PathBuf>,
+    extensions: &[&str],
+    depth: usize,
+    max_depth: usize,
+) {
+    if depth > max_depth {
+        return;
+    }
+
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.')
+                || name == "target"
+                || name == "node_modules"
+                || name == "__pycache__"
+            {
+                continue;
+            }
+
+            let path = entry.path();
+            if path.is_dir() {
+                collect_source_files(&path, files, extensions, depth + 1, max_depth);
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if extensions.contains(&ext) {
+                    files.push(path);
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<String> {
+    let mut symbols = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        match ext {
+            "rs" => {
+                if trimmed.starts_with("pub fn ")
+                    || trimmed.starts_with("pub async fn ")
+                {
+                    if let Some(sig) = trimmed.split('{').next() {
+                        symbols.push(sig.trim().to_string());
+                    }
+                } else if trimmed.starts_with("pub struct ")
+                    || trimmed.starts_with("pub enum ")
+                    || trimmed.starts_with("pub trait ")
+                {
+                    if let Some(sig) = trimmed
+                        .split('{')
+                        .next()
+                        .or_else(|| trimmed.split(';').next())
+                    {
+                        symbols.push(sig.trim().to_string());
+                    }
+                }
+            }
+            "py" => {
+                if trimmed.starts_with("def ")
+                    || trimmed.starts_with("class ")
+                    || trimmed.starts_with("async def ")
+                {
+                    if let Some(sig) = trimmed.split(':').next() {
+                        symbols.push(sig.trim().to_string());
+                    }
+                }
+            }
+            "js" | "ts" | "jsx" | "tsx" => {
+                if trimmed.starts_with("export function ")
+                    || trimmed.starts_with("export class ")
+                    || trimmed.starts_with("export default function ")
+                    || trimmed.starts_with("export const ")
+                {
+                    let sig: String = trimmed.chars().take(80).collect();
+                    symbols.push(sig);
+                }
+            }
+            "go" => {
+                if trimmed.starts_with("func ") || trimmed.starts_with("type ") {
+                    if let Some(sig) = trimmed.split('{').next() {
+                        symbols.push(sig.trim().to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Limit to 15 symbols per file
+    symbols.truncate(15);
+    symbols
+}
+
 // ─── System prompt generation ──────────────────────────────────────────────
 
 impl WorkspaceInfo {
@@ -806,5 +1002,57 @@ mod tests {
         let ws = detect_workspace_at(&dir).unwrap();
         assert!(ws.tech_stack.iter().any(|t| t == "typescript"));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn generate_project_map_current_dir() {
+        let root = std::env::current_dir().unwrap();
+        let map = generate_project_map(&root, 2);
+        assert!(map.contains("Cargo.toml"));
+        assert!(map.contains("src/"));
+        assert!(!map.contains("target/")); // Should be excluded
+        assert!(!map.contains(".git")); // Should be excluded
+    }
+
+    #[test]
+    fn extract_rust_symbols() {
+        let content = r#"
+pub fn hello() {
+    println!("hi");
+}
+
+pub struct App {
+    field: String,
+}
+
+fn private_fn() {}
+
+pub enum Mode {
+    Normal,
+    Insert,
+}
+"#;
+        let symbols = extract_symbols_from_content(content, "rs");
+        assert!(symbols.iter().any(|s| s.contains("pub fn hello")));
+        assert!(symbols.iter().any(|s| s.contains("pub struct App")));
+        assert!(symbols.iter().any(|s| s.contains("pub enum Mode")));
+        assert!(!symbols.iter().any(|s| s.contains("private_fn"))); // Private excluded
+    }
+
+    #[test]
+    fn extract_python_symbols() {
+        let content = "def hello():\n    pass\n\nclass MyClass:\n    pass\n";
+        let symbols = extract_symbols_from_content(content, "py");
+        assert!(symbols.iter().any(|s| s.contains("def hello")));
+        assert!(symbols.iter().any(|s| s.contains("class MyClass")));
+    }
+
+    #[test]
+    fn build_tree_excludes_hidden() {
+        let root = std::env::current_dir().unwrap();
+        let mut output = String::new();
+        build_tree(&root, &root, &mut output, 0, 1);
+        assert!(!output.contains(".git"));
+        assert!(!output.contains("target/"));
     }
 }
