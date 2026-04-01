@@ -12,7 +12,7 @@ pub fn render_help(frame: &mut Frame) {
 
     // ── Popup dimensions ─────────────────────────────────────────────
     let popup_width = 64u16.min(area.width.saturating_sub(4));
-    let popup_height = 44u16.min(area.height.saturating_sub(4));
+    let popup_height = 54u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -79,6 +79,15 @@ pub fn render_help(frame: &mut Frame) {
         ("", "Clipboard"),
         ("Ctrl+Y", "Copy last AI response"),
         ("Ctrl+Shift+V", "Clipboard manager"),
+        ("1-9 (Normal mode)", "Copy message #N from bottom"),
+        ("", ""),
+        // -- Copy commands --
+        ("", "Copy Commands"),
+        ("/copy", "Copy last AI response"),
+        ("/copy <n>", "Copy message #n from bottom"),
+        ("/copy code", "Copy last code block"),
+        ("/copy all", "Copy entire conversation"),
+        ("/copy last", "Copy last message (any role)"),
     ];
 
     let key_col_width = 20;

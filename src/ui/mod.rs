@@ -544,24 +544,46 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .constraints([Constraint::Min(1), Constraint::Length(right_width)])
             .split(area);
 
-        let mut left_spans = vec![
-            left_status,
-            sep.clone(),
-            Span::styled(
-                format!("~{} tokens", tokens_display),
+        let mut left_spans = vec![left_status];
+
+        // Show scroll position when user has scrolled up from the bottom
+        if app.scroll_offset > 0 {
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                format!("{} lines above bottom", app.scroll_offset),
+                Style::default().fg(Color::Cyan),
+            ));
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                "j/k to scroll",
                 Style::default().fg(Color::DarkGray),
-            ),
-            sep.clone(),
-            Span::styled(
-                format!("{} words", words_display),
-                Style::default().fg(Color::DarkGray),
-            ),
-            sep.clone(),
-            Span::styled(
-                format!("{} \u{203a} {}", provider_label, app.selected_model),
-                Style::default().fg(Color::DarkGray),
-            ),
-        ];
+            ));
+        }
+
+        left_spans.push(sep.clone());
+        left_spans.push(Span::styled(
+            format!("~{} tokens", tokens_display),
+            Style::default().fg(Color::DarkGray),
+        ));
+        left_spans.push(sep.clone());
+        left_spans.push(Span::styled(
+            format!("{} words", words_display),
+            Style::default().fg(Color::DarkGray),
+        ));
+        left_spans.push(sep.clone());
+        left_spans.push(Span::styled(
+            format!("{} \u{203a} {}", provider_label, app.selected_model),
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        // Show estimated cost badge for paid providers.
+        if app.usage_stats.estimated_cost_usd > 0.0 {
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                format!("{} (est.)", app.usage_stats.format_cost()),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
 
         if app.code_mode {
             left_spans.push(sep.clone());
