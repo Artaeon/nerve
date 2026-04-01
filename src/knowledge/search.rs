@@ -243,4 +243,38 @@ mod tests {
         let results = search_knowledge(&kb, "a", 5);
         let _ = results;
     }
+
+    // === Stress tests ===
+
+    #[test]
+    fn search_large_knowledge_base() {
+        let mut kb = KnowledgeBase::new("stress".into());
+        for i in 0..100 {
+            let doc = Document {
+                id: format!("doc{i}"),
+                title: format!("Document {i}"),
+                source_path: format!("/tmp/doc{i}.md"),
+                ingested_at: chrono::Utc::now(),
+                word_count: 500,
+            };
+            let mut chunks = Vec::new();
+            for j in 0..10 {
+                chunks.push(Chunk {
+                    id: format!("c{i}_{j}"),
+                    document_id: format!("doc{i}"),
+                    content: format!("Chunk {j} of document {i} about topic_{}", i % 10),
+                    index: j,
+                    word_count: 10,
+                });
+            }
+            kb.add_document(doc, chunks);
+        }
+
+        assert_eq!(kb.total_chunks(), 1000);
+
+        // Search should be fast and return results
+        let results = search_knowledge(&kb, "topic_5", 5);
+        assert!(!results.is_empty());
+        assert!(results.len() <= 5);
+    }
 }

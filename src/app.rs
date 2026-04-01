@@ -1467,4 +1467,89 @@ mod tests {
         app.set_status("second");
         assert_eq!(app.status_message, Some("second".into()));
     }
+
+    // === Stress tests ===
+
+    #[test]
+    fn rapid_conversation_switching() {
+        let mut app = App::new();
+        for _ in 0..100 {
+            app.new_conversation();
+        }
+        assert_eq!(app.conversations.len(), 101);
+
+        // Rapidly switch between conversations
+        for i in 0..101 {
+            app.active_conversation = i;
+            let _ = app.current_conversation();
+        }
+    }
+
+    #[test]
+    fn massive_message_history() {
+        let mut app = App::new();
+        for i in 0..1000 {
+            app.add_user_message(format!("Message {i}"));
+            app.add_assistant_message(format!("Response {i}"));
+        }
+        assert_eq!(app.current_conversation().messages.len(), 2000);
+    }
+
+    #[test]
+    fn very_long_input_handling() {
+        let mut app = App::new();
+        let long_input = "x".repeat(100_000);
+        for ch in long_input.chars() {
+            app.insert_char(ch);
+        }
+        assert_eq!(app.input.len(), 100_000);
+        assert_eq!(app.cursor_position, 100_000);
+
+        // Submit should work
+        let result = app.submit_input();
+        assert!(result.is_some());
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn cursor_at_every_position() {
+        let mut app = App::new();
+        app.input = "Hello, World! \u{1F980}".into();
+        let len = app.input.len();
+
+        // Move cursor to every valid position
+        app.cursor_position = 0;
+        for _ in 0..20 {
+            app.move_cursor_right();
+        }
+        // Should be at or near the end, not past it
+        assert!(app.cursor_position <= len);
+
+        // Move back to start
+        for _ in 0..20 {
+            app.move_cursor_left();
+        }
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn many_branches() {
+        let mut app = App::new();
+        app.add_user_message("base".into());
+
+        for i in 0..50 {
+            app.create_branch(format!("branch_{i}"));
+        }
+        assert_eq!(app.branches.len(), 50);
+
+        // Restore the last one
+        app.restore_branch(49);
+        assert_eq!(app.current_conversation().messages.len(), 1);
+
+        // Delete all
+        while !app.branches.is_empty() {
+            app.delete_branch(0);
+        }
+        assert!(app.branches.is_empty());
+    }
 }
