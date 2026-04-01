@@ -163,7 +163,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Interactive TUI.
-    run_tui(provider, config, cli.continue_session, cli.no_splash).await
+    run_tui(
+        provider,
+        config,
+        cli.continue_session,
+        cli.no_splash,
+        cli.provider.is_some(),
+    )
+    .await
 }
 
 // ─── Provider creation ──────────────────────────────────────────────────────
@@ -463,11 +470,35 @@ fn render_goodbye(frame: &mut ratatui::Frame, app: &crate::app::App) {
 
 // ─── Interactive TUI ────────────────────────────────────────────────────────
 
+/// Save the last used provider+model so new sessions remember the choice.
+fn save_last_provider(provider: &str, model: &str) {
+    let dir = dirs::config_dir().unwrap_or_default().join("nerve");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(
+        dir.join("last_provider"),
+        format!("{}\n{}", provider, model),
+    );
+}
+
+/// Load the last used provider+model (if saved).
+fn load_last_provider() -> Option<(String, String)> {
+    let path = dirs::config_dir()?.join("nerve").join("last_provider");
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut lines = content.lines();
+    let provider = lines.next()?.to_string();
+    let model = lines.next()?.to_string();
+    if provider.is_empty() {
+        return None;
+    }
+    Some((provider, model))
+}
+
 async fn run_tui(
     provider: Arc<dyn AiProvider>,
     config: Config,
     continue_session: bool,
     no_splash: bool,
+    provider_from_cli: bool,
 ) -> anyhow::Result<()> {
     // Enter the alternate screen and enable raw mode.
     crossterm::terminal::enable_raw_mode()?;
@@ -497,6 +528,14 @@ async fn run_tui(
     let mut app = App::new();
     app.selected_model = config.default_model.clone();
     app.selected_provider = config.default_provider.clone();
+
+    // Load last used provider if not specified via CLI.
+    if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {
+        app.selected_provider = provider_name;
+        app.selected_model = model;
+        app.available_models = models_for_provider(&app.selected_provider);
+        app.provider_changed = true;
+    }
 
     init_status(&mut terminal, "Detecting workspace...");
 
@@ -566,6 +605,9 @@ async fn run_tui(
     // Auto-save session on every quit path.
     let sess = session::session_from_app(&app);
     let _ = session::save_session(&sess);
+
+    // Remember the last used provider+model for new sessions.
+    save_last_provider(&app.selected_provider, &app.selected_model);
 
     // Show goodbye splash before leaving.
     if !no_splash {
@@ -715,6 +757,7 @@ async fn event_loop(
                                     })
                                     .collect(),
                                 model: app.selected_model.clone(),
+                                provider: app.selected_provider.clone(),
                                 created_at: conv.created_at,
                                 updated_at: chrono::Utc::now(),
                             };
@@ -947,6 +990,7 @@ async fn handle_key_event(
                             })
                             .collect(),
                         model: app.selected_model.clone(),
+                        provider: app.selected_provider.clone(),
                         created_at: conv.created_at,
                         updated_at: chrono::Utc::now(),
                     };
@@ -1277,6 +1321,8 @@ async fn handle_normal_mode(
                                 "alias",
                                 "repeat",
                                 "mode",
+                                "autocontext",
+                                "ac",
                             ];
                             let matches: Vec<&&str> = commands
                                 .iter()
@@ -1679,7 +1725,20 @@ fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.scroll_offset = 0;
                 app.streaming_response.clear();
                 app.is_streaming = false;
-                app.status_message = Some(format!("Loaded conversation: {}", record.title));
+
+                // Restore the model and provider from the history record.
+                if !record.model.is_empty() {
+                    app.selected_model = record.model.clone();
+                }
+                if !record.provider.is_empty() {
+                    app.selected_provider = record.provider.clone();
+                    app.provider_changed = true;
+                    app.available_models = models_for_provider(&app.selected_provider);
+                }
+                app.set_status(format!(
+                    "Loaded: {} ({} > {})",
+                    record.title, record.provider, record.model
+                ));
                 app.mode = AppMode::Normal;
             }
         }
@@ -2298,7 +2357,8 @@ AI Provider\n\
   /agent undo          Roll back to pre-agent git checkpoint\n\
   /agent diff          Show what the agent changed (git diff)\n\
   /agent commit [msg]  Commit agent changes\n\
-  /mode <name>        Switch smart mode (efficient/thorough/agent/learning)\n\
+  /mode <name>        Switch mode (efficient/thorough/agent/learning/auto/code/review)\n\
+  /autocontext        Auto-gather project context (alias: /ac)\n\
   /cwd <dir>          Set working directory\n\
   /cd <dir>           Change working directory\n\
 \n\
@@ -4146,6 +4206,7 @@ System\n\
         match rest {
             "efficient" | "eco" => {
                 app.active_mode = app::NerveMode::Efficient;
+                app.mode_name = "efficient".into();
                 let sys = "You are a helpful assistant. Be concise and direct. \
                            Avoid unnecessary explanations. Use bullet points over paragraphs. \
                            Show code without verbose commentary. One-sentence answers when possible.";
@@ -4159,6 +4220,7 @@ System\n\
             }
             "thorough" | "detailed" => {
                 app.active_mode = app::NerveMode::Thorough;
+                app.mode_name = "thorough".into();
                 let sys = "You are a thorough, expert assistant. Provide detailed explanations with examples. \
                            Show your reasoning step by step. Include edge cases and caveats. \
                            When showing code, explain the key design decisions.";
@@ -4172,6 +4234,7 @@ System\n\
             }
             "agent" => {
                 app.active_mode = app::NerveMode::Agent;
+                app.mode_name = "agent".into();
                 app.agent_mode = true;
                 let tools_prompt = crate::agent::tools::tools_system_prompt();
                 app.current_conversation_mut().messages.retain(|(r, c)| {
@@ -4186,6 +4249,7 @@ System\n\
             }
             "learning" | "teach" => {
                 app.active_mode = app::NerveMode::Learning;
+                app.mode_name = "learning".into();
                 let sys = "You are a patient teacher. Explain concepts from first principles. \
                            Use analogies and real-world examples. Break complex topics into simple steps. \
                            After explaining, ask a question to check understanding. \
@@ -4198,8 +4262,103 @@ System\n\
                     .insert(0, ("system".into(), sys.into()));
                 app.set_status("Mode: Learning \u{2014} explanations optimized for understanding");
             }
+            "auto" => {
+                app.active_mode = app::NerveMode::Efficient;
+                app.mode_name = "auto".into();
+                // Auto mode: inject workspace context + auto-compact + concise prompts
+                let mut sys = String::from(
+                    "You are a helpful coding assistant. Be concise and practical. \
+                     When showing code, include only the relevant parts. \
+                     When explaining, use bullet points. \
+                     Always consider the project context provided.",
+                );
+
+                // Auto-inject workspace context
+                if let Some(ref ws) = app.cached_workspace {
+                    sys.push_str(&format!(
+                        "\n\nProject: {} ({:?})\nTech: {}",
+                        ws.name,
+                        ws.project_type,
+                        ws.tech_stack.join(", ")
+                    ));
+                }
+
+                // Auto-inject recent file context
+                let cwd = std::env::current_dir().unwrap_or_default();
+                if let Ok(entries) = std::fs::read_dir(&cwd) {
+                    let key_files: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            let name = e.file_name().to_string_lossy().to_string();
+                            matches!(
+                                name.as_str(),
+                                "README.md"
+                                    | "Cargo.toml"
+                                    | "package.json"
+                                    | "pyproject.toml"
+                                    | "go.mod"
+                                    | "Makefile"
+                            )
+                        })
+                        .map(|e| e.file_name().to_string_lossy().to_string())
+                        .collect();
+                    if !key_files.is_empty() {
+                        sys.push_str(&format!("\nKey files: {}", key_files.join(", ")));
+                    }
+                }
+
+                app.current_conversation_mut().messages.retain(|(r, c)| {
+                    !(r == "system"
+                        && (c.contains("Be concise") || c.contains("helpful coding assistant")))
+                });
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys));
+                app.set_status("Mode: Auto \u{2014} workspace-aware, auto-compact, concise");
+            }
+            "code" => {
+                app.active_mode = app::NerveMode::Efficient;
+                app.mode_name = "code".into();
+                let sys = "You are an expert programmer. Follow these rules strictly:\n\
+                           1. Show ONLY code \u{2014} no explanations unless asked\n\
+                           2. Include ALL imports and dependencies\n\
+                           3. Code must be complete and runnable (no placeholders like '...')\n\
+                           4. Follow the project's existing style and conventions\n\
+                           5. Add comments only where the logic isn't obvious\n\
+                           6. Handle errors properly \u{2014} no unwrap() or bare exceptions\n\
+                           7. If asked to modify existing code, show only the changed parts with enough context to locate them";
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| !(r == "system" && c.contains("expert programmer")));
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys.into()));
+                app.set_status("Mode: Code \u{2014} code-only responses, no verbose explanations");
+            }
+            "review" => {
+                app.active_mode = app::NerveMode::Thorough;
+                app.mode_name = "review".into();
+                let sys = "You are a senior code reviewer. For every piece of code:\n\
+                           1. Check for bugs, edge cases, and error handling gaps\n\
+                           2. Check for security issues (injection, auth, data exposure)\n\
+                           3. Check for performance issues (complexity, allocations, queries)\n\
+                           4. Check for readability (naming, structure, unnecessary complexity)\n\
+                           5. Rate severity: CRITICAL / WARNING / SUGGESTION\n\
+                           6. Provide the fix for each issue found\n\
+                           7. End with an overall quality score (1-10)";
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| !(r == "system" && c.contains("senior code reviewer")));
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys.into()));
+                app.set_status(
+                    "Mode: Review \u{2014} structured code review with severity ratings",
+                );
+            }
             "standard" | "default" | "reset" => {
                 app.active_mode = app::NerveMode::Standard;
+                app.mode_name = "standard".into();
                 app.agent_mode = false;
                 app.current_conversation_mut().messages.retain(|(r, c)| {
                     !(r == "system"
@@ -4207,7 +4366,10 @@ System\n\
                             || c.contains("thorough")
                             || c.contains("You have access to the following tools")
                             || c.contains("You are Nerve, an AI coding assistant")
-                            || c.contains("patient teacher")))
+                            || c.contains("patient teacher")
+                            || c.contains("helpful coding assistant")
+                            || c.contains("expert programmer")
+                            || c.contains("senior code reviewer")))
                 });
                 app.set_status("Mode: Standard \u{2014} default behavior");
             }
@@ -4216,16 +4378,80 @@ System\n\
                 app.add_assistant_message(format!(
                     "Current mode: {current}\n\n\
                      Available modes:\n\n\
+                     /mode standard    Default behavior\n\
                      /mode efficient   Concise responses, saves tokens\n\
                      /mode thorough    Detailed explanations with examples\n\
                      /mode agent       Coding agent with file/command tools\n\
                      /mode learning    Patient explanations, exercises\n\
-                     /mode standard    Reset to default\n\n\
-                     Each mode adjusts the AI's behavior and system prompt."
+                     /mode auto        Workspace-aware, auto-context, auto-compact\n\
+                     /mode code        Code-only responses, no verbose explanations\n\
+                     /mode review      Structured code review with severity ratings\n\n\
+                     Each mode adjusts the AI's system prompt and context behavior."
                 ));
             }
         }
         app.scroll_offset = 0;
+        return true;
+    }
+
+    // /autocontext — automatically gather relevant project context.
+    if trimmed == "/autocontext" || trimmed == "/ac" {
+        let mut context_parts: Vec<String> = Vec::new();
+        let cwd = std::env::current_dir().unwrap_or_default();
+
+        // 1. Workspace info
+        if let Some(ref ws) = app.cached_workspace {
+            context_parts.push(format!(
+                "Project: {} ({:?})\nTech: {}\nRoot: {}",
+                ws.name,
+                ws.project_type,
+                ws.tech_stack.join(", "),
+                ws.root.display()
+            ));
+        }
+
+        // 2. Read key project files (README, config)
+        for filename in &[
+            "README.md",
+            "Cargo.toml",
+            "package.json",
+            "pyproject.toml",
+            "go.mod",
+        ] {
+            let path = cwd.join(filename);
+            if path.exists()
+                && let Ok(content) = std::fs::read_to_string(&path)
+            {
+                let truncated: String = content.chars().take(500).collect();
+                context_parts.push(format!("{}:\n{}", filename, truncated));
+            }
+        }
+
+        // 3. File tree (compact)
+        if let Some(ref ws) = app.cached_workspace {
+            let map = crate::workspace::generate_project_map(&ws.root, 2);
+            let truncated: String = map.chars().take(1000).collect();
+            context_parts.push(truncated);
+        }
+
+        // 4. Git status (if in a repo)
+        if let Ok(result) = crate::shell::run_command("git log --oneline -5 2>/dev/null")
+            && result.success
+            && !result.stdout.trim().is_empty()
+        {
+            context_parts.push(format!("Recent commits:\n{}", result.stdout));
+        }
+
+        if context_parts.is_empty() {
+            app.set_status("No project context detected");
+        } else {
+            let full_context = context_parts.join("\n\n---\n\n");
+            let token_est = full_context.len() / 4;
+            app.current_conversation_mut()
+                .messages
+                .push(("system".into(), full_context));
+            app.set_status(format!("Auto-context loaded (~{} tokens)", token_est));
+        }
         return true;
     }
 
