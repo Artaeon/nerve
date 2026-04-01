@@ -23,6 +23,8 @@ Chat. Code. Ship. All from your terminal.
 
 </div>
 
+> **[Read the Manifesto](MANIFESTO.md)** -- Why we built Nerve and what makes it different.
+
 ---
 
 ## Installation

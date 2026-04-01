@@ -195,6 +195,9 @@ nerve --provider openai --model gpt-4o -n "what is a monad?"
 
 This makes Nerve composable in shell pipelines and scripts.
 
+Use `--no-splash` to skip both the startup and goodbye splash screens (useful in
+scripts or when you want the fastest possible launch).
+
 ### Daemon Mode
 
 For long-running workflows, keep Nerve resident in the background:
