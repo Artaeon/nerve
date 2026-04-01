@@ -219,4 +219,68 @@ mod tests {
         assert_eq!(models[0].provider, "Copilot");
         assert_eq!(models[0].context_length, Some(8_000));
     }
+
+    // ── build_prompt: edge cases ───────────────────────────────────────
+
+    #[test]
+    fn build_prompt_user_only() {
+        let messages = vec![ChatMessage::user("hello")];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert_eq!(prompt, "hello");
+    }
+
+    #[test]
+    fn build_prompt_with_system_context() {
+        let messages = vec![
+            ChatMessage::system("You are helpful"),
+            ChatMessage::user("hello"),
+        ];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert!(prompt.contains("Context:"));
+        assert!(prompt.contains("hello"));
+    }
+
+    #[test]
+    fn build_prompt_empty() {
+        let messages: Vec<ChatMessage> = vec![];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn build_prompt_multiple_system_messages() {
+        let messages = vec![
+            ChatMessage::system("Rule 1"),
+            ChatMessage::system("Rule 2"),
+            ChatMessage::user("go"),
+        ];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert!(prompt.contains("Context: Rule 1"));
+        assert!(prompt.contains("Context: Rule 2"));
+        assert!(prompt.contains("go"));
+    }
+
+    #[test]
+    fn build_prompt_with_shell_metacharacters() {
+        let messages = vec![ChatMessage::user("$(rm -rf /) && `whoami` | bash")];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        // Content should be preserved as-is (passed via Command::args, not shell)
+        assert!(prompt.contains("$(rm -rf /)"));
+        assert!(prompt.contains("`whoami`"));
+    }
+
+    #[test]
+    fn build_prompt_very_long() {
+        let long_msg = "a".repeat(100_000);
+        let messages = vec![ChatMessage::user(&long_msg)];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert_eq!(prompt.len(), 100_000);
+    }
+
+    #[test]
+    fn build_prompt_preserves_newlines() {
+        let messages = vec![ChatMessage::user("line1\nline2\nline3")];
+        let prompt = CopilotProvider::build_prompt(&messages);
+        assert!(prompt.contains("line1\nline2\nline3"));
+    }
 }

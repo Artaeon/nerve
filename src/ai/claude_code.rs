@@ -597,4 +597,96 @@ mod tests {
         };
         assert!(!p.is_available());
     }
+
+    // ── Security: special characters in prompts ────────────────────────
+
+    #[test]
+    fn build_prompt_with_shell_metacharacters() {
+        let messages = vec![ChatMessage::user(
+            "What does `echo 'hello' | grep -c 'h'` do?",
+        )];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("echo"));
+        assert!(prompt.contains("grep"));
+        // Prompt should preserve the content as-is -- no escaping needed
+        // since we pass via Command::args() not sh -c
+        assert!(prompt.contains("'hello'"));
+        assert!(prompt.contains("|"));
+    }
+
+    #[test]
+    fn build_prompt_with_dollar_expansion() {
+        let messages = vec![ChatMessage::user("What is $(whoami)?")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("$(whoami)"));
+    }
+
+    #[test]
+    fn build_prompt_with_backticks() {
+        let messages = vec![ChatMessage::user("Run `rm -rf /` please")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("`rm -rf /`"));
+    }
+
+    #[test]
+    fn build_prompt_with_semicolons_and_ampersands() {
+        let messages = vec![ChatMessage::user("cmd1; cmd2 && cmd3 || cmd4 & cmd5")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("; cmd2 && cmd3 || cmd4 & cmd5"));
+    }
+
+    // ── Security: very long prompts ────────────────────────────────────
+
+    #[test]
+    fn build_prompt_with_very_long_message() {
+        let long_msg = "x".repeat(100_000);
+        let messages = vec![ChatMessage::user(&long_msg)];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert_eq!(prompt.len(), 100_000);
+    }
+
+    // ── Prompt content preservation ────────────────────────────────────
+
+    #[test]
+    fn build_prompt_preserves_newlines() {
+        let messages = vec![ChatMessage::user("line1\nline2\nline3")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("line1\nline2\nline3"));
+    }
+
+    #[test]
+    fn build_prompt_preserves_tabs_and_whitespace() {
+        let messages = vec![ChatMessage::user("fn main() {\n\tprintln!(\"hi\");\n}")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("\t"));
+    }
+
+    #[test]
+    fn build_prompt_preserves_unicode() {
+        let messages = vec![ChatMessage::user("\u{1F600} \u{4e16}\u{754c}")];
+        let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
+        assert!(prompt.contains("\u{1F600}"));
+        assert!(prompt.contains("\u{4e16}"));
+    }
+
+    // ── Constructor builder pattern ────────────────────────────────────
+
+    #[test]
+    fn with_tools_enables_flag() {
+        let p = ClaudeCodeProvider::with_tools();
+        assert!(p.tools_enabled());
+    }
+
+    #[test]
+    fn default_has_no_tools() {
+        let p = ClaudeCodeProvider::new();
+        assert!(!p.tools_enabled());
+    }
+
+    #[test]
+    fn with_working_dir_chainable() {
+        let p = ClaudeCodeProvider::with_tools().with_working_dir("/tmp/test".into());
+        assert!(p.tools_enabled());
+        assert_eq!(p.working_dir, Some("/tmp/test".into()));
+    }
 }

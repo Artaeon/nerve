@@ -470,4 +470,86 @@ mod tests {
         assert_eq!(resp.data[1].id, "gpt-4o-mini");
         assert_eq!(resp.data[1].context_length, Some(16384));
     }
+
+    // ── Security: malformed / adversarial JSON responses ───────────────
+
+    #[test]
+    fn deserialize_malformed_json_missing_choices() {
+        let json = r#"{"not_a_valid_response": true}"#;
+        let result = serde_json::from_str::<ChatCompletionResponse>(json);
+        assert!(result.is_err(), "Missing required 'choices' field should fail");
+    }
+
+    #[test]
+    fn deserialize_empty_object() {
+        let json = r#"{}"#;
+        let result = serde_json::from_str::<ChatCompletionResponse>(json);
+        assert!(result.is_err(), "Empty object should fail deserialization");
+    }
+
+    #[test]
+    fn deserialize_very_long_content() {
+        let long_content = "x".repeat(1_000_000);
+        let json = format!(
+            r#"{{"choices":[{{"message":{{"content":"{long_content}"}}}}]}}"#
+        );
+        let resp: ChatCompletionResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            resp.choices[0].message.content.as_ref().unwrap().len(),
+            1_000_000
+        );
+    }
+
+    #[test]
+    fn deserialize_chunk_malformed_json() {
+        let json = r#"{"not_valid": 42}"#;
+        let result = serde_json::from_str::<ChatCompletionChunk>(json);
+        assert!(result.is_err(), "Missing 'choices' should fail for chunk");
+    }
+
+    #[test]
+    fn deserialize_response_with_extra_fields_ignored() {
+        // Serde should ignore unknown fields by default
+        let json = r#"{"choices":[{"message":{"content":"ok"}}],"usage":{"total_tokens":42},"id":"chatcmpl-xyz"}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.choices[0].message.content.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn deserialize_chunk_with_extra_fields() {
+        let json = r#"{"choices":[{"delta":{"content":"hi"},"index":0,"finish_reason":null}],"id":"chunk-1"}"#;
+        let chunk: ChatCompletionChunk = serde_json::from_str(json).unwrap();
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn deserialize_error_response_empty_object() {
+        let json = r#"{}"#;
+        let resp: ApiErrorResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn deserialize_choices_wrong_type() {
+        let json = r#"{"choices":"not_an_array"}"#;
+        let result = serde_json::from_str::<ChatCompletionResponse>(json);
+        assert!(result.is_err(), "choices as string should fail");
+    }
+
+    #[test]
+    fn deserialize_content_with_special_json_chars() {
+        let json = r#"{"choices":[{"message":{"content":"line1\nline2\t\"quoted\""}}]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        let content = resp.choices[0].message.content.as_ref().unwrap();
+        assert!(content.contains("line1\nline2"));
+        assert!(content.contains("\"quoted\""));
+    }
+
+    #[test]
+    fn deserialize_content_with_unicode() {
+        let json = r#"{"choices":[{"message":{"content":"Hello \u4e16\u754c \ud83c\udf0d"}}]}"#;
+        let resp: ChatCompletionResponse = serde_json::from_str(json).unwrap();
+        let content = resp.choices[0].message.content.as_ref().unwrap();
+        assert!(content.contains('\u{4e16}')); // Chinese character
+    }
 }
