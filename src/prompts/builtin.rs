@@ -1132,6 +1132,127 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Writing",
             &["rfc", "technical writing", "proposal", "design doc", "architecture"],
         ),
+
+        // ── Rust (additional) ─────────────────────────────────────────────
+        p(
+            "Rust Error Handling",
+            "Design or improve error handling for Rust code",
+            "You are a Rust error handling expert. Design or improve error handling for the following code.\n\nApply Rust error handling best practices:\n\n1. ERROR TYPE DESIGN\n   - Custom error enum with thiserror for library code\n   - anyhow::Result for application code\n   - Specific variants for each failure mode\n   - Display and Error trait implementations\n   - From conversions for underlying errors\n\n2. PROPAGATION\n   - Use ? operator consistently\n   - Add context with .context() or .with_context()\n   - Never unwrap() outside tests\n   - Map errors at module boundaries\n\n3. RECOVERY\n   - Match on specific error variants for recovery\n   - Provide default values with unwrap_or / unwrap_or_else\n   - Retry transient failures\n   - Log and continue vs fail-fast decisions\n\n4. PATTERNS\n   - Result<T, E> for recoverable errors\n   - Option<T> for expected absence\n   - panic! only for programmer bugs (not runtime errors)\n   - #[must_use] on Result-returning functions\n   - Error chains that preserve root cause\n\nProvide the complete refactored code with proper error types, propagation, and handling.\n\n{{input}}",
+            "Rust",
+            &["rust", "error handling", "thiserror", "anyhow", "result"],
+        ),
+        p(
+            "Rust Async Patterns",
+            "Help with async and concurrent Rust code",
+            "You are a Rust async programming expert. Help with the following async/concurrent code.\n\nRust async best practices:\n\n1. RUNTIME\n   - tokio for I/O-bound work (networking, file I/O)\n   - rayon for CPU-bound parallelism\n   - Never mix blocking and async without spawn_blocking\n\n2. PATTERNS\n   - async fn returns impl Future (use Pin<Box<dyn Future>> for trait objects)\n   - tokio::select! for racing futures\n   - tokio::join! for concurrent execution\n   - Streams for async iteration (tokio-stream, futures::stream)\n   - Channels: mpsc for multi-producer, oneshot for single response, broadcast for fan-out\n\n3. COMMON ISSUES\n   - Send + Sync bounds for spawned tasks\n   - Holding locks across .await (use tokio::sync::Mutex, not std::sync::Mutex)\n   - Cancellation safety (what happens if a future is dropped?)\n   - Backpressure (bounded channels, semaphores)\n\n4. PERFORMANCE\n   - Avoid unnecessary allocations in hot async paths\n   - Use Arc for shared state across tasks\n   - Buffer I/O operations (BufReader, BufWriter)\n   - Connection pooling for database/HTTP\n\nProvide idiomatic async Rust code with proper error handling, cancellation safety, and performance considerations.\n\n{{input}}",
+            "Rust",
+            &["rust", "async", "tokio", "concurrency", "futures"],
+        ),
+        p(
+            "Rust CLI Application",
+            "Build or improve a Rust CLI application",
+            "You are a Rust CLI expert. Build or improve the following CLI application.\n\nRust CLI best practices:\n\nSTRUCTURE\n- clap v4 with derive macros for argument parsing\n- Subcommands for complex CLIs\n- Environment variable fallbacks for config\n- XDG-compliant paths (dirs crate)\n- Proper exit codes (0 success, 1 error, 2 usage)\n\nERROR HANDLING\n- anyhow for main(), thiserror for libraries\n- Color-coded error output (colored/owo-colors)\n- Helpful error messages with suggestions\n\nOUTPUT\n- stdout for data, stderr for diagnostics\n- --quiet flag to suppress non-essential output\n- --json flag for machine-readable output\n- Progress bars for long operations (indicatif)\n- Color support with auto-detection\n\nTESTING\n- Integration tests using assert_cmd\n- Snapshot testing for output (insta)\n- Test both success and error paths\n\nDISTRIBUTION\n- cargo-dist or cross for cross-compilation\n- Shell completions (clap_complete)\n- Man page generation\n\n{{input}}",
+            "Rust",
+            &["rust", "cli", "clap", "terminal", "command-line"],
+        ),
+
+        // ── Python (NEW category) ─────────────────────────────────────────
+        p(
+            "Python Best Practices",
+            "Write or review Python code using modern best practices",
+            "You are a senior Python developer. Write or review the following Python code using modern best practices.\n\nApply these Python standards:\n\nCODE QUALITY\n- Type hints on all function signatures (PEP 484)\n- Dataclasses or Pydantic for data structures\n- List comprehensions over map/filter where readable\n- f-strings for formatting (not .format() or %)\n- pathlib.Path over os.path\n- Context managers for resources (with statement)\n\nSTRUCTURE\n- __init__.py for packages\n- __main__.py for runnable packages\n- Separate concerns: models, services, utils\n- Abstract base classes for interfaces\n- Property decorators for computed attributes\n\nERROR HANDLING\n- Specific exception types (not bare except:)\n- Custom exception hierarchy for the project\n- try/except at the right level (not too broad, not too narrow)\n- Logging exceptions with exc_info=True\n\nTESTING\n- pytest (not unittest)\n- Fixtures for setup/teardown\n- Parametrize for multiple test cases\n- Mock external dependencies\n- Coverage target: 80%+\n\nTOOLING\n- pyproject.toml for project config\n- ruff for linting and formatting\n- mypy for type checking\n- pre-commit hooks\n\n{{input}}",
+            "Python",
+            &["python", "best practices", "type hints", "pytest", "ruff"],
+        ),
+        p(
+            "Python FastAPI Service",
+            "Build or improve a FastAPI service",
+            "You are a FastAPI expert. Build or improve the following API service.\n\nFastAPI best practices:\n\nSTRUCTURE\n- app/main.py \u{2014} App factory, middleware, exception handlers\n- app/routers/ \u{2014} Route modules grouped by domain\n- app/models/ \u{2014} Pydantic models (request, response, database)\n- app/services/ \u{2014} Business logic (not in routes)\n- app/dependencies.py \u{2014} Dependency injection\n- app/config.py \u{2014} Settings with pydantic-settings\n\nPATTERNS\n- Dependency injection for database sessions, auth, config\n- Response models for every endpoint (not raw dicts)\n- Status codes: 200 OK, 201 Created, 204 No Content, 400 Bad Request, 404 Not Found\n- Pagination with limit/offset or cursor\n- Background tasks for non-blocking operations\n- Lifespan events for startup/shutdown\n\nSECURITY\n- OAuth2 with JWT tokens (python-jose)\n- Password hashing (passlib with bcrypt)\n- CORS middleware configured for production\n- Rate limiting (slowapi)\n- Input validation via Pydantic (automatic)\n\nTESTING\n- TestClient for integration tests\n- pytest-asyncio for async tests\n- Factory functions for test data\n- Database fixtures with transaction rollback\n\n{{input}}",
+            "Python",
+            &["python", "fastapi", "api", "pydantic", "async"],
+        ),
+
+        // ── TypeScript (NEW category) ─────────────────────────────────────
+        p(
+            "TypeScript Best Practices",
+            "Write or review TypeScript code using modern best practices",
+            "You are a senior TypeScript developer. Write or review the following TypeScript code.\n\nTypeScript best practices:\n\nTYPE SYSTEM\n- Strict mode enabled (strict: true in tsconfig)\n- No any \u{2014} use unknown for truly unknown types\n- Discriminated unions over type assertions\n- Utility types: Partial, Required, Pick, Omit, Record\n- Generic constraints for reusable functions\n- Branded types for type-safe IDs\n\nPATTERNS\n- Immutable by default (readonly, as const)\n- Exhaustive switch with never type\n- Result pattern for error handling (or neverthrow)\n- Builder pattern with method chaining\n- Dependency injection (tsyringe or manual)\n\nCODE QUALITY\n- Named exports over default exports\n- Barrel files (index.ts) for clean imports\n- ESM modules (import/export, not require)\n- Null coalescing (??) and optional chaining (?.)\n- Template literal types for string patterns\n\nTOOLING\n- Biome or ESLint + Prettier\n- Path aliases in tsconfig\n- Strict null checks\n- No implicit any\n- Source maps for debugging\n\n{{input}}",
+            "TypeScript",
+            &["typescript", "types", "strict", "eslint", "tsconfig"],
+        ),
+        p(
+            "React Component",
+            "Build or review a React component with modern patterns",
+            "You are a senior React developer. Build or review the following React component.\n\nReact best practices (2025):\n\nCOMPONENT DESIGN\n- Function components only (no class components)\n- Server Components by default, 'use client' only when needed\n- Custom hooks for reusable logic\n- Composition over inheritance\n- Single responsibility (one component = one job)\n\nSTATE MANAGEMENT\n- useState for local state\n- useReducer for complex state logic\n- Context for truly global state (theme, auth, locale)\n- URL state for shareable state (search params)\n- Server state with React Query / SWR (not Redux for API data)\n\nPERFORMANCE\n- React.memo only for measured bottlenecks\n- useMemo/useCallback only when passing to memoized children\n- Lazy loading with React.lazy + Suspense\n- Virtual lists for long lists (react-window)\n- Image optimization (next/image or similar)\n\nPATTERNS\n- Controlled forms (react-hook-form for complex forms)\n- Error boundaries for graceful failure\n- Loading/error/empty states for every async component\n- Accessibility: semantic HTML, ARIA, keyboard nav, focus management\n- Testing: React Testing Library (test behavior, not implementation)\n\nProvide the complete component with TypeScript types, proper hooks, and tests.\n\n{{input}}",
+            "TypeScript",
+            &["react", "typescript", "component", "hooks", "jsx"],
+        ),
+
+        // ── Go (NEW category) ─────────────────────────────────────────────
+        p(
+            "Go Best Practices",
+            "Write or review Go code using idiomatic patterns",
+            "You are a senior Go developer. Write or review the following Go code using idiomatic patterns.\n\nGo best practices:\n\nSTRUCTURE\n- cmd/ for binaries, pkg/ or internal/ for libraries\n- One package = one responsibility\n- Accept interfaces, return structs\n- Short variable names in small scopes, descriptive in larger ones\n- Package names: lowercase, single word, no underscores\n\nERROR HANDLING\n- Always check errors (never _ = err)\n- Wrap errors with fmt.Errorf(%w) for context\n- Custom error types for sentinel errors\n- errors.Is() and errors.As() for checking\n- Don't panic in libraries\n\nCONCURRENCY\n- Share by communicating (channels), don't communicate by sharing (mutexes)\n- goroutines are cheap \u{2014} use them freely\n- Always handle goroutine lifecycle (context.Context for cancellation)\n- sync.WaitGroup for fan-out patterns\n- errgroup for concurrent error handling\n\nPATTERNS\n- Table-driven tests\n- Functional options for configuration\n- Context propagation through all layers\n- Graceful shutdown with signal handling\n- Structured logging (slog in stdlib)\n\nPERFORMANCE\n- Preallocate slices when length is known (make([]T, 0, n))\n- strings.Builder for string concatenation\n- sync.Pool for frequently allocated objects\n- Avoid allocations in hot paths\n\n{{input}}",
+            "Go",
+            &["go", "golang", "idiomatic", "concurrency", "goroutines"],
+        ),
+
+        // ── Cloud (2) ─────────────────────────────────────────────────────
+        p(
+            "AWS Architecture",
+            "Design a production-ready AWS architecture for given requirements",
+            "You are an AWS Solutions Architect. Design a production-ready AWS architecture for the following requirements.\n\nInclude these AWS components as needed:\n\nCOMPUTE: Lambda, ECS/Fargate, EC2, App Runner\nSTORAGE: S3, EBS, EFS, DynamoDB, RDS, ElastiCache\nNETWORKING: VPC, subnets, security groups, ALB/NLB, CloudFront, Route 53\nSECURITY: IAM roles/policies, Secrets Manager, KMS, WAF, GuardDuty\nOBSERVABILITY: CloudWatch (logs, metrics, alarms), X-Ray, CloudTrail\nMESSAGING: SQS, SNS, EventBridge, Kinesis\nCI/CD: CodePipeline, CodeBuild, or GitHub Actions with OIDC\n\nFor the design, provide:\n1. Architecture diagram description (components and data flow)\n2. Infrastructure as Code (CDK or Terraform) for key resources\n3. Cost estimate (monthly, at expected scale)\n4. Security considerations (least privilege, encryption, network isolation)\n5. Scalability approach (auto-scaling, caching, read replicas)\n6. Disaster recovery (backup, multi-AZ, RTO/RPO)\n7. Monitoring and alerting strategy\n\n{{input}}",
+            "Cloud",
+            &["aws", "cloud architecture", "infrastructure", "solutions architect"],
+        ),
+        p(
+            "Terraform Module",
+            "Write a production-ready Terraform module for infrastructure",
+            "You are an infrastructure engineer. Write a production-ready Terraform module for the following infrastructure.\n\nTerraform best practices:\n- Modular design (reusable, composable)\n- All values parameterized (no hardcoded IDs, regions, or names)\n- Sensible defaults for optional variables\n- Output all resource IDs and endpoints\n- Use data sources for existing resources\n- Lifecycle rules for prevent_destroy on stateful resources\n- Tags for cost allocation and ownership\n\nInclude:\n1. main.tf \u{2014} Core resources\n2. variables.tf \u{2014} All input variables with descriptions and types\n3. outputs.tf \u{2014} All outputs\n4. versions.tf \u{2014} Required provider versions\n5. README.md \u{2014} Usage example with variable descriptions\n6. examples/ \u{2014} At least one complete usage example\n\nSecurity:\n- Encryption at rest and in transit\n- Least privilege IAM policies\n- Security groups with minimal open ports\n- No public access unless explicitly required\n\n{{input}}",
+            "Cloud",
+            &["terraform", "infrastructure as code", "iac", "modules"],
+        ),
+
+        // ── Security (2) ──────────────────────────────────────────────────
+        p(
+            "Security Review",
+            "Perform a thorough security review of code or a system",
+            "You are a senior application security engineer. Perform a thorough security review of the following code or system.\n\nREVIEW METHODOLOGY:\n\n1. AUTHENTICATION & AUTHORIZATION\n   - Auth mechanism (JWT, sessions, OAuth2, API keys)\n   - Token storage and transmission security\n   - Session management (expiry, rotation, invalidation)\n   - Role-based access control (RBAC) implementation\n   - Privilege escalation vectors\n\n2. INPUT VALIDATION\n   - All user inputs validated and sanitized\n   - SQL injection (parameterized queries, ORMs)\n   - XSS (output encoding, CSP headers)\n   - Command injection (no shell execution of user input)\n   - Path traversal (canonicalize paths, allowlist directories)\n   - SSRF (allowlist URLs, no user-controlled redirects)\n\n3. DATA PROTECTION\n   - Sensitive data encrypted at rest (AES-256, KMS)\n   - TLS for all data in transit\n   - PII handling (minimization, pseudonymization)\n   - Secrets management (not in code, env vars, or logs)\n   - Password hashing (bcrypt/argon2, not MD5/SHA)\n\n4. API SECURITY\n   - Rate limiting and throttling\n   - Request size limits\n   - CORS configuration (not wildcard *)\n   - API versioning and deprecation\n   - Error messages don't leak internals\n\n5. DEPENDENCY SECURITY\n   - Known vulnerabilities in dependencies\n   - Dependency pinning and lock files\n   - Supply chain risks\n\nFor each finding, provide:\n- Severity: CRITICAL / HIGH / MEDIUM / LOW\n- Location (file, line, function)\n- Description of the vulnerability\n- Proof of concept (how to exploit)\n- Recommended fix with code\n\n{{input}}",
+            "Security",
+            &["security review", "appsec", "vulnerability", "audit", "code review"],
+        ),
+        p(
+            "Threat Model",
+            "Create a STRIDE threat model for a system",
+            "You are a threat modeling expert using the STRIDE methodology. Create a threat model for the following system.\n\nTHREAT MODEL:\n\n1. SYSTEM DESCRIPTION\n   - Architecture overview\n   - Trust boundaries (where data crosses security domains)\n   - Data flows (what data moves where)\n   - Entry points (APIs, UIs, file uploads, message queues)\n   - Assets (what we're protecting: user data, credentials, business logic)\n\n2. STRIDE ANALYSIS\n   For each component/data flow:\n\n   | Threat | Category | Description | Likelihood | Impact | Mitigation |\n   \n   STRIDE categories:\n   - Spoofing: Can someone pretend to be another user/system?\n   - Tampering: Can someone modify data in transit or at rest?\n   - Repudiation: Can someone deny performing an action?\n   - Information Disclosure: Can someone access data they shouldn't?\n   - Denial of Service: Can someone prevent legitimate access?\n   - Elevation of Privilege: Can someone gain unauthorized permissions?\n\n3. RISK ASSESSMENT\n   | Risk | Probability (1-5) | Impact (1-5) | Risk Score | Priority |\n   \n4. MITIGATION PLAN\n   For each high-priority risk:\n   - Control type (preventive, detective, corrective)\n   - Implementation approach\n   - Residual risk after mitigation\n\n5. SECURITY REQUIREMENTS\n   - Authentication requirements\n   - Authorization requirements\n   - Encryption requirements\n   - Logging and monitoring requirements\n   - Incident response considerations\n\n{{input}}",
+            "Security",
+            &["threat model", "stride", "risk assessment", "security architecture"],
+        ),
+
+        // ── API (2) ───────────────────────────────────────────────────────
+        p(
+            "REST API Design",
+            "Design a RESTful API for given requirements",
+            "You are an API architect. Design a RESTful API for the following requirements.\n\nAPI DESIGN PRINCIPLES:\n- Resource-oriented URLs (/users, /users/{id}, /users/{id}/orders)\n- HTTP methods: GET (read), POST (create), PUT (full update), PATCH (partial update), DELETE\n- Consistent naming: plural nouns, kebab-case, no verbs in URLs\n- Versioning: URL path (/v1/) or header (Accept-Version)\n\nFor each endpoint provide:\n\nENDPOINT SPECIFICATION:\n```\nMETHOD /path\nDescription: What it does\nAuth: Required/Optional (Bearer token, API key)\nRate Limit: X requests/minute\n\nRequest:\n  Headers: Content-Type, Authorization\n  Path params: id (uuid)\n  Query params: page, limit, sort, filter\n  Body: { JSON schema with types }\n\nResponse 200:\n  { JSON schema }\n\nResponse 400: { error: { code, message, details[] } }\nResponse 401: { error: { code: \"unauthorized\" } }\nResponse 404: { error: { code: \"not_found\" } }\n```\n\nPAGINATION:\n- Cursor-based for real-time data, offset-based for static\n- Response includes: data[], meta { total, page, limit, next_cursor }\n\nERROR FORMAT:\n- Consistent error envelope: { error: { code, message, details, request_id } }\n- Machine-readable codes (not just HTTP status)\n- Human-readable messages (no stack traces)\n\nDOCUMENTATION:\n- OpenAPI 3.1 specification\n- Example requests and responses\n- Authentication guide\n- Rate limiting policy\n\n{{input}}",
+            "API",
+            &["rest", "api design", "endpoints", "openapi", "http"],
+        ),
+        p(
+            "GraphQL Schema",
+            "Design a GraphQL schema and resolvers for given requirements",
+            "You are a GraphQL architect. Design a GraphQL schema and resolvers for the following requirements.\n\nSCHEMA DESIGN:\n- Types for all entities with proper relationships\n- Input types for mutations (separate from output types)\n- Enums for fixed sets of values\n- Interfaces for shared fields\n- Unions for polymorphic returns\n- Custom scalars for DateTime, JSON, URL\n\nQUERIES:\n- List queries with filtering, sorting, pagination (cursor-based)\n- Single item queries by ID\n- Nested relationship resolution\n- Computed/derived fields\n\nMUTATIONS:\n- Create, update, delete for each entity\n- Input validation (required fields, length limits, format)\n- Return the mutated object (not just success/failure)\n- Optimistic locking where needed\n\nPERFORMANCE:\n- DataLoader for N+1 query prevention\n- Query complexity analysis and limits\n- Persisted queries for production\n- Field-level authorization\n\nProvide: SDL schema, resolver implementations, and example queries.\n\n{{input}}",
+            "API",
+            &["graphql", "schema", "resolvers", "api"],
+        ),
+
+        // ── Database (1) ──────────────────────────────────────────────────
+        p(
+            "Database Design",
+            "Design a database schema for given requirements",
+            "You are a database architect. Design a database schema for the following requirements.\n\nDATABASE DESIGN:\n\n1. ENTITY-RELATIONSHIP MODEL\n   - Entities with all attributes and types\n   - Relationships with cardinality (1:1, 1:N, M:N)\n   - Primary keys (prefer UUID or ULID over auto-increment for distributed systems)\n   - Foreign keys with referential integrity\n\n2. SCHEMA (SQL DDL)\n   - CREATE TABLE statements with proper types\n   - Constraints: NOT NULL, UNIQUE, CHECK, DEFAULT\n   - Indexes for query patterns (B-tree for equality/range, GIN for arrays/JSONB)\n   - Partial indexes where appropriate\n\n3. NORMALIZATION\n   - At least 3NF for transactional data\n   - Controlled denormalization for read-heavy patterns\n   - Materialized views for complex aggregations\n\n4. PERFORMANCE\n   - Index strategy based on expected query patterns\n   - Partition strategy for large tables (by date, tenant, etc.)\n   - Connection pooling recommendations\n   - Query optimization notes\n\n5. MIGRATION\n   - Migration scripts (up and down)\n   - Seed data for development\n   - Zero-downtime migration strategy\n\n6. SECURITY\n   - Row-level security for multi-tenant\n   - Column encryption for sensitive data\n   - Audit trail (created_at, updated_at, created_by)\n\n{{input}}",
+            "Database",
+            &["database", "schema design", "sql", "data modeling", "migration"],
+        ),
     ]
 }
 
@@ -1145,8 +1266,8 @@ mod tests {
         let prompts = builtin_prompts();
         assert!(!prompts.is_empty());
         assert!(
-            prompts.len() >= 109,
-            "Expected at least 109 prompts, got {}",
+            prompts.len() >= 124,
+            "Expected at least 124 prompts, got {}",
             prompts.len()
         );
     }
@@ -1214,6 +1335,13 @@ mod tests {
             "Personal",
             "UI/UX",
             "Testing",
+            "Python",
+            "TypeScript",
+            "Go",
+            "Cloud",
+            "Security",
+            "API",
+            "Database",
         ] {
             assert!(
                 categories.contains(expected),
