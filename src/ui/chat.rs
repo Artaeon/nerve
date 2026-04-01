@@ -167,6 +167,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             let commands = [
                 ("/help", "Show all slash commands"),
                 ("/agent on", "Enable coding agent"),
+                ("/mode", "Switch smart mode"),
                 ("/usage", "Show API cost & token usage"),
                 ("/branch save", "Save conversation branch"),
                 ("/url", "Scrape a webpage for context"),
@@ -180,7 +181,114 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 ]));
             }
 
+            // Getting Started tips
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "   Getting Started",
+                section_style,
+            )));
+            lines.push(Line::from(Span::styled(
+                "   \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+
+            // Tip 1
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "   1. ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Add file context before asking questions:",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "      /file src/main.rs  then ask your question",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+
+            // Tip 2
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "   2. ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Use @file in messages to auto-include code:",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "      \"review @src/auth.rs for security issues\"",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+
+            // Tip 3
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "   3. ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Run tests and ask about failures:",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "      /test  then \"why did test_auth fail?\"",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+
+            // Tip 4
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "   4. ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Enable agent mode for autonomous coding:",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "      /agent on  then describe the task",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+
+            // Tip 5
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "   5. ",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "Use /mode to optimize for your use case:",
+                    Style::default().fg(Color::White),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "      /mode efficient (saves tokens) | /mode thorough (detailed)",
+                Style::default().fg(Color::DarkGray),
+            )));
+
             if let Some(ref ws) = app.detected_workspace {
+                lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled("   Project", section_style)));
                 lines.push(Line::from(Span::styled(
                     format!("   {ws}"),
@@ -434,7 +542,22 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
 
     // ── Compute scroll ──────────────────────────────────────────────────
-    let total_lines = lines.len() as u16;
+    // We need to estimate the WRAPPED line count, not the logical line count,
+    // because Paragraph::scroll operates on wrapped lines when Wrap is enabled.
+    let content_width = area.width.saturating_sub(4) as usize; // account for borders + padding
+    let total_lines: u16 = lines
+        .iter()
+        .map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if line_width == 0 {
+                1u16 // Empty lines still take 1 row
+            } else {
+                // Ceiling division: how many rows this line takes when wrapped
+                ((line_width as f64 / content_width.max(1) as f64).ceil() as u16).max(1)
+            }
+        })
+        .sum();
+
     let visible_lines = area.height.saturating_sub(2); // account for block borders
     let max_scroll = total_lines.saturating_sub(visible_lines);
 
