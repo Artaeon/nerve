@@ -188,11 +188,23 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         // Compute relative timestamp
         let time_ago = format_time_ago(now, conversation.created_at, idx, msg_count);
 
+        // Message number counting from bottom (1 = last message)
+        let msg_number = msg_count - idx;
+        let number_badge = if msg_number <= 9 {
+            Span::styled(
+                format!(" {} ", msg_number),
+                Style::default().fg(Color::DarkGray),
+            )
+        } else {
+            Span::styled("   ", Style::default())
+        };
+
         match role.as_str() {
             "user" => {
                 // Header with badge and timestamp
                 lines.push(Line::from(vec![
                     gutter.clone(),
+                    number_badge.clone(),
                     Span::styled(
                         "  You  ",
                         Style::default()
@@ -221,6 +233,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 // Header with badge and timestamp
                 lines.push(Line::from(vec![
                     gutter.clone(),
+                    number_badge.clone(),
                     Span::styled(
                         "  AI  ",
                         Style::default()
@@ -246,6 +259,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 // System / unknown role — subtle italic amber text.
                 lines.push(Line::from(vec![
                     gutter.clone(),
+                    number_badge.clone(),
                     Span::styled(
                         "  \u{2014} ",
                         Style::default()
@@ -560,6 +574,41 @@ fn format_markdown_line(text_line: &str) -> Line<'static> {
         ));
     }
 
+    // ── Blockquotes: `> text` ──────────────────────────────────────
+    if let Some(rest) = trimmed.strip_prefix("> ") {
+        return Line::from(vec![
+            Span::styled(
+                "   \u{2502} ".to_string(),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ]);
+    }
+    // Bare blockquote marker with no content
+    if trimmed == ">" {
+        return Line::from(Span::styled(
+            "   \u{2502}".to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    // ── Horizontal rules: `---`, `***`, `___` ──────────────────────
+    if (trimmed == "---" || trimmed == "***" || trimmed == "___")
+        && trimmed.len() >= 3
+    {
+        return Line::from(Span::styled(
+            format!("   {}", "\u{2500}".repeat(40)),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
+
     // ── Unordered list items: `- item` or `* item` ──────────────────
     if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
         let mut spans = vec![Span::styled(
@@ -693,6 +742,50 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
                     ));
                     return spans;
                 }
+            }
+            // ── Links: [text](url) ──────────────────────────────
+            '[' => {
+                // Try to parse a markdown link: [text](url)
+                if let Some(close_bracket) = text[i + 1..].find(']') {
+                    let link_text_end = i + 1 + close_bracket;
+                    if text[link_text_end..].starts_with("](") {
+                        if let Some(close_paren) = text[link_text_end + 2..].find(')') {
+                            let url_end = link_text_end + 2 + close_paren;
+                            let link_text = &text[i + 1..link_text_end];
+                            let url = &text[link_text_end + 2..url_end];
+                            // Flush plain text accumulated so far.
+                            if i > plain_start {
+                                spans.push(Span::styled(
+                                    text[plain_start..i].to_string(),
+                                    Style::default().fg(Color::White),
+                                ));
+                            }
+                            spans.push(Span::styled(
+                                link_text.to_string(),
+                                Style::default()
+                                    .fg(Color::Blue)
+                                    .add_modifier(Modifier::UNDERLINED),
+                            ));
+                            spans.push(Span::styled(
+                                format!(" ({})", url),
+                                Style::default()
+                                    .fg(Color::DarkGray)
+                                    .add_modifier(Modifier::DIM),
+                            ));
+                            // Advance the char iterator past the entire link
+                            while let Some(&(pos, _)) = chars.peek() {
+                                if pos > url_end {
+                                    break;
+                                }
+                                chars.next();
+                            }
+                            plain_start = url_end + 1;
+                            continue;
+                        }
+                    }
+                }
+                // Not a valid link — treat as plain text
+                chars.next();
             }
             // ── Inline code: `code` → ` code ` with padding ─────
             '`' => {
