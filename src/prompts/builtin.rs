@@ -1003,6 +1003,135 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Personal",
             &["decision", "framework", "strategy", "analysis"],
         ),
+
+        // ── UI/UX (8) ─────────────────────────────────────────────────────
+        p(
+            "Apple Design System",
+            "Design or review an interface using Apple's Human Interface Guidelines",
+            "You are a senior designer deeply versed in Apple's Human Interface Guidelines (HIG). Design or review the following interface using Apple's design principles.\n\nApply these Apple design principles:\n1. CLARITY — Content is the focus. Use San Francisco font family, generous whitespace, system colors. Avoid unnecessary decoration.\n2. DEFERENCE — Fluid motion, crisp graphics. The UI helps users understand content without competing with it.\n3. DEPTH — Visual layers and realistic motion create hierarchy. Use translucency, shadows, and parallax.\n4. CONSISTENCY — Familiar controls, standard gestures, predictable behavior. Follow SF Symbols for iconography.\n\nPlatform-specific guidelines:\n- iOS: Bottom tab bar navigation, large titles, haptic feedback, swipe gestures, safe area insets\n- macOS: Menu bar, toolbar, sidebar navigation, keyboard shortcuts, hover states, window resizing\n- Both: Dynamic Type, Dark Mode support, accessibility (VoiceOver), SF Symbols, system colors\n\nDesign deliverables:\n- Component hierarchy and layout description\n- Color usage (system colors, semantic colors)\n- Typography (SF Pro, SF Mono, size scale)\n- Spacing and sizing (8pt grid system)\n- Interaction patterns and animations\n- Accessibility considerations\n- Dark/Light mode variants\n\n{{input}}",
+            "UI/UX",
+            &["apple", "hig", "ios", "macos", "design system"],
+        ),
+        p(
+            "Material Design (Google)",
+            "Design or review an interface using Google's Material Design 3",
+            "You are a designer expert in Google's Material Design 3 (Material You). Design or review the following interface using Material Design principles.\n\nApply Material Design 3 principles:\n1. PERSONAL — Dynamic color from user's wallpaper, expressive yet functional\n2. ADAPTIVE — Responsive layouts across phone, tablet, desktop, foldable\n3. UNIFIED — Consistent cross-platform experience with platform-appropriate patterns\n\nKey Material 3 components and patterns:\n- Navigation: Bottom bar (3-5 items), Navigation rail (tablets), Navigation drawer (desktop)\n- Surfaces: Cards, sheets, dialogs with elevation and tonal color\n- Typography: Roboto/Google Sans, 5 roles (Display, Headline, Title, Body, Label) with 3 sizes each\n- Color: Primary, secondary, tertiary, error + surface, outline, inverse roles\n- Shape: Rounded corners (4-28dp scale), container shapes\n- Motion: Emphasized easing, 300ms standard duration, shared element transitions\n- Icons: Material Symbols (outlined, rounded, or sharp)\n\nYour design must include:\n- Layout grid (columns, margins, gutters) for target screen sizes\n- Color scheme using Material 3 token system\n- Component selection with proper states (enabled, hovered, focused, pressed, disabled)\n- Elevation hierarchy (0dp to 5dp levels)\n- Responsive breakpoints (compact, medium, expanded)\n- Touch targets (minimum 48dp)\n- Dark theme variant\n\n{{input}}",
+            "UI/UX",
+            &["material design", "google", "android", "material you"],
+        ),
+        p(
+            "Minimal Scandinavian UI",
+            "Create a clean, functional interface following Nordic design principles",
+            "You are a designer specializing in Scandinavian minimalist design. Create a clean, functional interface following Nordic design principles.\n\nScandinavian design principles:\n1. SIMPLICITY — Remove everything that isn't essential. Every element must earn its place.\n2. FUNCTIONALITY — Form follows function. Beauty comes from purpose, not decoration.\n3. LIGHT & SPACE — Generous whitespace, light backgrounds, natural breathing room.\n4. NATURAL MATERIALS — Warm neutrals, muted earth tones, organic shapes.\n5. DEMOCRATIC DESIGN — Accessible to everyone, intuitive without instruction.\n\nDesign specifications:\n- Color palette: White/off-white base (#FAFAFA), warm grays, one accent color (muted), black for text\n- Typography: Clean sans-serif (Inter, Instrument Sans, or similar), large body text (16-18px), generous line height (1.6-1.8)\n- Spacing: 8px base unit, generous margins (32-64px), visible breathing room between sections\n- Components: Borderless inputs, subtle hover states, understated buttons, no gradients\n- Imagery: High-quality photography, desaturated, natural subjects\n- Animation: Subtle, purposeful, 200-300ms, ease-out timing\n- Layout: Single-column where possible, maximum content width (680-720px for text)\n- No: Shadows heavier than 2px, bright colors, decorative elements, complex animations, rounded corners > 8px\n\n{{input}}",
+            "UI/UX",
+            &["scandinavian", "minimal", "nordic", "clean"],
+        ),
+        p(
+            "Dashboard Design",
+            "Design an effective, actionable data dashboard",
+            "You are a data visualization and dashboard design expert. Design an effective, actionable dashboard for the following requirements.\n\nDashboard design framework:\n\n1. INFORMATION HIERARCHY\n   - KPIs first: 3-5 key metrics prominently displayed at the top\n   - Supporting charts: arranged by importance, left-to-right, top-to-bottom\n   - Detail tables: expandable, below the fold\n   - Filters: sidebar or top bar, always visible\n\n2. CHART SELECTION\n   - Trends over time \u{2192} Line chart\n   - Part-to-whole \u{2192} Donut/pie (max 6 segments) or stacked bar\n   - Comparison \u{2192} Horizontal bar chart\n   - Distribution \u{2192} Histogram or box plot\n   - Correlation \u{2192} Scatter plot\n   - Geographic \u{2192} Map with heat overlay\n   - Single KPI \u{2192} Number with sparkline and trend indicator\n\n3. VISUAL DESIGN\n   - Grid: 12-column, cards with subtle borders\n   - Colors: Sequential palette for magnitude, categorical for groups (max 6-8 colors)\n   - Typography: Tabular numerals, monospace for numbers, clear hierarchy\n   - White space: Minimum 16px between cards\n   - Responsive: Collapse to stacked layout on mobile\n\n4. INTERACTIVITY\n   - Cross-filtering: clicking one chart filters others\n   - Drill-down: click KPI to see breakdown\n   - Time range selector: presets (Today, 7d, 30d, 90d, YTD, Custom)\n   - Export: CSV, PDF, share link\n   - Tooltips: on hover, showing exact values\n\n5. ACCESSIBILITY\n   - Color-blind safe palette\n   - Screen reader labels for all charts\n   - Keyboard navigation for filters and controls\n\nProvide: layout wireframe description, chart specifications, color palette, component list, and interaction flows.\n\n{{input}}",
+            "UI/UX",
+            &["dashboard", "data visualization", "charts", "analytics"],
+        ),
+        p(
+            "Mobile App Design",
+            "Design a mobile application with a focus on usability and delight",
+            "You are a senior mobile app designer. Design the following mobile application with a focus on usability and delight.\n\nMobile design principles:\n1. THUMB-FRIENDLY — Primary actions in the bottom 60% of screen. Navigation at bottom.\n2. PROGRESSIVE DISCLOSURE — Show only what's needed. Reveal complexity on demand.\n3. FEEDBACK — Every tap gets a response (haptic, visual, audio). Loading states for all async operations.\n4. OFFLINE-FIRST — Design for intermittent connectivity. Show cached data, queue actions.\n\nYour design must include:\n\nNAVIGATION STRUCTURE\n- Primary navigation (bottom tab bar: max 5 items)\n- Secondary navigation (within each tab)\n- Screen flow diagram\n\nSCREEN DESIGNS (for each key screen)\n- Layout description (component placement, spacing)\n- Component states (default, loading, empty, error, success)\n- Gestures (swipe, long-press, pull-to-refresh)\n- Transitions between screens\n\nDESIGN TOKENS\n- Colors: primary, secondary, background, surface, error, text hierarchy\n- Typography: scale from 12-34sp, weights\n- Spacing: 4/8/12/16/24/32/48px scale\n- Border radius: 4/8/12/16/24px\n- Elevation: 3 levels (low, medium, high)\n\nPATTERNS\n- Lists (with pull-to-refresh, infinite scroll, empty state)\n- Forms (with validation, keyboard type per field)\n- Modals and sheets (bottom sheet preferred over modal)\n- Search (with recent, suggestions, filters)\n- Onboarding (max 3 screens)\n\nPLATFORM CONSIDERATIONS\n- iOS: Safe area, notch, Dynamic Island, SF Symbols\n- Android: Material 3, edge-to-edge, predictive back\n\n{{input}}",
+            "UI/UX",
+            &["mobile", "app design", "ios", "android", "usability"],
+        ),
+        p(
+            "Landing Page Design",
+            "Design a high-converting landing page for a product or service",
+            "You are a conversion-focused web designer. Design a high-converting landing page for the following product or service.\n\nLanding page design framework:\n\nABOVE THE FOLD (first viewport)\n- Hero: Large headline (benefit-focused, 4-8 words), subheadline (1 sentence), primary CTA button\n- Visual: Product screenshot, illustration, or hero image (not stock photos)\n- Social proof: Logo bar or trust badge strip\n- No navigation menu (single CTA focus)\n\nSECTIONS (in order)\n1. Problem statement \u{2014} 3 pain points with icons\n2. Solution \u{2014} How the product solves each pain point\n3. Features \u{2192} Benefits \u{2014} 3-6 features, each with benefit statement\n4. Social proof \u{2014} Testimonials (photo, name, role, quote), case study metrics\n5. How it works \u{2014} 3-step visual process\n6. Pricing (if applicable) \u{2014} Max 3 tiers, highlight recommended\n7. FAQ \u{2014} 5-7 questions in accordion\n8. Final CTA \u{2014} Restate the value proposition, urgency element\n\nDESIGN SPECIFICATIONS\n- Max width: 1200px content area\n- Typography: Large headlines (48-72px), readable body (18-20px), 1.6 line height\n- CTA buttons: High contrast, rounded, minimum 48px height, action verb text\n- Whitespace: 80-120px between sections\n- Color: One dominant brand color, one accent, neutral backgrounds\n- Mobile: All sections stack vertically, CTA stays visible (sticky or repeated)\n- Speed: Design for fast load (no heavy animations, optimized images, lazy load below fold)\n\nCONVERSION ELEMENTS\n- Above-fold CTA visible without scrolling\n- Social proof within 2 scrolls of CTA\n- Exit-intent elements (if appropriate)\n- Form fields minimized (name + email only for signups)\n- Trust signals near every CTA (guarantee, security badges)\n\n{{input}}",
+            "UI/UX",
+            &["landing page", "conversion", "web design", "cta"],
+        ),
+        p(
+            "Design Tokens",
+            "Create a comprehensive design token system for a project",
+            "You are a design systems engineer. Create a comprehensive design token system for the following project.\n\nDesign tokens are the atomic design decisions that form the foundation of a design system. Define all tokens for this project.\n\nTOKEN CATEGORIES:\n\n1. COLOR\n   - Primitives: Full color scales (50-950 for each hue)\n   - Semantic: primary, secondary, tertiary, error, warning, success, info\n   - Surface: background, surface, on-surface, outline, divider\n   - Interactive: hover, pressed, focused, disabled states\n   - Dark mode: All tokens must have dark mode variants\n   - Format: CSS custom properties AND JSON for tooling\n\n2. TYPOGRAPHY\n   - Font families: primary (sans), secondary (serif if needed), mono\n   - Size scale: xs(12), sm(14), base(16), lg(18), xl(20), 2xl(24), 3xl(30), 4xl(36), 5xl(48)\n   - Weight scale: light(300), regular(400), medium(500), semibold(600), bold(700)\n   - Line height: tight(1.25), normal(1.5), relaxed(1.75)\n   - Letter spacing: tight(-0.025em), normal(0), wide(0.025em)\n\n3. SPACING\n   - Scale: 0, 1(4px), 2(8px), 3(12px), 4(16px), 5(20px), 6(24px), 8(32px), 10(40px), 12(48px), 16(64px), 20(80px), 24(96px)\n   - Named: page-margin, section-gap, card-padding, input-padding, button-padding\n\n4. SIZING\n   - Icon sizes: sm(16), md(20), lg(24), xl(32)\n   - Avatar sizes: xs(24), sm(32), md(40), lg(48), xl(64)\n   - Touch targets: minimum 44px\n\n5. BORDER\n   - Width: thin(1px), medium(2px), thick(4px)\n   - Radius: none(0), sm(4px), md(8px), lg(12px), xl(16px), full(9999px)\n\n6. ELEVATION / SHADOW\n   - Level 1: 0 1px 2px rgba(0,0,0,0.05)\n   - Level 2: 0 4px 6px rgba(0,0,0,0.07)\n   - Level 3: 0 10px 15px rgba(0,0,0,0.1)\n\n7. MOTION\n   - Duration: fast(100ms), normal(200ms), slow(300ms), deliberate(500ms)\n   - Easing: ease-out, ease-in-out, spring\n   - Transitions: fade, slide, scale, collapse\n\nOutput format: Provide tokens in both CSS custom properties and JSON format.\n\n{{input}}",
+            "UI/UX",
+            &["design tokens", "design system", "css", "theming", "variables"],
+        ),
+        p(
+            "Figma Component Spec",
+            "Write a detailed component specification for design-to-development handoff",
+            "You are a design engineer who bridges design and development. Write a detailed component specification that a developer can implement exactly from your description.\n\nCOMPONENT SPECIFICATION:\n\n1. OVERVIEW\n   - Component name and purpose\n   - When to use (and when NOT to use)\n   - Related components\n\n2. ANATOMY\n   - Visual breakdown of all sub-elements\n   - Required vs optional elements\n   - Slot/content areas\n\n3. VARIANTS\n   - Size: sm, md, lg (with exact dimensions)\n   - State: default, hover, active, focused, disabled, loading, error\n   - Style: filled, outlined, ghost/text\n   - For each variant: exact colors, spacing, typography, border\n\n4. LAYOUT & SPACING\n   - Internal padding (per size variant)\n   - Gap between sub-elements\n   - Minimum/maximum width constraints\n   - Alignment rules\n\n5. INTERACTION\n   - Click/tap behavior\n   - Hover state transition (duration, easing)\n   - Focus ring style (for keyboard navigation)\n   - Loading state behavior\n   - Error state behavior\n\n6. RESPONSIVE BEHAVIOR\n   - How the component adapts at different breakpoints\n   - Touch vs pointer adaptations\n   - Minimum touch target size (44px)\n\n7. ACCESSIBILITY\n   - ARIA role and attributes\n   - Keyboard interaction pattern\n   - Screen reader announcement\n   - Focus management\n   - Color contrast requirements (4.5:1 for text)\n\n8. CODE REFERENCE\n   - Props/API surface\n   - Usage examples (3 common patterns)\n   - Edge cases to handle\n\n{{input}}",
+            "UI/UX",
+            &["component", "specification", "figma", "handoff", "design engineering"],
+        ),
+
+        // ── Testing (NEW category) ────────────────────────────────────────
+        p(
+            "Unit Test Suite",
+            "Write a comprehensive unit test suite for any code",
+            "You are a testing expert. Write a comprehensive unit test suite for the following code.\n\nFor EACH public function/method, write tests covering:\n\nHAPPY PATH\n- Normal inputs that should work correctly\n- Expected return values verified precisely\n\nEDGE CASES\n- Empty inputs (empty string, empty vec, zero, None)\n- Boundary values (0, 1, -1, MAX, MIN)\n- Maximum lengths and sizes\n- Unicode and special characters\n- Whitespace variations\n\nERROR CASES\n- Invalid inputs that should return errors\n- Null/None/nil handling\n- Type mismatches\n- Network/IO failures (if applicable)\n\nREGRESSION CASES\n- Bugs that were fixed (if mentioned)\n- Previously failing scenarios\n\nTest quality rules:\n- One assertion per test (focused, named tests)\n- Descriptive test names: test_<function>_<scenario>_<expected>\n- Arrange-Act-Assert pattern\n- No test interdependencies\n- Mock external dependencies\n- Tests should run in < 100ms each\n\nOutput: Complete test file with imports, helpers, and all test functions.\n\n{{input}}",
+            "Testing",
+            &["unit test", "test suite", "coverage", "assertions"],
+        ),
+        p(
+            "Integration Test Plan",
+            "Design a comprehensive integration test plan for a system or feature",
+            "You are a QA architect. Design a comprehensive integration test plan for the following system or feature.\n\nTEST PLAN STRUCTURE:\n\n1. SCOPE\n   - What is being tested (components, interfaces, data flows)\n   - What is NOT being tested (out of scope)\n   - Dependencies and prerequisites\n\n2. TEST ENVIRONMENT\n   - Required services and their versions\n   - Database setup (schema, seed data)\n   - External service mocks/stubs\n   - Configuration requirements\n\n3. TEST SCENARIOS (for each integration point)\n   | ID | Scenario | Input | Expected Output | Priority |\n   |---|---------|-------|----------------|----------|\n   \n   Cover:\n   - Happy path end-to-end flows\n   - Error propagation across services\n   - Timeout and retry behavior\n   - Concurrent access patterns\n   - Data consistency across services\n   - Authentication and authorization flows\n   - Rate limiting behavior\n\n4. DATA REQUIREMENTS\n   - Test fixtures (specific data needed)\n   - Data setup and teardown procedures\n   - Shared vs isolated test data\n\n5. AUTOMATION STRATEGY\n   - Which tests to automate first (ROI-based)\n   - Framework and tool recommendations\n   - CI/CD integration approach\n   - Reporting and alerting\n\n6. RISK ASSESSMENT\n   - Most likely failure points\n   - Hardest-to-test scenarios\n   - Monitoring gaps\n\n{{input}}",
+            "Testing",
+            &["integration test", "test plan", "qa", "automation", "scenarios"],
+        ),
+        p(
+            "E2E Test Script",
+            "Write end-to-end test scripts for user flows",
+            "You are a test automation engineer. Write end-to-end test scripts for the following user flows.\n\nFor each flow, write complete, runnable test code including:\n- Setup: User creation, data seeding, authentication\n- Steps: Each user action with assertions after each step\n- Teardown: Cleanup of created data\n- Screenshots/snapshots at key points\n- Retry logic for flaky interactions (network, animations)\n- Meaningful error messages on failure\n\nTest each flow for:\n- Happy path (everything works)\n- Validation errors (bad input)\n- Permission denied (unauthorized)\n- Network failure (offline/timeout)\n- Concurrent users (if applicable)\n\nBest practices:\n- Use page object pattern or similar abstraction\n- Wait for elements properly (no arbitrary sleeps)\n- Test IDs for reliable element selection\n- Independent tests (no order dependency)\n- Idempotent (can run multiple times)\n\n{{input}}",
+            "Testing",
+            &["e2e", "end-to-end", "automation", "user flows", "selenium"],
+        ),
+        p(
+            "Load Test Plan",
+            "Design a load testing strategy for a system",
+            "You are a performance engineer. Design a load testing strategy for the following system.\n\nLOAD TEST PLAN:\n\n1. OBJECTIVES\n   - Performance targets (response time P50, P95, P99)\n   - Throughput targets (requests/second)\n   - Concurrent user capacity\n   - Resource utilization limits (CPU, memory, connections)\n\n2. TEST TYPES\n   - Smoke test: 1-5 users, verify baseline (5 min)\n   - Load test: Expected load, sustained (30 min)\n   - Stress test: 150-200% of expected load (15 min)\n   - Spike test: Sudden burst (10x normal for 2 min)\n   - Soak test: Normal load for extended period (4-8 hours)\n\n3. SCENARIOS\n   For each critical user flow:\n   - Virtual user script (step by step)\n   - Think time between actions (realistic)\n   - Data parameterization\n   - Assertion thresholds\n\n4. INFRASTRUCTURE\n   - Load generator sizing and location\n   - Monitoring setup (APM, metrics, logs)\n   - Alerting thresholds during test\n\n5. ANALYSIS\n   - Key metrics to watch\n   - Bottleneck identification approach\n   - How to determine pass/fail\n   - Report template\n\n{{input}}",
+            "Testing",
+            &["load test", "performance", "stress test", "benchmarking", "capacity"],
+        ),
+
+        // ── Business (additional) ─────────────────────────────────────────
+        p(
+            "Strategic Plan",
+            "Develop a strategic plan for a business challenge",
+            "You are a management consultant at a top-tier firm. Develop a strategic plan for the following business challenge.\n\nSTRATEGIC PLAN:\n\n1. SITUATION ANALYSIS\n   - Current state assessment\n   - Market landscape (competitors, trends, disruptions)\n   - SWOT analysis (Strengths, Weaknesses, Opportunities, Threats)\n   - Key stakeholder map\n\n2. STRATEGIC VISION\n   - 3-year vision statement\n   - Strategic objectives (3-5, SMART format)\n   - Key results for each objective (OKRs)\n\n3. STRATEGIC OPTIONS\n   - Option A: [Description] \u{2014} Risk/Reward analysis\n   - Option B: [Description] \u{2014} Risk/Reward analysis\n   - Option C: [Description] \u{2014} Risk/Reward analysis\n   - Recommended option with justification\n\n4. EXECUTION PLAN\n   - Phase 1 (0-6 months): Quick wins and foundation\n   - Phase 2 (6-12 months): Core initiatives\n   - Phase 3 (12-36 months): Scale and optimize\n   - Resource requirements per phase\n\n5. FINANCIAL MODEL\n   - Investment required (headcount, technology, marketing)\n   - Revenue projections (conservative, base, optimistic)\n   - Break-even analysis\n   - Key financial assumptions\n\n6. RISK MITIGATION\n   - Top 5 execution risks\n   - Mitigation strategy for each\n   - Decision gates and pivot criteria\n\n7. GOVERNANCE\n   - Steering committee structure\n   - Review cadence (monthly, quarterly)\n   - Success metrics and reporting\n\n{{input}}",
+            "Business",
+            &["strategy", "strategic plan", "consulting", "vision", "execution"],
+        ),
+        p(
+            "Competitive Analysis",
+            "Conduct a thorough competitive analysis for a product or market",
+            "You are a market analyst. Conduct a thorough competitive analysis for the following product or market.\n\nCOMPETITIVE ANALYSIS:\n\n1. MARKET OVERVIEW\n   - Market size and growth rate\n   - Key market segments\n   - Industry trends and disruptions\n   - Regulatory considerations\n\n2. COMPETITOR PROFILES (for each major competitor)\n   | Dimension | Competitor A | Competitor B | You |\n   |-----------|-------------|-------------|-----|\n   | Positioning | | | |\n   | Target market | | | |\n   | Key features | | | |\n   | Pricing | | | |\n   | Revenue (est.) | | | |\n   | Team size (est.) | | | |\n   | Funding | | | |\n   | Strengths | | | |\n   | Weaknesses | | | |\n\n3. FEATURE COMPARISON MATRIX\n   | Feature | Us | Comp A | Comp B | Comp C |\n   (Rate: Yes/No/Partial, or 1-5 scale)\n\n4. DIFFERENTIATION ANALYSIS\n   - Our unique advantages\n   - Their unique advantages\n   - Parity features (table stakes)\n   - Gap analysis (what we're missing)\n\n5. STRATEGIC POSITIONING\n   - Positioning map (2x2 or perceptual map description)\n   - Recommended positioning statement\n   - Messaging differentiation\n\n6. OPPORTUNITIES\n   - Underserved segments\n   - Feature gaps to exploit\n   - Pricing opportunities\n   - Partnership possibilities\n\n{{input}}",
+            "Business",
+            &["competitive analysis", "market research", "competitors", "positioning"],
+        ),
+        p(
+            "OKR Framework",
+            "Create a comprehensive OKR framework for a team or initiative",
+            "You are an OKR coach who has helped hundreds of teams set effective goals. Create a comprehensive OKR framework for the following team or initiative.\n\nOKR FRAMEWORK:\n\nFor each Objective:\n- The Objective should be qualitative, inspiring, time-bound, and achievable\n- Write 3-5 Key Results that are quantitative, measurable, and ambitious (70% target confidence)\n\nCOMPANY/TEAM LEVEL:\n\nObjective 1: [Inspiring statement]\n  KR1: [Metric] from [X] to [Y] by [date]\n  KR2: [Metric] from [X] to [Y] by [date]\n  KR3: [Metric] from [X] to [Y] by [date]\n\nObjective 2: ...\nObjective 3: ...\n\nFor each KR, provide:\n- Current baseline value\n- Target value\n- How to measure it (data source, frequency)\n- Leading indicators to track weekly\n- Initiatives/projects that drive this KR\n\nALIGNMENT MAP:\n- How team OKRs connect to company OKRs\n- Cross-team dependencies\n- Shared KRs between teams\n\nCADENCE:\n- Annual: Company objectives\n- Quarterly: Team OKRs (set, review, score)\n- Weekly: Confidence updates (red/yellow/green)\n- Bi-weekly: 1:1 check-ins on KR progress\n\nSCORING GUIDE:\n- 0.0-0.3: Failed to make progress\n- 0.4-0.6: Made progress but fell short\n- 0.7-0.9: Delivered (sweet spot for stretch goals)\n- 1.0: Achieved 100% (goal may have been too easy)\n\n{{input}}",
+            "Business",
+            &["okr", "goals", "objectives", "key results", "planning"],
+        ),
+
+        // ── DevOps (additional) ───────────────────────────────────────────
+        p(
+            "Kubernetes Deployment",
+            "Design a production-ready Kubernetes deployment for an application",
+            "You are a Kubernetes platform engineer. Design a production-ready Kubernetes deployment for the following application.\n\nDEPLOYMENT SPECIFICATION:\n\n1. ARCHITECTURE\n   - Namespace strategy\n   - Service mesh requirements (if any)\n   - Ingress/load balancer configuration\n   - Network policies\n\n2. WORKLOAD DEFINITIONS\n   - Deployment manifests (replicas, strategy, pod spec)\n   - Resource requests and limits (CPU, memory)\n   - Liveness and readiness probes\n   - Pod disruption budgets\n   - Horizontal pod autoscaler configuration\n\n3. CONFIGURATION\n   - ConfigMaps for non-sensitive config\n   - Secrets management (sealed secrets, external secrets, vault)\n   - Environment variable mapping\n\n4. STORAGE\n   - PersistentVolumeClaims (if needed)\n   - Storage class selection\n   - Backup strategy\n\n5. OBSERVABILITY\n   - Prometheus metrics and ServiceMonitor\n   - Grafana dashboard specifications\n   - Log aggregation (format, labels)\n   - Alerting rules (SLOs, error rates)\n\n6. SECURITY\n   - RBAC policies\n   - Pod security standards\n   - Network policies\n   - Image scanning and admission control\n   - Secret rotation\n\n7. CI/CD INTEGRATION\n   - Helm chart or Kustomize structure\n   - ArgoCD/Flux application manifest\n   - Rollout strategy (blue-green, canary)\n   - Rollback procedure\n\nProvide complete YAML manifests for all resources.\n\n{{input}}",
+            "DevOps",
+            &["kubernetes", "k8s", "deployment", "containers", "orchestration"],
+        ),
+
+        // ── Writing (additional) ──────────────────────────────────────────
+        p(
+            "Technical RFC",
+            "Write a technical RFC to propose a significant technical change",
+            "You are a senior engineer writing a technical RFC (Request for Comments) to propose a significant technical change.\n\nRFC TEMPLATE:\n\n# RFC: [Title]\n\n**Author:** [Name]\n**Status:** Draft\n**Created:** [Date]\n\n## Summary\nOne paragraph explaining the proposal.\n\n## Motivation\n- What problem does this solve?\n- Why is it important now?\n- What happens if we don't do this?\n\n## Detailed Design\n- Technical approach (architecture, components, data flow)\n- API changes (if any, with before/after examples)\n- Data model changes (migration plan)\n- Code examples showing the new pattern\n\n## Alternatives Considered\nFor each alternative:\n- Description\n- Pros and cons\n- Why it was not chosen\n\n## Migration Plan\n- Phased rollout steps\n- Backward compatibility approach\n- Rollback plan\n- Timeline estimate\n\n## Risks and Mitigations\n| Risk | Probability | Impact | Mitigation |\n\n## Open Questions\n- Decisions that need input from others\n\n## References\n- Related RFCs, design docs, or external resources\n\nWrite the complete RFC:\n\n{{input}}",
+            "Writing",
+            &["rfc", "technical writing", "proposal", "design doc", "architecture"],
+        ),
     ]
 }
 
@@ -1016,8 +1145,8 @@ mod tests {
         let prompts = builtin_prompts();
         assert!(!prompts.is_empty());
         assert!(
-            prompts.len() >= 100,
-            "Expected at least 100 prompts, got {}",
+            prompts.len() >= 109,
+            "Expected at least 109 prompts, got {}",
             prompts.len()
         );
     }
@@ -1083,6 +1212,8 @@ mod tests {
             "Product",
             "Rust",
             "Personal",
+            "UI/UX",
+            "Testing",
         ] {
             assert!(
                 categories.contains(expected),
