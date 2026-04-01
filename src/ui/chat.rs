@@ -232,31 +232,39 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 
         match role.as_str() {
             "user" => {
-                // Header with badge and timestamp
-                lines.push(Line::from(vec![
-                    gutter.clone(),
-                    number_badge.clone(),
-                    Span::styled(
-                        "  You  ",
-                        Style::default()
-                            .fg(Color::White)
-                            .bg(Color::Blue)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("  "),
-                    Span::styled(
-                        time_ago,
+                // Thin separator before user message
+                let user_sep_width = area.width.saturating_sub(4) as usize;
+                lines.push(Line::from(Span::styled(
+                    format!("   {}", "\u{2500}".repeat(user_sep_width)),
+                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+                )));
+
+                // Header: number badge + role badge + timestamp
+                let mut header_spans = vec![];
+                if msg_number <= 9 {
+                    header_spans.push(Span::styled(
+                        format!(" {} ", msg_number),
                         Style::default().fg(Color::DarkGray),
-                    ),
-                ]));
-                // Body — plain white, with gutter
+                    ));
+                } else {
+                    header_spans.push(Span::raw("   "));
+                }
+                header_spans.push(Span::styled(
+                    " You ",
+                    Style::default().fg(Color::White).bg(Color::Blue).add_modifier(Modifier::BOLD),
+                ));
+                header_spans.push(Span::raw("  "));
+                header_spans.push(Span::styled(
+                    time_ago,
+                    Style::default().fg(Color::DarkGray),
+                ));
+                lines.push(Line::from(header_spans));
+
+                // Content with accent bar
                 for text_line in content.lines() {
                     lines.push(Line::from(vec![
-                        gutter.clone(),
-                        Span::styled(
-                            format!("  {text_line}"),
-                            Style::default().fg(Color::White),
-                        ),
+                        Span::styled("   \u{2502} ", Style::default().fg(Color::Blue)),
+                        Span::styled(text_line.to_string(), Style::default().fg(Color::White)),
                     ]));
                 }
             }
@@ -287,34 +295,19 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 }
             }
             _ => {
-                // System / unknown role — subtle italic amber text.
+                // System messages — very subtle, truncated
                 lines.push(Line::from(vec![
-                    gutter.clone(),
-                    number_badge.clone(),
+                    Span::styled("   \u{2014} ", Style::default().fg(Color::Rgb(100, 90, 50))),
                     Span::styled(
-                        "  \u{2014} ",
-                        Style::default()
-                            .fg(Color::Rgb(180, 150, 60))
-                            .add_modifier(Modifier::DIM),
+                        content.chars().take(100).collect::<String>(),
+                        Style::default().fg(Color::Rgb(100, 90, 50)).add_modifier(Modifier::DIM | Modifier::ITALIC),
                     ),
-                    Span::styled(
-                        time_ago,
-                        Style::default()
-                            .fg(Color::Rgb(100, 90, 50))
-                            .add_modifier(Modifier::DIM),
-                    ),
+                    if content.len() > 100 {
+                        Span::styled("...", Style::default().fg(Color::Rgb(80, 70, 40)))
+                    } else {
+                        Span::raw("")
+                    },
                 ]));
-                for text_line in content.lines() {
-                    lines.push(Line::from(vec![
-                        gutter.clone(),
-                        Span::styled(
-                            format!("  {text_line}"),
-                            Style::default()
-                                .fg(Color::Rgb(180, 150, 60))
-                                .add_modifier(Modifier::DIM | Modifier::ITALIC),
-                        ),
-                    ]));
-                }
             }
         }
     }
@@ -326,59 +319,110 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from("")); // breathing room after separator
         }
         lines.push(Line::from(""));
+
+        // Separator
+        let stream_sep_width = area.width.saturating_sub(4) as usize;
+        lines.push(Line::from(Span::styled(
+            format!("   {}", "\u{2500}".repeat(stream_sep_width)),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+        )));
+
+        // Streaming header with animated spinner and word counter
+        let spinner_frames = ["\u{25dc}", "\u{25dd}", "\u{25de}", "\u{25df}"]; // ◜ ◝ ◞ ◟
+        let spinner = spinner_frames[(app.thinking_frame / 4) % 4];
+        let word_count = app.streaming_response.split_whitespace().count();
+
         lines.push(Line::from(vec![
             gutter.clone(),
             Span::styled(
-                "  AI  ",
+                format!("  {spinner} "),
+                Style::default().fg(Color::Green),
+            ),
+            Span::styled(
+                " AI ",
                 Style::default()
                     .fg(Color::White)
                     .bg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw("  "),
-            Span::styled("now", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  streaming... ({word_count} words)"),
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            ),
         ]));
+
         // Apply the same markdown/code-block rendering to streaming content.
         let stream_lines = parse_assistant_content(&app.streaming_response);
         let stream_line_count = stream_lines.len();
         for (si, sl) in stream_lines.into_iter().enumerate() {
             let mut spans = vec![gutter.clone()];
             spans.extend(sl.spans);
-            // Append the blinking cursor to the very last line of content.
+            // Append a pulsing cursor to the very last line of content.
             if si == stream_line_count - 1 {
+                // Pulse the cursor colour between bright green and dim green
+                let cursor_color = if (app.thinking_frame / 6) % 2 == 0 {
+                    Color::Green
+                } else {
+                    Color::Rgb(0, 160, 0)
+                };
                 spans.push(Span::styled(
                     "\u{258c}",
                     Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::SLOW_BLINK),
+                        .fg(cursor_color)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             lines.push(Line::from(spans));
         }
     } else if app.is_streaming {
-        // Streaming started but no tokens yet — show "Thinking..." with animation.
+        // Streaming started but no tokens yet — animated thinking indicator.
         if !conversation.messages.is_empty() {
             lines.push(separator_line.clone());
             lines.push(Line::from("")); // breathing room after separator
         }
         lines.push(Line::from(""));
+
+        // Animated dots: cycles through growing and shrinking dots
+        let frame = (app.thinking_frame / 8) % 12; // change every 8 frames (~400ms at 50ms poll)
+
+        let thinking_anim = match frame {
+            0 => "  Thinking",
+            1 => "  Thinking.",
+            2 => "  Thinking..",
+            3 => "  Thinking...",
+            4 => "  Thinking....",
+            5 => "  Thinking.....",
+            6 | 7 => "  Thinking......",
+            8 => "  Thinking.....",
+            9 => "  Thinking....",
+            10 => "  Thinking...",
+            11 => "  Thinking..",
+            _ => "  Thinking.",
+        };
+
+        // Animated spinner character: ◜ ◝ ◞ ◟
+        let spinner_frames = ["\u{25dc}", "\u{25dd}", "\u{25de}", "\u{25df}"];
+        let spinner = spinner_frames[(app.thinking_frame / 4) % 4];
+
         lines.push(Line::from(vec![
             gutter.clone(),
             Span::styled(
-                "  AI  ",
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                format!("  {spinner} "),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " AI ",
+                Style::default().fg(Color::White).bg(Color::Green).add_modifier(Modifier::BOLD),
             ),
         ]));
+
         lines.push(Line::from(vec![
             gutter.clone(),
             Span::styled(
-                "  Thinking...",
+                thinking_anim.to_string(),
                 Style::default()
                     .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC | Modifier::SLOW_BLINK),
+                    .add_modifier(Modifier::ITALIC),
             ),
         ]));
     }
@@ -472,19 +516,27 @@ pub(crate) fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
 
 /// Produces a header line like: `   ╭─  rust  ──────────`
 fn code_header_line(lang: &str) -> Line<'static> {
-    let label = if lang.is_empty() {
-        "code".to_string()
+    let lang_badge = if lang.is_empty() || lang == "text" {
+        String::new()
     } else {
-        lang.to_string()
+        format!("  {}  ", lang)
     };
-    // Padded label: `  rust  ` for nicer appearance.
-    let padded_label = format!("  {label}  ");
-    let bar = "\u{2500}".repeat(40usize.saturating_sub(padded_label.len() + 4));
-    let text = format!("   \u{256d}\u{2500}{padded_label}{bar}");
-    Line::from(Span::styled(
-        text,
-        Style::default().fg(CODE_CHROME_FG).bg(CODE_BG),
-    ))
+    let remaining = 40usize.saturating_sub(lang_badge.len() + 5);
+
+    Line::from(vec![
+        Span::styled(
+            "   \u{256d}\u{2500}",
+            Style::default().fg(CODE_CHROME_FG).bg(CODE_BG),
+        ),
+        Span::styled(
+            lang_badge,
+            Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 56)).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "\u{2500}".repeat(remaining),
+            Style::default().fg(CODE_CHROME_FG).bg(CODE_BG),
+        ),
+    ])
 }
 
 /// Produces a footer line: `   ╰────────────────────`
