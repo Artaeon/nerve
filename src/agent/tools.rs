@@ -1669,4 +1669,41 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
         let result = verify_file_syntax("test.unknown_extension");
         assert!(result.is_none()); // Unknown extension, no check
     }
+
+    #[test]
+    fn execute_find_files_with_no_matches() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "find_files".into(),
+            args: [("pattern".into(), "*.nonexistent_extension_xyz".into()), ("path".into(), "src".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+        assert!(result.output.contains("No files found") || result.output.trim().is_empty());
+    }
+
+    #[test]
+    fn execute_read_lines_start_beyond_end() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_lines".into(),
+            args: [("path".into(), "Cargo.toml".into()), ("start".into(), "999".into()), ("end".into(), "1000".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+        // Should return empty or a note about the range
+    }
+
+    #[test]
+    fn verify_file_syntax_invalid_json() {
+        let dir = std::env::temp_dir().join(format!("nerve_verify_invalid_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad.json");
+        std::fs::write(&path, "{invalid json}").unwrap();
+        let result = verify_file_syntax(&path.to_string_lossy());
+        // May or may not detect the error (depends on python3 availability)
+        // Just verify no panic
+        let _ = result;
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

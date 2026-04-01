@@ -321,4 +321,23 @@ mod tests {
         assert_eq!(loaded.conversations[0].messages[0].1, "test message 123");
         assert_eq!(loaded.conversations[0].messages[1].1, "response 456");
     }
+
+    #[test]
+    fn session_with_multiple_conversations() {
+        let mut app = crate::app::App::new();
+        app.add_user_message("conv1".into());
+        app.new_conversation();
+        app.add_user_message("conv2".into());
+        app.new_conversation();
+        app.add_user_message("conv3".into());
+
+        let session = session_from_app(&app);
+        assert_eq!(session.conversations.len(), 3);
+        assert_eq!(session.active_conversation, 2); // Last created
+
+        let mut restored = crate::app::App::new();
+        restore_session_to_app(&session, &mut restored);
+        assert_eq!(restored.conversations.len(), 3);
+        assert_eq!(restored.active_conversation, 2);
+    }
 }

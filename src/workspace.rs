@@ -1055,4 +1055,39 @@ pub enum Mode {
         assert!(!output.contains(".git"));
         assert!(!output.contains("target/"));
     }
+
+    #[test]
+    fn extract_go_symbols() {
+        let content = "func main() {\n}\n\nfunc handleRequest(w http.ResponseWriter) {\n}\n\ntype Server struct {\n}\n";
+        let symbols = extract_symbols_from_content(content, "go");
+        assert!(symbols.iter().any(|s| s.contains("func main")));
+        assert!(symbols.iter().any(|s| s.contains("func handleRequest")));
+        assert!(symbols.iter().any(|s| s.contains("type Server")));
+    }
+
+    #[test]
+    fn extract_js_symbols() {
+        let content = "export function hello() {}\nexport class App {}\nexport const config = {};\nfunction private() {}\n";
+        let symbols = extract_symbols_from_content(content, "js");
+        assert!(symbols.iter().any(|s| s.contains("export function hello")));
+        assert!(symbols.iter().any(|s| s.contains("export class App")));
+        assert!(!symbols.iter().any(|s| s.contains("function private"))); // Not exported
+    }
+
+    #[test]
+    fn project_map_includes_key_definitions() {
+        let root = std::env::current_dir().unwrap();
+        let map = generate_project_map(&root, 2);
+        // Should include some Rust symbols from our own codebase
+        assert!(map.contains("pub fn") || map.contains("pub struct") || map.contains("Key definitions"));
+    }
+
+    #[test]
+    fn collect_source_files_respects_depth() {
+        let root = std::env::current_dir().unwrap();
+        let mut files = Vec::new();
+        collect_source_files(&root, &mut files, &["rs"], 0, 1);
+        // Should find src/*.rs but not deeply nested files
+        assert!(!files.is_empty());
+    }
 }

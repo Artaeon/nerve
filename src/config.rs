@@ -834,4 +834,15 @@ default_provider = "openai"
         let result = toml::from_str::<Config>(&stripped);
         assert!(result.is_ok(), "Stripped TOML should be parseable: {:?}", result.err());
     }
+
+    #[test]
+    fn theme_presets_all_different() {
+        let presets = theme_presets();
+        for i in 0..presets.len() {
+            for j in (i+1)..presets.len() {
+                assert_ne!(presets[i].1.user_color, presets[j].1.user_color,
+                    "Themes '{}' and '{}' have identical user_color", presets[i].0, presets[j].0);
+            }
+        }
+    }
 }

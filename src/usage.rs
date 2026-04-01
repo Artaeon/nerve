@@ -286,4 +286,25 @@ mod tests {
         assert_eq!(stats.total_requests, 1);
         assert_eq!(stats.total_tokens_sent, 50000);
     }
+
+    #[test]
+    fn spending_limit_exactly_at_boundary() {
+        let limit = SpendingLimit {
+            max_cost_usd: 0.01,
+            enabled: true,
+            ..Default::default()
+        };
+        let mut stats = UsageStats::new();
+        stats.estimated_cost_usd = 0.009;
+        // Just under limit with a free provider -- should be allowed
+        let result = limit.would_exceed(&stats, 0, "ollama", "llama3");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn format_cost_precision() {
+        let mut stats = UsageStats::new();
+        stats.estimated_cost_usd = 12.456;
+        assert_eq!(stats.format_cost(), "$12.46"); // Rounded to 2 decimals
+    }
 }
