@@ -1330,4 +1330,141 @@ mod tests {
         app.restore_branch(99); // Should not panic
         assert_eq!(app.current_conversation().messages.len(), 1);
     }
+
+    // === Branch edge cases ===
+
+    #[test]
+    fn create_branch_captures_correct_snapshot() {
+        let mut app = App::new();
+        app.add_user_message("msg1".into());
+        app.add_assistant_message("resp1".into());
+        app.create_branch("snapshot1".into());
+
+        // Add more messages after branching
+        app.add_user_message("msg2".into());
+
+        // Branch should have only the original 2 messages
+        assert_eq!(app.branches[0].messages.len(), 2);
+        // Current conversation should have 3
+        assert_eq!(app.current_conversation().messages.len(), 3);
+    }
+
+    #[test]
+    fn create_multiple_branches_independent() {
+        let mut app = App::new();
+        app.add_user_message("msg1".into());
+        app.create_branch("branch1".into());
+
+        app.add_user_message("msg2".into());
+        app.create_branch("branch2".into());
+
+        assert_eq!(app.branches[0].messages.len(), 1);
+        assert_eq!(app.branches[1].messages.len(), 2);
+    }
+
+    #[test]
+    fn delete_branch_out_of_bounds_safe() {
+        let mut app = App::new();
+        app.create_branch("test".into());
+        app.delete_branch(99); // Out of bounds
+        assert_eq!(app.branches.len(), 1); // Not deleted
+    }
+
+    // === Conversation management edge cases ===
+
+    #[test]
+    fn switching_conversations_preserves_messages() {
+        let mut app = App::new();
+        app.add_user_message("conv1_msg".into());
+
+        app.new_conversation();
+        app.add_user_message("conv2_msg".into());
+
+        // Switch back
+        app.active_conversation = 0;
+        assert_eq!(app.current_conversation().messages[0].1, "conv1_msg");
+
+        // Switch forward
+        app.active_conversation = 1;
+        assert_eq!(app.current_conversation().messages[0].1, "conv2_msg");
+    }
+
+    // === Input handling edge cases ===
+
+    #[test]
+    fn delete_char_at_position_zero() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 0;
+        app.delete_char();
+        assert_eq!(app.input, "hello"); // Nothing deleted
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn cursor_movement_empty_input() {
+        let mut app = App::new();
+        app.move_cursor_left();
+        assert_eq!(app.cursor_position, 0);
+        app.move_cursor_right();
+        assert_eq!(app.cursor_position, 0);
+    }
+
+    #[test]
+    fn submit_input_with_only_newlines() {
+        let mut app = App::new();
+        app.input = "\n\n\n".into();
+        let result = app.submit_input();
+        assert!(result.is_none()); // Whitespace-only
+    }
+
+    #[test]
+    fn submit_input_preserves_internal_newlines() {
+        let mut app = App::new();
+        app.input = "line1\nline2\nline3".into();
+        let result = app.submit_input();
+        assert!(result.is_some());
+        assert!(result.unwrap().contains('\n'));
+    }
+
+    // === Streaming edge cases ===
+
+    #[test]
+    fn finish_streaming_multiple_times() {
+        let mut app = App::new();
+        app.is_streaming = true;
+        app.streaming_response = "test".into();
+        app.finish_streaming();
+        assert!(!app.is_streaming);
+
+        // Second call should be safe
+        app.finish_streaming();
+        assert!(!app.is_streaming);
+    }
+
+    #[test]
+    fn append_to_streaming_concatenates() {
+        let mut app = App::new();
+        app.append_to_streaming("hello ");
+        app.append_to_streaming("world");
+        assert_eq!(app.streaming_response, "hello world");
+    }
+
+    // === set_status edge cases ===
+
+    #[test]
+    fn set_status_updates_both_fields() {
+        let mut app = App::new();
+        app.set_status("test message");
+        assert_eq!(app.status_message, Some("test message".into()));
+        assert!(app.status_time.is_some());
+    }
+
+    #[test]
+    fn set_status_replaces_previous() {
+        let mut app = App::new();
+        app.set_status("first");
+        app.set_status("second");
+        assert_eq!(app.status_message, Some("second".into()));
+    }
 }

@@ -397,4 +397,72 @@ mod tests {
         let compacted = cm.compact_tool_results(&messages);
         assert_eq!(compacted[0].1, "[Context: File: /tmp/foo.rs]");
     }
+
+    // === Edge case tests ===
+
+    #[test]
+    fn compact_messages_with_only_system() {
+        let cm = ContextManager::new(10);
+        let messages = vec![("system".into(), "You are helpful.".into())];
+        let compacted = cm.compact_messages(&messages);
+        assert_eq!(compacted.len(), 1);
+        assert_eq!(compacted[0].0, "system");
+    }
+
+    #[test]
+    fn compact_messages_exactly_at_limit() {
+        let cm = ContextManager::new(1000);
+        let messages = vec![
+            ("user".into(), "x".repeat(2000)),
+            ("assistant".into(), "y".repeat(2000)),
+        ];
+        // Total is ~1001 tokens — at the limit, should still compact
+        let compacted = cm.compact_messages(&messages);
+        // With only 2 non-system messages (<=4), it won't compact
+        assert_eq!(compacted.len(), 2);
+    }
+
+    #[test]
+    fn compact_tool_results_preserves_non_tool_messages() {
+        let cm = ContextManager::new(10000);
+        let messages = vec![
+            ("user".into(), "hello".into()),
+            ("assistant".into(), "hi".into()),
+            ("user".into(), "how are you".into()),
+        ];
+        let compacted = cm.compact_tool_results(&messages);
+        assert_eq!(compacted.len(), 3);
+        assert_eq!(compacted[0].1, "hello"); // Unchanged
+    }
+
+    #[test]
+    fn estimate_tokens_long_text() {
+        let text = "x".repeat(4000);
+        let tokens = ContextManager::estimate_tokens(&text);
+        assert_eq!(tokens, 1001); // 4000/4 + 1
+    }
+
+    #[test]
+    fn recommended_limit_unknown_provider() {
+        let limit = ContextManager::recommended_limit("unknown_provider");
+        assert_eq!(limit, 30_000); // Conservative default
+    }
+
+    #[test]
+    fn smart_truncate_empty() {
+        assert_eq!(smart_truncate("", 100), "");
+    }
+
+    #[test]
+    fn smart_truncate_exactly_at_limit() {
+        let text = "Hello world."; // 12 chars
+        assert_eq!(smart_truncate(text, 12), "Hello world.");
+    }
+
+    #[test]
+    fn smart_truncate_one_over() {
+        let text = "Hello world.X"; // 13 chars, limit 12
+        let result = smart_truncate(text, 12);
+        assert_eq!(result, "Hello world."); // Breaks at period
+    }
 }
