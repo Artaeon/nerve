@@ -4524,4 +4524,190 @@ mod tests {
         assert!(msg.contains("Unknown provider"));
         assert!(msg.contains("Available"));
     }
+
+    // === generate_title tests (additional) ===
+
+    #[test]
+    fn generate_title_url_command() {
+        let title = generate_title("/url https://docs.rs/ratatui what are the widgets?");
+        assert!(title.contains("docs.rs"));
+    }
+
+    #[test]
+    fn generate_title_template_command() {
+        let title = generate_title("/template rust-web myapi");
+        assert!(title.starts_with("Template:"));
+    }
+
+    #[test]
+    fn generate_title_build_command() {
+        assert_eq!(generate_title("/build"), "Build");
+    }
+
+    #[test]
+    fn generate_title_multiline_message() {
+        let title = generate_title("First line of the message\nSecond line with more detail\nThird line");
+        // Should use only up to the first newline (first sentence boundary)
+        assert!(title.starts_with("First line of the message"));
+        assert!(title.len() <= 60);
+    }
+
+    #[test]
+    fn generate_title_with_period_at_end() {
+        let title = generate_title("Fix the authentication bug in the login handler.");
+        assert!(title.ends_with('.'));
+    }
+
+    // === complete_file_path tests (additional) ===
+
+    #[test]
+    fn complete_file_path_src_directory() {
+        let result = complete_file_path("src/");
+        // Should either return None (multiple matches) or a specific completion
+        // Just verify no panic
+        let _ = result;
+    }
+
+    #[test]
+    fn complete_file_path_nonexistent_dir() {
+        let result = complete_file_path("totally_nonexistent_directory_12345/");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn complete_file_path_hidden_files_excluded() {
+        // .git and .gitignore should not appear in completions
+        let result = complete_file_path(".gi");
+        // Even if .git exists, hidden files are excluded
+        assert!(result.is_none());
+    }
+
+    // === provider_help_message tests (additional) ===
+
+    #[test]
+    fn provider_help_openai_mentions_env_var() {
+        let msg = provider_help_message("openai");
+        assert!(msg.contains("OPENAI_API_KEY"));
+        assert!(msg.contains("platform.openai.com"));
+    }
+
+    #[test]
+    fn provider_help_ollama_mentions_serve() {
+        let msg = provider_help_message("ollama");
+        assert!(msg.contains("ollama serve"));
+    }
+
+    #[test]
+    fn provider_help_claude_mentions_cli() {
+        let msg = provider_help_message("claude_code");
+        assert!(msg.contains("claude"));
+    }
+
+    #[test]
+    fn provider_help_copilot_mentions_gh() {
+        let msg = provider_help_message("copilot");
+        assert!(msg.contains("gh"));
+    }
+
+    // === find_common_prefix_strings tests (additional) ===
+
+    #[test]
+    fn find_common_prefix_identical() {
+        let strings = vec!["hello".to_string(), "hello".to_string()];
+        assert_eq!(find_common_prefix_strings(&strings), "hello");
+    }
+
+    #[test]
+    fn find_common_prefix_partial() {
+        let strings = vec!["src/main.rs".to_string(), "src/app.rs".to_string(), "src/config.rs".to_string()];
+        assert_eq!(find_common_prefix_strings(&strings), "src/");
+    }
+
+    // === cycle_conversation tests (additional) ===
+
+    #[test]
+    fn cycle_conversation_single_does_nothing() {
+        let mut app = App::new();
+        // Only one conversation — cycle should not change
+        let before = app.active_conversation;
+        cycle_conversation(&mut app);
+        assert_eq!(app.active_conversation, before);
+    }
+
+    #[test]
+    fn cycle_conversation_back_single_does_nothing() {
+        let mut app = App::new();
+        let before = app.active_conversation;
+        cycle_conversation_back(&mut app);
+        assert_eq!(app.active_conversation, before);
+    }
+
+    #[test]
+    fn cycle_conversation_back_wraps_from_zero() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        app.active_conversation = 0;
+        cycle_conversation_back(&mut app);
+        assert_eq!(app.active_conversation, 2); // Wraps to last
+    }
+
+    // === edit and delete tests (additional) ===
+
+    #[test]
+    fn edit_last_message_with_only_system_messages() {
+        let mut app = App::new();
+        app.current_conversation_mut().messages.push(("system".into(), "You are helpful.".into()));
+        edit_last_message(&mut app);
+        // No user message to edit — should show status message
+        assert!(app.input.is_empty()); // Input not changed
+    }
+
+    #[test]
+    fn delete_last_exchange_only_user_message() {
+        let mut app = App::new();
+        app.add_user_message("question".into());
+        delete_last_exchange(&mut app);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[test]
+    fn delete_last_exchange_preserves_earlier_messages() {
+        let mut app = App::new();
+        app.add_user_message("first".into());
+        app.add_assistant_message("response1".into());
+        app.add_user_message("second".into());
+        app.add_assistant_message("response2".into());
+
+        delete_last_exchange(&mut app);
+        assert_eq!(app.current_conversation().messages.len(), 2);
+        assert_eq!(app.current_conversation().messages[0].1, "first");
+    }
+
+    // === update_search_results tests (additional) ===
+
+    #[test]
+    fn search_results_update_on_new_query() {
+        let mut app = App::new();
+        app.add_user_message("rust programming".into());
+        app.add_assistant_message("python scripting".into());
+        app.add_user_message("rust async".into());
+
+        app.search_query = "rust".into();
+        update_search_results(&mut app);
+        assert_eq!(app.search_results.len(), 2); // matches msg 0 and 2
+
+        app.search_query = "python".into();
+        update_search_results(&mut app);
+        assert_eq!(app.search_results.len(), 1); // matches msg 1
+    }
+
+    #[test]
+    fn search_no_results_for_nonexistent() {
+        let mut app = App::new();
+        app.add_user_message("hello world".into());
+        app.search_query = "zzzznotfound".into();
+        update_search_results(&mut app);
+        assert!(app.search_results.is_empty());
+    }
 }
