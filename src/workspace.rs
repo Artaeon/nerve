@@ -127,33 +127,33 @@ fn detect_rust(dir: &Path) -> WorkspaceInfo {
     let mut key_files = vec!["Cargo.toml".to_string()];
 
     // Parse Cargo.toml for name and description
-    if let Ok(content) = fs::read_to_string(dir.join("Cargo.toml")) {
-        if let Ok(parsed) = content.parse::<toml::Table>() {
-            if let Some(pkg) = parsed.get("package").and_then(|v| v.as_table()) {
-                if let Some(n) = pkg.get("name").and_then(|v| v.as_str()) {
-                    name = n.to_string();
-                }
-                if let Some(d) = pkg.get("description").and_then(|v| v.as_str()) {
-                    description = d.to_string();
-                }
+    if let Ok(content) = fs::read_to_string(dir.join("Cargo.toml"))
+        && let Ok(parsed) = content.parse::<toml::Table>()
+    {
+        if let Some(pkg) = parsed.get("package").and_then(|v| v.as_table()) {
+            if let Some(n) = pkg.get("name").and_then(|v| v.as_str()) {
+                name = n.to_string();
             }
-            // Detect key dependencies
-            if let Some(deps) = parsed.get("dependencies").and_then(|v| v.as_table()) {
-                for dep in [
-                    "tokio",
-                    "actix-web",
-                    "axum",
-                    "rocket",
-                    "warp",
-                    "ratatui",
-                    "serde",
-                    "diesel",
-                    "sqlx",
-                    "reqwest",
-                ] {
-                    if deps.contains_key(dep) {
-                        tech_stack.push(dep.to_string());
-                    }
+            if let Some(d) = pkg.get("description").and_then(|v| v.as_str()) {
+                description = d.to_string();
+            }
+        }
+        // Detect key dependencies
+        if let Some(deps) = parsed.get("dependencies").and_then(|v| v.as_table()) {
+            for dep in [
+                "tokio",
+                "actix-web",
+                "axum",
+                "rocket",
+                "warp",
+                "ratatui",
+                "serde",
+                "diesel",
+                "sqlx",
+                "reqwest",
+            ] {
+                if deps.contains_key(dep) {
+                    tech_stack.push(dep.to_string());
                 }
             }
         }
@@ -190,36 +190,36 @@ fn detect_node(dir: &Path) -> WorkspaceInfo {
     let mut tech_stack = vec!["Node.js".to_string()];
     let mut key_files = vec!["package.json".to_string()];
 
-    if let Ok(content) = fs::read_to_string(dir.join("package.json")) {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(n) = parsed["name"].as_str() {
-                name = n.to_string();
-            }
-            if let Some(d) = parsed["description"].as_str() {
-                description = d.to_string();
-            }
-            // Detect framework
-            if let Some(deps) = parsed["dependencies"].as_object() {
-                for fw in [
-                    "next", "react", "vue", "angular", "express", "fastify", "nest", "svelte",
-                ] {
-                    if deps.contains_key(fw) {
-                        tech_stack.push(fw.to_string());
-                    }
+    if let Ok(content) = fs::read_to_string(dir.join("package.json"))
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content)
+    {
+        if let Some(n) = parsed["name"].as_str() {
+            name = n.to_string();
+        }
+        if let Some(d) = parsed["description"].as_str() {
+            description = d.to_string();
+        }
+        // Detect framework
+        if let Some(deps) = parsed["dependencies"].as_object() {
+            for fw in [
+                "next", "react", "vue", "angular", "express", "fastify", "nest", "svelte",
+            ] {
+                if deps.contains_key(fw) {
+                    tech_stack.push(fw.to_string());
                 }
             }
-            if let Some(deps) = parsed["devDependencies"].as_object() {
-                for tool in [
-                    "typescript",
-                    "vite",
-                    "webpack",
-                    "jest",
-                    "vitest",
-                    "tailwindcss",
-                ] {
-                    if deps.contains_key(tool) {
-                        tech_stack.push(tool.to_string());
-                    }
+        }
+        if let Some(deps) = parsed["devDependencies"].as_object() {
+            for tool in [
+                "typescript",
+                "vite",
+                "webpack",
+                "jest",
+                "vitest",
+                "tailwindcss",
+            ] {
+                if deps.contains_key(tool) {
+                    tech_stack.push(tool.to_string());
                 }
             }
         }
@@ -258,14 +258,12 @@ fn detect_python(dir: &Path) -> WorkspaceInfo {
     // Check for pyproject.toml
     if dir.join("pyproject.toml").exists() {
         key_files.push("pyproject.toml".into());
-        if let Ok(content) = fs::read_to_string(dir.join("pyproject.toml")) {
-            if let Ok(parsed) = content.parse::<toml::Table>() {
-                if let Some(proj) = parsed.get("project").and_then(|v| v.as_table()) {
-                    if let Some(n) = proj.get("name").and_then(|v| v.as_str()) {
-                        name = n.to_string();
-                    }
-                }
-            }
+        if let Ok(content) = fs::read_to_string(dir.join("pyproject.toml"))
+            && let Ok(parsed) = content.parse::<toml::Table>()
+            && let Some(proj) = parsed.get("project").and_then(|v| v.as_table())
+            && let Some(n) = proj.get("name").and_then(|v| v.as_str())
+        {
+            name = n.to_string();
         }
     }
 
@@ -307,12 +305,11 @@ fn detect_go(dir: &Path) -> WorkspaceInfo {
     let tech_stack = vec!["Go".to_string()];
     let key_files = vec!["go.mod".into()];
 
-    if let Ok(content) = fs::read_to_string(dir.join("go.mod")) {
-        if let Some(line) = content.lines().next() {
-            if let Some(module) = line.strip_prefix("module ") {
-                name = module.trim().to_string();
-            }
-        }
+    if let Ok(content) = fs::read_to_string(dir.join("go.mod"))
+        && let Some(line) = content.lines().next()
+        && let Some(module) = line.strip_prefix("module ")
+    {
+        name = module.trim().to_string();
     }
 
     WorkspaceInfo {

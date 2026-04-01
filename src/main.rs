@@ -255,10 +255,10 @@ fn create_provider_from_app(config: &Config, app: &App) -> anyhow::Result<Box<dy
 /// Resolve an API key: prefer the config value, fall back to an environment
 /// variable. Returns an error if neither is set.
 fn resolve_api_key(config_value: Option<&str>, env_var: &str) -> anyhow::Result<String> {
-    if let Some(val) = config_value {
-        if !val.is_empty() {
-            return Ok(val.to_string());
-        }
+    if let Some(val) = config_value
+        && !val.is_empty()
+    {
+        return Ok(val.to_string());
     }
     std::env::var(env_var)
         .with_context(|| format!("API key not found: set it in config or via ${env_var}"))
@@ -375,11 +375,11 @@ async fn event_loop(
 
     loop {
         // Auto-clear status messages after 5 seconds.
-        if let Some(time) = app.status_time {
-            if time.elapsed() > std::time::Duration::from_secs(5) {
-                app.status_message = None;
-                app.status_time = None;
-            }
+        if let Some(time) = app.status_time
+            && time.elapsed() > std::time::Duration::from_secs(5)
+        {
+            app.status_message = None;
+            app.status_time = None;
         }
 
         // Draw the UI.
@@ -422,211 +422,209 @@ async fn event_loop(
         //
         // We temporarily take the receiver out of `app` so we can mutate
         // both the receiver and the rest of app without overlapping borrows.
-        if app.is_streaming {
-            if let Some(mut rx) = app.stream_rx.take() {
-                let mut finished = false;
-                while let Ok(ev) = rx.try_recv() {
-                    match ev {
-                        StreamEvent::Token(token) => app.append_to_streaming(&token),
-                        StreamEvent::Done => {
-                            // Grab the content before finish_streaming moves it.
-                            let response_content = app.streaming_response.clone();
-                            app.finish_streaming();
+        if app.is_streaming
+            && let Some(mut rx) = app.stream_rx.take()
+        {
+            let mut finished = false;
+            while let Ok(ev) = rx.try_recv() {
+                match ev {
+                    StreamEvent::Token(token) => app.append_to_streaming(&token),
+                    StreamEvent::Done => {
+                        // Grab the content before finish_streaming moves it.
+                        let response_content = app.streaming_response.clone();
+                        app.finish_streaming();
 
-                            // Track usage (estimate tokens from message lengths).
+                        // Track usage (estimate tokens from message lengths).
+                        {
+                            let tokens_sent: usize = app
+                                .current_conversation()
+                                .messages
+                                .iter()
+                                .map(|(_, c)| c.len() / 4 + 1)
+                                .sum();
+                            let tokens_received = response_content.len() / 4 + 1;
+                            app.usage_stats.record_request(
+                                tokens_sent,
+                                tokens_received,
+                                &app.selected_provider,
+                                &app.selected_model,
+                            );
+                        }
+
+                        if !response_content.is_empty() {
+                            app.clipboard_manager.add(
+                                response_content,
+                                ClipboardSource::AiResponse,
+                            );
+                            let _ = app.clipboard_manager.save();
+                        }
+
+                        // Auto-set title from first user message (improved).
+                        {
+                            let conv = app.current_conversation_mut();
+                            if conv.title == "New Conversation"
+                                && let Some((_role, content)) =
+                                    conv.messages.iter().find(|(r, _)| r == "user")
                             {
-                                let tokens_sent: usize = app
-                                    .current_conversation()
+                                conv.title = generate_title(content);
+                            }
+                        }
+
+                        // Auto-save conversation to history.
+                        {
+                            let conv = app.current_conversation();
+                            let record = history::ConversationRecord {
+                                id: conv.id.clone(),
+                                title: conv.title.clone(),
+                                messages: conv
                                     .messages
                                     .iter()
-                                    .map(|(_, c)| c.len() / 4 + 1)
-                                    .sum();
-                                let tokens_received = response_content.len() / 4 + 1;
-                                app.usage_stats.record_request(
-                                    tokens_sent,
-                                    tokens_received,
-                                    &app.selected_provider,
-                                    &app.selected_model,
-                                );
-                            }
+                                    .map(|(role, content)| {
+                                        history::MessageRecord {
+                                            role: role.clone(),
+                                            content: content.clone(),
+                                            timestamp: chrono::Utc::now(),
+                                        }
+                                    })
+                                    .collect(),
+                                model: app.selected_model.clone(),
+                                created_at: conv.created_at,
+                                updated_at: chrono::Utc::now(),
+                            };
+                            let _ = history::save_conversation(&record);
+                        }
 
-                            if !response_content.is_empty() {
-                                app.clipboard_manager.add(
-                                    response_content,
-                                    ClipboardSource::AiResponse,
-                                );
-                                let _ = app.clipboard_manager.save();
-                            }
+                        // Agent mode: check for tool calls and execute them
+                        if app.agent_mode {
+                            let last_response = app
+                                .current_conversation()
+                                .messages
+                                .last()
+                                .filter(|(r, _)| r == "assistant")
+                                .map(|(_, c)| c.clone());
 
-                            // Auto-set title from first user message (improved).
-                            {
-                                let conv = app.current_conversation_mut();
-                                if conv.title == "New Conversation" {
-                                    if let Some((_role, content)) =
-                                        conv.messages.iter().find(|(r, _)| r == "user")
-                                    {
-                                        conv.title = generate_title(content);
+                            if let Some(response) = last_response {
+                                let tool_calls =
+                                    crate::agent::tools::parse_tool_calls(&response);
+
+                                if !tool_calls.is_empty()
+                                    && app.agent_iterations < 10
+                                {
+                                    app.agent_iterations += 1;
+                                    app.set_status(format!(
+                                        "Agent executing {} tool(s)... (iteration {})",
+                                        tool_calls.len(),
+                                        app.agent_iterations
+                                    ));
+
+                                    // Execute tools and build results message
+                                    let mut results =
+                                        String::from("Tool execution results:\n\n");
+                                    for call in &tool_calls {
+                                        let result =
+                                            crate::agent::tools::execute_tool(call);
+                                        let status = if result.success {
+                                            "SUCCESS"
+                                        } else {
+                                            "FAILED"
+                                        };
+                                        results.push_str(&format!(
+                                            "<tool_result>\ntool: {}\nstatus: {status}\noutput:\n{}\n</tool_result>\n\n",
+                                            result.tool, result.output
+                                        ));
                                     }
-                                }
-                            }
 
-                            // Auto-save conversation to history.
-                            {
-                                let conv = app.current_conversation();
-                                let record = history::ConversationRecord {
-                                    id: conv.id.clone(),
-                                    title: conv.title.clone(),
-                                    messages: conv
-                                        .messages
+                                    // Add tool results as a user message
+                                    app.add_user_message(results);
+
+                                    // Apply context management based on provider
+                                    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+                                    let context_mgr =
+                                        crate::agent::context::ContextManager::new(
+                                            limit,
+                                        );
+
+                                    // First compact tool results, then overall conversation
+                                    let tool_compacted = context_mgr.compact_tool_results(
+                                        &app.current_conversation().messages,
+                                    );
+                                    let compacted = context_mgr.compact_messages(
+                                        &tool_compacted,
+                                    );
+                                    let messages: Vec<ChatMessage> = compacted
                                         .iter()
-                                        .map(|(role, content)| {
-                                            history::MessageRecord {
-                                                role: role.clone(),
-                                                content: content.clone(),
-                                                timestamp: chrono::Utc::now(),
+                                        .filter_map(|(role, content)| {
+                                            match role.as_str() {
+                                                "user" => {
+                                                    Some(ChatMessage::user(content))
+                                                }
+                                                "assistant" => {
+                                                    Some(ChatMessage::assistant(
+                                                        content,
+                                                    ))
+                                                }
+                                                "system" => {
+                                                    Some(ChatMessage::system(content))
+                                                }
+                                                _ => None,
                                             }
                                         })
-                                        .collect(),
-                                    model: app.selected_model.clone(),
-                                    created_at: conv.created_at,
-                                    updated_at: chrono::Utc::now(),
-                                };
-                                let _ = history::save_conversation(&record);
-                            }
+                                        .collect();
 
+                                    // Trigger another AI call
+                                    let model = app.selected_model.clone();
+                                    let (tx, new_rx) =
+                                        tokio::sync::mpsc::unbounded_channel();
+                                    app.stream_rx = Some(new_rx);
+                                    app.is_streaming = true;
+                                    app.streaming_response.clear();
+                                    app.streaming_start =
+                                        Some(std::time::Instant::now());
 
-                            // Agent mode: check for tool calls and execute them
-                            if app.agent_mode {
-                                let last_response = app
-                                    .current_conversation()
-                                    .messages
-                                    .last()
-                                    .filter(|(r, _)| r == "assistant")
-                                    .map(|(_, c)| c.clone());
-
-                                if let Some(response) = last_response {
-                                    let tool_calls =
-                                        crate::agent::tools::parse_tool_calls(&response);
-
-                                    if !tool_calls.is_empty()
-                                        && app.agent_iterations < 10
-                                    {
-                                        app.agent_iterations += 1;
-                                        app.set_status(format!(
-                                            "Agent executing {} tool(s)... (iteration {})",
-                                            tool_calls.len(),
-                                            app.agent_iterations
-                                        ));
-
-                                        // Execute tools and build results message
-                                        let mut results =
-                                            String::from("Tool execution results:\n\n");
-                                        for call in &tool_calls {
-                                            let result =
-                                                crate::agent::tools::execute_tool(call);
-                                            let status = if result.success {
-                                                "SUCCESS"
-                                            } else {
-                                                "FAILED"
-                                            };
-                                            results.push_str(&format!(
-                                                "<tool_result>\ntool: {}\nstatus: {status}\noutput:\n{}\n</tool_result>\n\n",
-                                                result.tool, result.output
-                                            ));
-                                        }
-
-                                        // Add tool results as a user message
-                                        app.add_user_message(results);
-
-                                        // Apply context management based on provider
-                                        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
-                                        let context_mgr =
-                                            crate::agent::context::ContextManager::new(
-                                                limit,
+                                    let provider_clone = Arc::clone(&provider);
+                                    tokio::spawn(async move {
+                                        if let Err(e) = provider_clone
+                                            .chat_stream(
+                                                &messages,
+                                                &model,
+                                                tx.clone(),
+                                            )
+                                            .await
+                                        {
+                                            let _ = tx.send(
+                                                StreamEvent::Error(e.to_string()),
                                             );
+                                        }
+                                    });
 
-                                        // First compact tool results, then overall conversation
-                                        let tool_compacted = context_mgr.compact_tool_results(
-                                            &app.current_conversation().messages,
-                                        );
-                                        let compacted = context_mgr.compact_messages(
-                                            &tool_compacted,
-                                        );
-                                        let messages: Vec<ChatMessage> = compacted
-                                            .iter()
-                                            .filter_map(|(role, content)| {
-                                                match role.as_str() {
-                                                    "user" => {
-                                                        Some(ChatMessage::user(content))
-                                                    }
-                                                    "assistant" => {
-                                                        Some(ChatMessage::assistant(
-                                                            content,
-                                                        ))
-                                                    }
-                                                    "system" => {
-                                                        Some(ChatMessage::system(content))
-                                                    }
-                                                    _ => None,
-                                                }
-                                            })
-                                            .collect();
-
-                                        // Trigger another AI call
-                                        let model = app.selected_model.clone();
-                                        let (tx, new_rx) =
-                                            tokio::sync::mpsc::unbounded_channel();
-                                        app.stream_rx = Some(new_rx);
-                                        app.is_streaming = true;
-                                        app.streaming_response.clear();
-                                        app.streaming_start =
-                                            Some(std::time::Instant::now());
-
-                                        let provider_clone = Arc::clone(&provider);
-                                        tokio::spawn(async move {
-                                            if let Err(e) = provider_clone
-                                                .chat_stream(
-                                                    &messages,
-                                                    &model,
-                                                    tx.clone(),
-                                                )
-                                                .await
-                                            {
-                                                let _ = tx.send(
-                                                    StreamEvent::Error(e.to_string()),
-                                                );
-                                            }
-                                        });
-
-                                        // Do not mark finished; loop continues
-                                        // with the new stream receiver
-                                        break;
-                                    } else if app.agent_iterations > 0 {
-                                        // No more tool calls or max iterations
-                                        app.set_status(format!(
-                                            "Agent completed in {} iteration(s)",
-                                            app.agent_iterations
-                                        ));
-                                        app.agent_iterations = 0;
-                                    }
+                                    // Do not mark finished; loop continues
+                                    // with the new stream receiver
+                                    break;
+                                } else if app.agent_iterations > 0 {
+                                    // No more tool calls or max iterations
+                                    app.set_status(format!(
+                                        "Agent completed in {} iteration(s)",
+                                        app.agent_iterations
+                                    ));
+                                    app.agent_iterations = 0;
                                 }
                             }
-                            finished = true;
-                            break;
                         }
-                        StreamEvent::Error(e) => {
-                            app.streaming_response
-                                .push_str(&format!("\n[Error: {e}]"));
-                            app.finish_streaming();
-                            finished = true;
-                            break;
-                        }
+                        finished = true;
+                        break;
+                    }
+                    StreamEvent::Error(e) => {
+                        app.streaming_response
+                            .push_str(&format!("\n[Error: {e}]"));
+                        app.finish_streaming();
+                        finished = true;
+                        break;
                     }
                 }
-                // Put it back if not finished (finish_streaming sets it to None).
-                if !finished {
-                    app.stream_rx = Some(rx);
-                }
+            }
+            // Put it back if not finished (finish_streaming sets it to None).
+            if !finished {
+                app.stream_rx = Some(rx);
             }
         }
 
@@ -1111,11 +1109,9 @@ fn handle_prompt_picker(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('k') | KeyCode::Up => {
             if app.prompt_focus_right {
                 app.prompt_select_index = app.prompt_select_index.saturating_sub(1);
-            } else {
-                if app.prompt_category_index > 0 {
-                    app.prompt_category_index -= 1;
-                    app.prompt_select_index = 0;
-                }
+            } else if app.prompt_category_index > 0 {
+                app.prompt_category_index -= 1;
+                app.prompt_select_index = 0;
             }
         }
         KeyCode::Enter => {
@@ -1431,8 +1427,8 @@ fn common_prefix(strings: &[&&str]) -> String {
 fn complete_file_path(partial: &str) -> Option<String> {
     use std::path::Path;
 
-    let path = if partial.starts_with("~/") {
-        dirs::home_dir()?.join(&partial[2..])
+    let path = if let Some(stripped) = partial.strip_prefix("~/") {
+        dirs::home_dir()?.join(stripped)
     } else if partial.starts_with('/') {
         std::path::PathBuf::from(partial)
     } else {
@@ -1513,9 +1509,9 @@ fn complete_file_path(partial: &str) -> Option<String> {
 fn list_file_matches(partial: &str) -> Vec<String> {
     use std::path::Path;
 
-    let path = if partial.starts_with("~/") {
+    let path = if let Some(stripped) = partial.strip_prefix("~/") {
         match dirs::home_dir() {
-            Some(h) => h.join(&partial[2..]),
+            Some(h) => h.join(stripped),
             None => return Vec::new(),
         }
     } else if partial.starts_with('/') {
@@ -1640,7 +1636,7 @@ fn generate_title(first_user_message: &str) -> String {
     }
 
     // If it's a question or ends a sentence, use the first sentence
-    if let Some(end) = cleaned.find(|c| c == '?' || c == '.' || c == '\n') {
+    if let Some(end) = cleaned.find(['?', '.', '\n']) {
         let title: String = cleaned[..=end].chars().take(60).collect();
         return title;
     }
@@ -1808,10 +1804,10 @@ async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider
     }
 
     // ── Slash-command dispatch ──────────────────────────────────────────
-    if text.starts_with('/') {
-        if handle_slash_command(app, text, provider).await {
-            return;
-        }
+    if text.starts_with('/')
+        && handle_slash_command(app, text, provider).await
+    {
+        return;
         // Not a recognised command — treat as a normal message.
     }
 
@@ -2187,10 +2183,10 @@ System\n\
             ));
         } else {
             let target = rest;
-            let target_path = if target.starts_with("~/") {
+            let target_path = if let Some(stripped) = target.strip_prefix("~/") {
                 dirs::home_dir()
                     .unwrap_or_default()
-                    .join(&target[2..])
+                    .join(stripped)
             } else {
                 std::path::PathBuf::from(target)
             };
@@ -2659,20 +2655,18 @@ System\n\
             app.active_conversation = 0;
             app.scroll_offset = 0;
             app.status_message = Some("All conversations deleted".into());
+        } else if app.conversations.len() <= 1 {
+            // Last conversation — clear it instead
+            app.current_conversation_mut().messages.clear();
+            app.current_conversation_mut().title = "New Conversation".into();
+            app.status_message = Some("Conversation cleared".into());
         } else {
-            if app.conversations.len() <= 1 {
-                // Last conversation — clear it instead
-                app.current_conversation_mut().messages.clear();
-                app.current_conversation_mut().title = "New Conversation".into();
-                app.status_message = Some("Conversation cleared".into());
-            } else {
-                app.conversations.remove(app.active_conversation);
-                if app.active_conversation >= app.conversations.len() {
-                    app.active_conversation = app.conversations.len() - 1;
-                }
-                app.scroll_offset = 0;
-                app.status_message = Some("Conversation deleted".into());
+            app.conversations.remove(app.active_conversation);
+            if app.active_conversation >= app.conversations.len() {
+                app.active_conversation = app.conversations.len() - 1;
             }
+            app.scroll_offset = 0;
+            app.status_message = Some("Conversation deleted".into());
         }
         return true;
     }
@@ -3242,53 +3236,53 @@ System\n\
                 }
             }
             "delete" | "rm" => {
-                if let Some(idx_str) = args.get(1) {
-                    if let Ok(idx) = idx_str.parse::<usize>() {
-                        let idx = idx.saturating_sub(1);
-                        if idx < app.branches.len() {
-                            let name = app.branches[idx].name.clone();
-                            app.delete_branch(idx);
-                            app.set_status(format!("Deleted branch: {name}"));
-                        } else {
-                            app.set_status("Invalid branch number");
-                        }
+                if let Some(idx_str) = args.get(1)
+                    && let Ok(idx) = idx_str.parse::<usize>()
+                {
+                    let idx = idx.saturating_sub(1);
+                    if idx < app.branches.len() {
+                        let name = app.branches[idx].name.clone();
+                        app.delete_branch(idx);
+                        app.set_status(format!("Deleted branch: {name}"));
+                    } else {
+                        app.set_status("Invalid branch number");
                     }
                 }
             }
             "diff" => {
-                if let Some(idx_str) = args.get(1) {
-                    if let Ok(idx) = idx_str.parse::<usize>() {
-                        let idx = idx.saturating_sub(1);
-                        if let Some(branch) = app.branches.get(idx) {
-                            let current = &app.current_conversation().messages;
-                            let branched = &branch.messages;
+                if let Some(idx_str) = args.get(1)
+                    && let Ok(idx) = idx_str.parse::<usize>()
+                {
+                    let idx = idx.saturating_sub(1);
+                    if let Some(branch) = app.branches.get(idx) {
+                        let current = &app.current_conversation().messages;
+                        let branched = &branch.messages;
 
-                            let common = current.iter().zip(branched.iter())
-                                .take_while(|(a, b)| a == b)
-                                .count();
+                        let common = current.iter().zip(branched.iter())
+                            .take_while(|(a, b)| a == b)
+                            .count();
 
-                            let mut msg = format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
-                            msg.push_str(&format!("Common messages: {}\n", common));
-                            msg.push_str(&format!("Current has {} more message(s)\n", current.len().saturating_sub(common)));
-                            msg.push_str(&format!("Branch has {} more message(s)\n\n", branched.len().saturating_sub(common)));
+                        let mut msg = format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
+                        msg.push_str(&format!("Common messages: {}\n", common));
+                        msg.push_str(&format!("Current has {} more message(s)\n", current.len().saturating_sub(common)));
+                        msg.push_str(&format!("Branch has {} more message(s)\n\n", branched.len().saturating_sub(common)));
 
-                            if current.len() > common {
-                                msg.push_str("Current (diverged):\n");
-                                for (role, content) in &current[common..] {
-                                    let brief: String = content.chars().take(80).collect();
-                                    msg.push_str(&format!("  [{role}] {brief}...\n"));
-                                }
+                        if current.len() > common {
+                            msg.push_str("Current (diverged):\n");
+                            for (role, content) in &current[common..] {
+                                let brief: String = content.chars().take(80).collect();
+                                msg.push_str(&format!("  [{role}] {brief}...\n"));
                             }
-                            if branched.len() > common {
-                                msg.push_str("\nBranch (diverged):\n");
-                                for (role, content) in &branched[common..] {
-                                    let brief: String = content.chars().take(80).collect();
-                                    msg.push_str(&format!("  [{role}] {brief}...\n"));
-                                }
-                            }
-
-                            app.add_assistant_message(msg);
                         }
+                        if branched.len() > common {
+                            msg.push_str("\nBranch (diverged):\n");
+                            for (role, content) in &branched[common..] {
+                                let brief: String = content.chars().take(80).collect();
+                                msg.push_str(&format!("  [{role}] {brief}...\n"));
+                            }
+                        }
+
+                        app.add_assistant_message(msg);
                     }
                 }
             }
@@ -3955,28 +3949,27 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         .collect();
 
     // If a knowledge base exists, search for relevant context and inject it.
-    if !user_message.is_empty() {
-        if let Ok(kb) = knowledge::KnowledgeBase::load("default") {
-            if !kb.chunks.is_empty() {
-                let results = knowledge::search_knowledge(&kb, &user_message, 3);
-                if !results.is_empty() {
-                    let context = results
-                        .iter()
-                        .map(|r| format!("[From: {}]\n{}", r.document_title, r.chunk.content))
-                        .collect::<Vec<_>>()
-                        .join("\n\n---\n\n");
+    if !user_message.is_empty()
+        && let Ok(kb) = knowledge::KnowledgeBase::load("default")
+        && !kb.chunks.is_empty()
+    {
+        let results = knowledge::search_knowledge(&kb, &user_message, 3);
+        if !results.is_empty() {
+            let context = results
+                .iter()
+                .map(|r| format!("[From: {}]\n{}", r.document_title, r.chunk.content))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n");
 
-                    messages.insert(
-                        0,
-                        ChatMessage::system(format!(
-                            "The following knowledge base context may be relevant \
-                             to the user's query:\n\n{}\n\n\
-                             Use this context to inform your response if relevant.",
-                            context
-                        )),
-                    );
-                }
-            }
+            messages.insert(
+                0,
+                ChatMessage::system(format!(
+                    "The following knowledge base context may be relevant \
+                     to the user's query:\n\n{}\n\n\
+                     Use this context to inform your response if relevant.",
+                    context
+                )),
+            );
         }
     }
 
@@ -4091,10 +4084,10 @@ fn delete_last_exchange(app: &mut App) {
     conv.messages.pop();
 
     // If we removed an assistant message, also remove the preceding user message
-    if last_role.as_deref() == Some("assistant") {
-        if conv.messages.last().map(|(r, _)| r.as_str()) == Some("user") {
-            conv.messages.pop();
-        }
+    if last_role.as_deref() == Some("assistant")
+        && conv.messages.last().map(|(r, _)| r.as_str()) == Some("user")
+    {
+        conv.messages.pop();
     }
 
     app.set_status("Deleted last exchange");
@@ -4709,5 +4702,181 @@ mod tests {
         app.search_query = "zzzznotfound".into();
         update_search_results(&mut app);
         assert!(app.search_results.is_empty());
+    }
+
+    // === Cross-module integration tests ===
+
+    #[test]
+    fn app_with_workspace_context() {
+        // Test that workspace detection doesn't break app initialization
+        let mut app = App::new();
+        if let Some(ws) = crate::workspace::detect_workspace() {
+            let prompt = ws.to_system_prompt();
+            app.current_conversation_mut().messages.push(("system".into(), prompt));
+            // Verify the system message was added
+            assert!(app.current_conversation().messages.iter().any(|(r, _)| r == "system"));
+        }
+    }
+
+    #[test]
+    fn file_context_added_to_conversation() {
+        let mut app = App::new();
+        // Read Cargo.toml (we know it exists)
+        match crate::files::read_file_context("Cargo.toml") {
+            Ok(fc) => {
+                let formatted = crate::files::format_file_for_context(&fc);
+                app.current_conversation_mut().messages.push(("system".into(), formatted));
+                assert!(!app.current_conversation().messages.is_empty());
+                // Verify the content mentions "nerve"
+                let sys_msg = &app.current_conversation().messages[0].1;
+                assert!(sys_msg.contains("nerve") || sys_msg.contains("Nerve"));
+            }
+            Err(_) => {} // OK if Cargo.toml not found in test env
+        }
+    }
+
+    #[test]
+    fn context_manager_with_real_conversation() {
+        let mut app = App::new();
+        // Simulate a long conversation
+        for i in 0..50 {
+            app.add_user_message(format!("Question {} about Rust programming and how to handle async errors properly", i));
+            app.add_assistant_message(format!("Answer {} explaining async error handling with detailed code examples and best practices for production use", i));
+        }
+
+        // Apply context management with a very tight budget so compaction triggers
+        let cm = crate::agent::context::ContextManager::new(100);
+        let compacted = cm.compact_messages(&app.current_conversation().messages);
+
+        // Compacted should be significantly shorter
+        assert!(compacted.len() < app.current_conversation().messages.len());
+        // But should still have recent messages
+        assert!(compacted.len() >= 4);
+        // Should have a summary system message
+        assert!(compacted.iter().any(|(r, c)| r == "system" && c.contains("summary")));
+    }
+
+    #[test]
+    fn knowledge_base_search_integration() {
+        let mut kb = crate::knowledge::store::KnowledgeBase::new("test_integration".into());
+        let doc = crate::knowledge::store::Document {
+            id: "d1".into(),
+            title: "Rust Guide".into(),
+            source_path: "/tmp/rust.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 50,
+        };
+        let chunks = vec![
+            crate::knowledge::store::Chunk {
+                id: "c1".into(),
+                document_id: "d1".into(),
+                content: "Rust ownership and borrowing are key concepts for memory safety".into(),
+                index: 0,
+                word_count: 10,
+            },
+            crate::knowledge::store::Chunk {
+                id: "c2".into(),
+                document_id: "d1".into(),
+                content: "Python uses garbage collection for memory management".into(),
+                index: 1,
+                word_count: 8,
+            },
+        ];
+        kb.add_document(doc, chunks);
+
+        let results = crate::knowledge::search::search_knowledge(&kb, "rust ownership", 5);
+        assert!(!results.is_empty());
+        // First result should be about Rust, not Python
+        assert!(results[0].chunk.content.to_lowercase().contains("rust"));
+    }
+
+    #[test]
+    fn scaffold_template_files_are_valid() {
+        for template in crate::scaffold::builtin_templates() {
+            // Verify no empty files (except __init__.py which is intentionally empty)
+            for file in &template.files {
+                let is_init_py = file.path.ends_with("__init__.py");
+                if !is_init_py {
+                    assert!(!file.content.is_empty(),
+                        "Template '{}' has empty file: {}", template.name, file.path);
+                }
+            }
+            // Verify placeholder substitution works
+            let mut t = template.clone();
+            for file in &mut t.files {
+                file.content = file.content.replace("{{name}}", "testproject");
+                file.content = file.content.replace("{{description}}", "A test project");
+                assert!(!file.content.contains("{{name}}"),
+                    "Template '{}' file '{}' still has {{{{name}}}} after substitution", t.name, file.path);
+            }
+        }
+    }
+
+    #[test]
+    fn automation_templates_valid() {
+        for auto in crate::automation::builtin_automations() {
+            assert!(!auto.name.is_empty());
+            assert!(!auto.steps.is_empty());
+            for step in &auto.steps {
+                assert!(step.prompt_template.contains("{{input}}") || step.prompt_template.contains("{{prev_output}}"),
+                    "Automation '{}' step '{}' has no placeholder", auto.name, step.name);
+            }
+        }
+    }
+
+    #[test]
+    fn branch_and_restore_preserves_conversation() {
+        let mut app = App::new();
+        app.add_user_message("original message".into());
+        app.add_assistant_message("original response".into());
+
+        // Create branch
+        app.create_branch("checkpoint".into());
+
+        // Modify conversation
+        app.add_user_message("new message".into());
+        assert_eq!(app.current_conversation().messages.len(), 3);
+
+        // Restore branch
+        app.restore_branch(0);
+        assert_eq!(app.current_conversation().messages.len(), 2);
+        assert_eq!(app.current_conversation().messages[0].1, "original message");
+    }
+
+    #[test]
+    fn session_roundtrip_preserves_everything() {
+        let mut app = App::new();
+        app.add_user_message("hello".into());
+        app.add_assistant_message("hi there".into());
+        app.selected_model = "opus".into();
+        app.selected_provider = "openai".into();
+        app.agent_mode = true;
+
+        let session = crate::session::session_from_app(&app);
+
+        let mut restored_app = App::new();
+        crate::session::restore_session_to_app(&session, &mut restored_app);
+
+        assert_eq!(restored_app.conversations.len(), 1);
+        assert_eq!(restored_app.current_conversation().messages.len(), 2);
+        assert_eq!(restored_app.selected_model, "opus");
+        assert_eq!(restored_app.selected_provider, "openai");
+        assert!(restored_app.agent_mode);
+    }
+
+    #[test]
+    fn usage_tracking_with_free_provider() {
+        let mut stats = crate::usage::UsageStats::new();
+        stats.record_request(10000, 5000, "claude_code", "sonnet");
+        assert_eq!(stats.estimated_cost_usd, 0.0); // Free
+        assert_eq!(stats.format_cost(), "Free (subscription/local)");
+    }
+
+    #[test]
+    fn usage_tracking_with_paid_provider() {
+        let mut stats = crate::usage::UsageStats::new();
+        stats.record_request(10000, 5000, "openai", "gpt-4o");
+        assert!(stats.estimated_cost_usd > 0.0);
+        assert!(stats.format_cost().starts_with('$'));
     }
 }

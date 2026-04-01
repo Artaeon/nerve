@@ -117,13 +117,13 @@ impl SpendingLimit {
         }
 
         // Request count check
-        if let Some(max) = self.max_requests {
-            if stats.total_requests >= max {
-                return Some(format!(
-                    "Request limit reached: {}/{}",
-                    stats.total_requests, max
-                ));
-            }
+        if let Some(max) = self.max_requests
+            && stats.total_requests >= max
+        {
+            return Some(format!(
+                "Request limit reached: {}/{}",
+                stats.total_requests, max
+            ));
         }
 
         // Token check

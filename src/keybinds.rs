@@ -48,12 +48,11 @@ pub fn parse_keybind(s: &str) -> Option<KeyEvent> {
 /// Map a single key name to a [`KeyCode`].
 fn parse_key_code(s: &str) -> Option<KeyCode> {
     // Function keys: f1 .. f12
-    if let Some(rest) = s.strip_prefix('f') {
-        if let Ok(n) = rest.parse::<u8>() {
-            if (1..=12).contains(&n) {
-                return Some(KeyCode::F(n));
-            }
-        }
+    if let Some(rest) = s.strip_prefix('f')
+        && let Ok(n) = rest.parse::<u8>()
+        && (1..=12).contains(&n)
+    {
+        return Some(KeyCode::F(n));
     }
 
     match s {

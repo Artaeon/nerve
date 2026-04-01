@@ -170,11 +170,11 @@ pub fn list_all_plugins() -> Vec<(PluginManifest, bool)> {
             if !path.is_dir() { continue; }
 
             let manifest_path = path.join("plugin.toml");
-            if let Ok(content) = fs::read_to_string(&manifest_path) {
-                if let Ok(manifest) = toml::from_str::<PluginManifest>(&content) {
-                    let loaded = manifest.enabled;
-                    result.push((manifest, loaded));
-                }
+            if let Ok(content) = fs::read_to_string(&manifest_path)
+                && let Ok(manifest) = toml::from_str::<PluginManifest>(&content)
+            {
+                let loaded = manifest.enabled;
+                result.push((manifest, loaded));
             }
         }
     }

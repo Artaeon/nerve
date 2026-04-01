@@ -12,7 +12,7 @@ pub(crate) fn smart_truncate(text: &str, max_chars: usize) -> String {
     let truncated = &text[..max_chars];
 
     // Try to break at the last sentence-ending punctuation within the range.
-    if let Some(pos) = truncated.rfind(|c| c == '.' || c == '!' || c == '?') {
+    if let Some(pos) = truncated.rfind(['.', '!', '?']) {
         // Include the punctuation character itself.
         return truncated[..=pos].to_string();
     }
@@ -464,5 +464,49 @@ mod tests {
         let text = "Hello world.X"; // 13 chars, limit 12
         let result = smart_truncate(text, 12);
         assert_eq!(result, "Hello world."); // Breaks at period
+    }
+
+    // === Stress tests ===
+
+    #[test]
+    fn compact_very_large_conversation() {
+        let cm = ContextManager::new(1000);
+        let mut messages = Vec::new();
+        for i in 0..500 {
+            messages.push(("user".into(), format!("Question {i} with lots of context about programming and software development and best practices")));
+            messages.push(("assistant".into(), format!("Detailed answer {i} with code examples and explanations covering multiple aspects of the topic at hand")));
+        }
+
+        let compacted = cm.compact_messages(&messages);
+        assert!(compacted.len() < 50, "Should be heavily compacted, got {} messages", compacted.len());
+    }
+
+    #[test]
+    fn compact_tool_results_many_tools() {
+        let cm = ContextManager::new(100_000);
+        let mut messages = Vec::new();
+        for i in 0..50 {
+            messages.push(("user".into(), format!("Tool execution results:\n<tool_result>\ntool: read_file\nstatus: SUCCESS\noutput:\n{}\n</tool_result>", "x".repeat(500))));
+            messages.push(("assistant".into(), format!("Analysis of tool result {i}")));
+        }
+
+        let compacted = cm.compact_tool_results(&messages);
+        // Old tool results should be compacted (brief summaries)
+        let old_result = &compacted[0].1;
+        assert!(old_result.len() < 200, "Old tool result should be compacted, got {} chars", old_result.len());
+
+        // Recent ones should be preserved
+        let last = &compacted[compacted.len() - 2].1;
+        assert!(last.contains("tool_result") || last.len() > 200, "Recent tool result should be preserved");
+    }
+
+    #[test]
+    fn conversation_tokens_large_conversation() {
+        let mut messages = Vec::new();
+        for _ in 0..100 {
+            messages.push(("user".into(), "x".repeat(4000)));
+        }
+        let tokens = ContextManager::conversation_tokens(&messages);
+        assert_eq!(tokens, 100 * 1001); // (4000/4 + 1) * 100
     }
 }

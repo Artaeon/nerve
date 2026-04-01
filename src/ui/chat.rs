@@ -415,7 +415,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 /// - Italic (`*text*`) → ITALIC modifier
 /// - Headers (`# …`) → Bold + Cyan
 /// - List items (`- …`) → indented bullet
-fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
+pub(crate) fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
     let ss = &*SYNTAX_SET;
     let theme = &*THEME;
 
@@ -496,7 +496,7 @@ fn code_footer_line() -> Line<'static> {
 const MAX_HIGHLIGHT_LINES: usize = 200;
 
 /// Syntax-highlight a code block and return styled `Line`s with line numbers.
-fn highlight_code(
+pub(crate) fn highlight_code(
     code: &str,
     lang: &str,
     ss: &SyntaxSet,
@@ -584,7 +584,7 @@ fn highlight_code(
 // ── Basic markdown formatting for non-code text ──────────────────────────────
 
 /// Format a single line of non-code assistant text with simple markdown support.
-fn format_markdown_line(text_line: &str) -> Line<'static> {
+pub(crate) fn format_markdown_line(text_line: &str) -> Line<'static> {
     let trimmed = text_line.trim_start();
 
     // ── Headers: `# Heading`, `## Heading`, etc. ─────────────────────
@@ -664,7 +664,7 @@ fn format_markdown_line(text_line: &str) -> Line<'static> {
 
 /// If the line starts with a markdown header (`#`, `##`, …), return the text
 /// portion (without the `#` markers and leading space).
-fn try_strip_header(s: &str) -> Option<&str> {
+pub(crate) fn try_strip_header(s: &str) -> Option<&str> {
     if !s.starts_with('#') {
         return None;
     }
@@ -686,7 +686,7 @@ fn try_strip_header(s: &str) -> Option<&str> {
 /// Parse inline markdown spans: **bold**, *italic*, `code`.
 ///
 /// Uses a simple state-machine approach rather than full markdown parsing.
-fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
+pub(crate) fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut chars = text.char_indices().peekable();
     let mut plain_start = 0;
@@ -771,40 +771,40 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
                 // Try to parse a markdown link: [text](url)
                 if let Some(close_bracket) = text[i + 1..].find(']') {
                     let link_text_end = i + 1 + close_bracket;
-                    if text[link_text_end..].starts_with("](") {
-                        if let Some(close_paren) = text[link_text_end + 2..].find(')') {
-                            let url_end = link_text_end + 2 + close_paren;
-                            let link_text = &text[i + 1..link_text_end];
-                            let url = &text[link_text_end + 2..url_end];
-                            // Flush plain text accumulated so far.
-                            if i > plain_start {
-                                spans.push(Span::styled(
-                                    text[plain_start..i].to_string(),
-                                    Style::default().fg(Color::White),
-                                ));
-                            }
+                    if text[link_text_end..].starts_with("](")
+                        && let Some(close_paren) = text[link_text_end + 2..].find(')')
+                    {
+                        let url_end = link_text_end + 2 + close_paren;
+                        let link_text = &text[i + 1..link_text_end];
+                        let url = &text[link_text_end + 2..url_end];
+                        // Flush plain text accumulated so far.
+                        if i > plain_start {
                             spans.push(Span::styled(
-                                link_text.to_string(),
-                                Style::default()
-                                    .fg(Color::Blue)
-                                    .add_modifier(Modifier::UNDERLINED),
+                                text[plain_start..i].to_string(),
+                                Style::default().fg(Color::White),
                             ));
-                            spans.push(Span::styled(
-                                format!(" ({})", url),
-                                Style::default()
-                                    .fg(Color::DarkGray)
-                                    .add_modifier(Modifier::DIM),
-                            ));
-                            // Advance the char iterator past the entire link
-                            while let Some(&(pos, _)) = chars.peek() {
-                                if pos > url_end {
-                                    break;
-                                }
-                                chars.next();
-                            }
-                            plain_start = url_end + 1;
-                            continue;
                         }
+                        spans.push(Span::styled(
+                            link_text.to_string(),
+                            Style::default()
+                                .fg(Color::Blue)
+                                .add_modifier(Modifier::UNDERLINED),
+                        ));
+                        spans.push(Span::styled(
+                            format!(" ({})", url),
+                            Style::default()
+                                .fg(Color::DarkGray)
+                                .add_modifier(Modifier::DIM),
+                        ));
+                        // Advance the char iterator past the entire link
+                        while let Some(&(pos, _)) = chars.peek() {
+                            if pos > url_end {
+                                break;
+                            }
+                            chars.next();
+                        }
+                        plain_start = url_end + 1;
+                        continue;
                     }
                 }
                 // Not a valid link — treat as plain text
@@ -866,7 +866,7 @@ fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
 ///
 /// Since individual messages don't carry their own timestamps, we estimate
 /// based on conversation creation time and message index within the conversation.
-fn format_time_ago(
+pub(crate) fn format_time_ago(
     now: chrono::DateTime<chrono::Utc>,
     conv_created: chrono::DateTime<chrono::Utc>,
     msg_index: usize,
@@ -891,5 +891,234 @@ fn format_time_ago(
         format!("{}h ago", ago_secs / 3600)
     } else {
         format!("{}d ago", ago_secs / 86400)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use ratatui::style::Modifier;
+
+    // ── highlight_code tests ────────────────────────────────────────────
+
+    #[test]
+    fn highlight_code_detects_rust() {
+        let ss = &*SYNTAX_SET;
+        let theme = &*THEME;
+        let lines = highlight_code("fn main() {}", "rust", ss, theme);
+        assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn highlight_code_unknown_language() {
+        let ss = &*SYNTAX_SET;
+        let theme = &*THEME;
+        let lines = highlight_code("some text", "unknown_lang_xyz", ss, theme);
+        assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn highlight_code_empty() {
+        let ss = &*SYNTAX_SET;
+        let theme = &*THEME;
+        let lines = highlight_code("", "rust", ss, theme);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn highlight_code_multiline() {
+        let ss = &*SYNTAX_SET;
+        let theme = &*THEME;
+        let code = "fn main() {\n    println!(\"hello\");\n}";
+        let lines = highlight_code(code, "rust", ss, theme);
+        assert_eq!(lines.len(), 3);
+    }
+
+    // ── format_markdown_line tests ──────────────────────────────────────
+
+    #[test]
+    fn format_markdown_line_header() {
+        let line = format_markdown_line("# Hello World");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains("Hello World"));
+    }
+
+    #[test]
+    fn format_markdown_line_bullet() {
+        let line = format_markdown_line("- item one");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains("item one"));
+    }
+
+    #[test]
+    fn format_markdown_line_blockquote() {
+        let line = format_markdown_line("> quoted text");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains("quoted text"));
+    }
+
+    #[test]
+    fn format_markdown_line_horizontal_rule() {
+        let line = format_markdown_line("---");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains('\u{2500}'));
+    }
+
+    #[test]
+    fn format_markdown_line_ordered_list() {
+        let line = format_markdown_line("1. first item");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains("first item"));
+    }
+
+    #[test]
+    fn format_markdown_line_plain_text() {
+        let line = format_markdown_line("just regular text");
+        let content: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(content.contains("just regular text"));
+    }
+
+    // ── try_strip_header tests ──────────────────────────────────────────
+
+    #[test]
+    fn try_strip_header_h1() {
+        assert_eq!(try_strip_header("# Title"), Some("Title"));
+    }
+
+    #[test]
+    fn try_strip_header_h2() {
+        assert_eq!(try_strip_header("## Subtitle"), Some("Subtitle"));
+    }
+
+    #[test]
+    fn try_strip_header_h6() {
+        assert_eq!(try_strip_header("###### Deep"), Some("Deep"));
+    }
+
+    #[test]
+    fn try_strip_header_too_many_hashes() {
+        assert_eq!(try_strip_header("####### Not valid"), None);
+    }
+
+    #[test]
+    fn try_strip_header_no_space() {
+        assert_eq!(try_strip_header("#nospace"), None);
+    }
+
+    #[test]
+    fn try_strip_header_not_a_header() {
+        assert_eq!(try_strip_header("regular text"), None);
+    }
+
+    // ── parse_inline_spans tests ────────────────────────────────────────
+
+    #[test]
+    fn parse_inline_spans_plain() {
+        let spans = parse_inline_spans("hello world");
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content.as_ref(), "hello world");
+    }
+
+    #[test]
+    fn parse_inline_spans_bold() {
+        let spans = parse_inline_spans("before **bold** after");
+        assert!(spans.len() >= 3, "expected at least 3 spans, got {}", spans.len());
+        let bold_span = spans.iter().find(|s| s.content.as_ref() == "bold");
+        assert!(bold_span.is_some(), "should have a 'bold' span");
+        assert!(bold_span.unwrap().style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn parse_inline_spans_italic() {
+        let spans = parse_inline_spans("before *italic* after");
+        let italic_span = spans.iter().find(|s| s.content.as_ref() == "italic");
+        assert!(italic_span.is_some(), "should have an 'italic' span");
+        assert!(italic_span.unwrap().style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn parse_inline_spans_inline_code() {
+        let spans = parse_inline_spans("use `code` here");
+        let code_span = spans.iter().find(|s| s.content.contains("code"));
+        assert!(code_span.is_some(), "should have an inline code span");
+        assert_eq!(code_span.unwrap().style.fg, Some(INLINE_CODE_FG));
+    }
+
+    #[test]
+    fn parse_inline_spans_link() {
+        let spans = parse_inline_spans("see [docs](https://example.com) here");
+        let link_span = spans.iter().find(|s| s.content.as_ref() == "docs");
+        assert!(link_span.is_some(), "should find the link text");
+        assert!(link_span.unwrap().style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn parse_inline_spans_unmatched_bold() {
+        let spans = parse_inline_spans("some **unmatched text");
+        assert!(!spans.is_empty());
+    }
+
+    #[test]
+    fn parse_inline_spans_empty() {
+        let spans = parse_inline_spans("");
+        assert!(spans.is_empty());
+    }
+
+    // ── parse_assistant_content tests ───────────────────────────────────
+
+    #[test]
+    fn parse_assistant_content_plain_text() {
+        let lines = parse_assistant_content("Hello world");
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn parse_assistant_content_code_block() {
+        let content = "before\n```rust\nfn main() {}\n```\nafter";
+        let lines = parse_assistant_content(content);
+        assert!(lines.len() >= 4, "expected >= 4 lines, got {}", lines.len());
+    }
+
+    #[test]
+    fn parse_assistant_content_unclosed_code_block() {
+        let content = "text\n```python\ndef foo():\n    pass";
+        let lines = parse_assistant_content(content);
+        assert!(!lines.is_empty());
+    }
+
+    // ── format_time_ago tests ───────────────────────────────────────────
+
+    #[test]
+    fn format_time_ago_just_now() {
+        let now = Utc::now();
+        let result = format_time_ago(now, now, 0, 1);
+        assert_eq!(result, "just now");
+    }
+
+    #[test]
+    fn format_time_ago_minutes() {
+        let now = Utc::now();
+        let created = now - Duration::minutes(10);
+        // For a multi-message conversation, the first message (index 0) should
+        // show the full elapsed time since it gets fraction=0 of the timeline.
+        let result = format_time_ago(now, created, 0, 3);
+        assert!(result.contains("m ago"), "expected minutes, got: {result}");
+    }
+
+    #[test]
+    fn format_time_ago_first_message_in_multi() {
+        let now = Utc::now();
+        let created = now - Duration::hours(2);
+        let result = format_time_ago(now, created, 0, 5);
+        assert!(result.contains("h ago"), "first message should show hours ago, got: {result}");
+    }
+
+    #[test]
+    fn format_time_ago_last_message_in_multi() {
+        let now = Utc::now();
+        let created = now - Duration::hours(2);
+        let result = format_time_ago(now, created, 4, 5);
+        assert_eq!(result, "just now");
     }
 }

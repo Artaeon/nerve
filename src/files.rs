@@ -99,11 +99,11 @@ pub fn expand_file_references(text: &str) -> String {
         if word.starts_with('@') && word.len() > 1 {
             let path = &word[1..];
             // Check if it looks like a file path (has a dot or slash)
-            if path.contains('.') || path.contains('/') {
-                if let Ok(fc) = read_file_context(path) {
-                    let formatted = format_file_for_context(&fc);
-                    result = result.replace(word, &format!("\n\n{formatted}\n\n"));
-                }
+            if (path.contains('.') || path.contains('/'))
+                && let Ok(fc) = read_file_context(path)
+            {
+                let formatted = format_file_for_context(&fc);
+                result = result.replace(word, &format!("\n\n{formatted}\n\n"));
             }
         }
     }
@@ -112,9 +112,9 @@ pub fn expand_file_references(text: &str) -> String {
 
 /// Resolve path: expand ~ and make relative paths absolute
 fn resolve_path(path: &str) -> PathBuf {
-    let path = if path.starts_with("~/") {
+    let path = if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs::home_dir() {
-            home.join(&path[2..])
+            home.join(stripped)
         } else {
             PathBuf::from(path)
         }
@@ -657,5 +657,49 @@ mod tests {
         let fc = read_file_range(file_path.to_str().unwrap(), 0, 2).unwrap();
         assert!(fc.content.contains("line1"));
         assert!(fc.content.contains("line2"));
+    }
+
+    // === Stress / edge case tests ===
+
+    #[test]
+    fn read_file_context_cargo_toml() {
+        // Test reading our own Cargo.toml
+        let result = read_file_context("Cargo.toml");
+        assert!(result.is_ok());
+        let fc = result.unwrap();
+        assert!(fc.content.contains("nerve"));
+        assert_eq!(fc.language, "toml");
+        assert!(fc.line_count > 10);
+    }
+
+    #[test]
+    fn read_file_range_beyond_file() {
+        let result = read_file_range("Cargo.toml", 1, 999999);
+        assert!(result.is_ok());
+        let fc = result.unwrap();
+        // Should return the whole file, not error
+        assert!(fc.line_count > 0);
+    }
+
+    #[test]
+    fn read_file_range_single_line_cargo() {
+        let result = read_file_range("Cargo.toml", 1, 1);
+        assert!(result.is_ok());
+        let fc = result.unwrap();
+        assert_eq!(fc.line_count, 1);
+    }
+
+    #[test]
+    fn format_file_context_code_stress() {
+        let fc = FileContext {
+            path: "test.rs".into(),
+            content: "fn main() {}".into(),
+            language: "rust".into(),
+            line_count: 1,
+            size_bytes: 13,
+        };
+        let formatted = format_file_for_context(&fc);
+        assert!(formatted.contains("```rust"));
+        assert!(formatted.contains("fn main()"));
     }
 }

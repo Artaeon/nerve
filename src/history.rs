@@ -88,12 +88,11 @@ pub fn list_conversations() -> anyhow::Result<Vec<ConversationRecord>> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json") {
-            if let Ok(contents) = fs::read_to_string(&path) {
-                if let Ok(record) = serde_json::from_str::<ConversationRecord>(&contents) {
-                    records.push(record);
-                }
-            }
+        if path.extension().is_some_and(|ext| ext == "json")
+            && let Ok(contents) = fs::read_to_string(&path)
+            && let Ok(record) = serde_json::from_str::<ConversationRecord>(&contents)
+        {
+            records.push(record);
         }
     }
 

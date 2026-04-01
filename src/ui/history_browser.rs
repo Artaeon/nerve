@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::history::ConversationRecord;
 
 /// Classify a timestamp into a human-readable date group label.
-fn group_label(dt: &DateTime<Utc>) -> &'static str {
+pub(crate) fn group_label(dt: &DateTime<Utc>) -> &'static str {
     let now = Utc::now();
     let today = now.date_naive();
     let date = dt.date_naive();
@@ -30,7 +30,7 @@ fn group_label(dt: &DateTime<Utc>) -> &'static str {
 }
 
 /// Format a relative time string from a datetime.
-fn format_relative_time(dt: &DateTime<Utc>) -> String {
+pub(crate) fn format_relative_time(dt: &DateTime<Utc>) -> String {
     let now = Utc::now();
     let diff = now.signed_duration_since(*dt);
     if diff.num_seconds() < 60 {
@@ -49,7 +49,7 @@ fn format_relative_time(dt: &DateTime<Utc>) -> String {
 }
 
 /// Return the filtered list of history entries based on the current search query.
-fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
+pub(crate) fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
     let matcher = SkimMatcherV2::default();
     let query = &app.history_search;
 
@@ -84,9 +84,7 @@ fn build_left_panel_items<'a>(
     let mut items: Vec<ListItem<'a>> = Vec::new();
     let mut index_map: Vec<Option<usize>> = Vec::new();
     let mut current_group: Option<&str> = None;
-    let mut entry_idx = 0usize;
-
-    for record in filtered {
+    for (entry_idx, record) in filtered.iter().enumerate() {
         let label = group_label(&record.updated_at);
         if current_group != Some(label) {
             current_group = Some(label);
@@ -141,7 +139,6 @@ fn build_left_panel_items<'a>(
 
         items.push(ListItem::new(vec![line, detail_line]));
         index_map.push(Some(entry_idx));
-        entry_idx += 1;
     }
 
     (items, index_map)
@@ -383,4 +380,150 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
 /// Return the count of history entries matching the current search filter.
 pub fn filtered_history_count(app: &App) -> usize {
     filtered_entries(app).len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::history::{ConversationRecord, MessageRecord};
+    use chrono::{Duration, Utc};
+
+    fn make_record(title: &str, age_days: i64, messages: Vec<(&str, &str)>) -> ConversationRecord {
+        let now = Utc::now();
+        let ts = now - Duration::days(age_days);
+        ConversationRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            title: title.into(),
+            messages: messages
+                .into_iter()
+                .map(|(role, content)| MessageRecord {
+                    role: role.into(),
+                    content: content.into(),
+                    timestamp: ts,
+                })
+                .collect(),
+            model: "opus".into(),
+            created_at: ts,
+            updated_at: ts,
+        }
+    }
+
+    #[test]
+    fn group_label_today() {
+        let now = Utc::now();
+        assert_eq!(group_label(&now), "Today");
+    }
+
+    #[test]
+    fn group_label_yesterday() {
+        let yesterday = Utc::now() - Duration::days(1);
+        assert_eq!(group_label(&yesterday), "Yesterday");
+    }
+
+    #[test]
+    fn group_label_this_week() {
+        let three_days_ago = Utc::now() - Duration::days(3);
+        assert_eq!(group_label(&three_days_ago), "This Week");
+    }
+
+    #[test]
+    fn group_label_older() {
+        let old = Utc::now() - Duration::days(30);
+        assert_eq!(group_label(&old), "Older");
+    }
+
+    #[test]
+    fn format_relative_time_just_now() {
+        let now = Utc::now();
+        let result = format_relative_time(&now);
+        assert_eq!(result, "just now");
+    }
+
+    #[test]
+    fn format_relative_time_minutes() {
+        let five_min_ago = Utc::now() - Duration::minutes(5);
+        let result = format_relative_time(&five_min_ago);
+        assert!(result.contains("m ago"), "expected minutes ago, got: {result}");
+    }
+
+    #[test]
+    fn format_relative_time_hours() {
+        let three_hours_ago = Utc::now() - Duration::hours(3);
+        let result = format_relative_time(&three_hours_ago);
+        assert!(result.contains("h ago"), "expected hours ago, got: {result}");
+    }
+
+    #[test]
+    fn format_relative_time_days() {
+        let ten_days_ago = Utc::now() - Duration::days(10);
+        let result = format_relative_time(&ten_days_ago);
+        assert!(result.contains("d ago"), "expected days ago, got: {result}");
+    }
+
+    #[test]
+    fn format_relative_time_months() {
+        let ninety_days_ago = Utc::now() - Duration::days(90);
+        let result = format_relative_time(&ninety_days_ago);
+        assert!(result.contains("mo ago"), "expected months ago, got: {result}");
+    }
+
+    #[test]
+    fn filtered_entries_empty_history() {
+        let app = App::new();
+        let entries = filtered_entries(&app);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn filtered_entries_returns_all_when_no_query() {
+        let mut app = App::new();
+        app.history_entries = vec![
+            make_record("Rust discussion", 0, vec![("user", "hello")]),
+            make_record("Python question", 1, vec![("user", "world")]),
+        ];
+        app.history_search.clear();
+        let entries = filtered_entries(&app);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn filtered_entries_filters_by_title() {
+        let mut app = App::new();
+        app.history_entries = vec![
+            make_record("Rust discussion", 0, vec![("user", "hello")]),
+            make_record("Python question", 1, vec![("user", "world")]),
+        ];
+        app.history_search = "Rust".into();
+        let entries = filtered_entries(&app);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Rust discussion");
+    }
+
+    #[test]
+    fn filtered_entries_filters_by_message_content() {
+        let mut app = App::new();
+        app.history_entries = vec![
+            make_record("Chat A", 0, vec![("user", "tell me about quantum physics")]),
+            make_record("Chat B", 1, vec![("user", "hello world")]),
+        ];
+        app.history_search = "quantum".into();
+        let entries = filtered_entries(&app);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].title, "Chat A");
+    }
+
+    #[test]
+    fn filtered_history_count_matches_filtered_entries() {
+        let mut app = App::new();
+        app.history_entries = vec![
+            make_record("A", 0, vec![("user", "foo")]),
+            make_record("B", 1, vec![("user", "bar")]),
+        ];
+        app.history_search.clear();
+        assert_eq!(filtered_history_count(&app), 2);
+
+        app.history_search = "A".into();
+        assert_eq!(filtered_history_count(&app), filtered_entries(&app).len());
+    }
 }

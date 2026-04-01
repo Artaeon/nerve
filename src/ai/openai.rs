@@ -167,12 +167,11 @@ impl OpenAiProvider {
         let status = response.status();
         match response.text().await {
             Ok(body) => {
-                if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body) {
-                    if let Some(detail) = err.error {
-                        if let Some(msg) = detail.message {
-                            return format!("API error ({status}): {msg}");
-                        }
-                    }
+                if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body)
+                    && let Some(detail) = err.error
+                    && let Some(msg) = detail.message
+                {
+                    return format!("API error ({status}): {msg}");
                 }
                 format!("API error ({status}): {body}")
             }
@@ -262,15 +261,13 @@ impl AiProvider for OpenAiProvider {
                 // Parse the JSON chunk.
                 match serde_json::from_str::<ChatCompletionChunk>(data) {
                     Ok(chunk) => {
-                        if let Some(choice) = chunk.choices.first() {
-                            if let Some(ref content) = choice.delta.content {
-                                if !content.is_empty() {
-                                    if tx.send(StreamEvent::Token(content.clone())).is_err() {
-                                        // Receiver dropped — stop processing.
-                                        return Ok(());
-                                    }
-                                }
-                            }
+                        if let Some(choice) = chunk.choices.first()
+                            && let Some(ref content) = choice.delta.content
+                            && !content.is_empty()
+                            && tx.send(StreamEvent::Token(content.clone())).is_err()
+                        {
+                            // Receiver dropped — stop processing.
+                            return Ok(());
                         }
                     }
                     Err(e) => {

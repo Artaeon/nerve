@@ -45,10 +45,10 @@ fn visit_dir(dir: &Path, kb: &mut KnowledgeBase, count: &mut usize) -> anyhow::R
         let path = entry.path();
 
         // Skip hidden files/directories (name starts with '.').
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') {
-                continue;
-            }
+        if let Some(name) = path.file_name().and_then(|n| n.to_str())
+            && name.starts_with('.')
+        {
+            continue;
         }
 
         if path.is_dir() {

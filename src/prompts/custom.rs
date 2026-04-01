@@ -46,12 +46,11 @@ pub fn load_custom_prompts() -> Vec<SmartPrompt> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "toml") {
-            if let Ok(contents) = fs::read_to_string(&path) {
-                if let Ok(prompt) = toml::from_str::<SmartPrompt>(&contents) {
-                    prompts.push(prompt);
-                }
-            }
+        if path.extension().is_some_and(|ext| ext == "toml")
+            && let Ok(contents) = fs::read_to_string(&path)
+            && let Ok(prompt) = toml::from_str::<SmartPrompt>(&contents)
+        {
+            prompts.push(prompt);
         }
     }
 

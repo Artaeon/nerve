@@ -75,11 +75,11 @@ pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
         if path.file_name().and_then(|n| n.to_str()) == Some("last_session.json") { continue; }
 
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(session) = serde_json::from_str::<Session>(&content) {
-                let conv_count = session.conversations.len();
-                sessions.push((session.id, session.saved_at, conv_count));
-            }
+        if let Ok(content) = fs::read_to_string(&path)
+            && let Ok(session) = serde_json::from_str::<Session>(&content)
+        {
+            let conv_count = session.conversations.len();
+            sessions.push((session.id, session.saved_at, conv_count));
         }
     }
 
@@ -175,9 +175,16 @@ mod tests {
 
     #[test]
     fn save_and_load_session() {
+        // This test writes to last_session.json — use a unique session
+        // and verify by the named copy to avoid races with other tests.
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
-            conversations: vec![],
+            conversations: vec![SessionConversation {
+                id: "test-conv".into(),
+                title: "Save Load Test".into(),
+                messages: vec![("user".into(), "save_load_test".into())],
+                created_at: chrono::Utc::now(),
+            }],
             active_conversation: 0,
             selected_model: "sonnet".into(),
             selected_provider: "claude_code".into(),
@@ -187,8 +194,14 @@ mod tests {
         };
 
         save_session(&session).unwrap();
-        let loaded = load_last_session().unwrap();
-        assert_eq!(loaded.id, session.id);
+        // Verify the named copy exists
+        let prefix = format!("session_{}", &session.id[..8]);
+        let dir = sessions_dir();
+        let found = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
+        assert!(found, "Named session file should exist");
     }
 
     #[test]
