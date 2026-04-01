@@ -675,6 +675,41 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ));
         }
 
+        // Smart mode badge (skip Standard and Agent — Agent already shows its own badge)
+        match app.active_mode {
+            crate::app::NerveMode::Efficient => {
+                left_spans.push(sep.clone());
+                left_spans.push(Span::styled(
+                    " ECO ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            crate::app::NerveMode::Learning => {
+                left_spans.push(sep.clone());
+                left_spans.push(Span::styled(
+                    " LEARN ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            crate::app::NerveMode::Thorough => {
+                left_spans.push(sep.clone());
+                left_spans.push(Span::styled(
+                    " FULL ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            _ => {} // Standard and Agent don't need extra badge
+        }
+
         let left_line = Line::from(left_spans);
 
         frame.render_widget(Paragraph::new(left_line), chunks[0]);
