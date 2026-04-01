@@ -200,7 +200,19 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     // Available width inside the prompt list area (for right-aligning badges).
     let list_width = chunks[2].width as usize;
 
-    let items: Vec<ListItem<'_>> = scored
+    let query = &app.command_bar_input;
+    let mut items: Vec<ListItem<'_>> = Vec::new();
+
+    // Show a helpful message when no prompts match the search.
+    if scored.is_empty() && !query.is_empty() {
+        let no_results = ListItem::new(Line::from(Span::styled(
+            "  No prompts match your search. Try a different term.",
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )));
+        items.push(no_results);
+    }
+
+    items.extend(scored
         .iter()
         .enumerate()
         .flat_map(|(i, (_score, prompt))| {
@@ -216,7 +228,14 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 Style::default().fg(Color::White)
             };
             let badge = format!("[{}]", prompt.category);
-            let name_part = format!("{}{}", marker, prompt.name);
+            // Truncate long prompt names to fit the available width.
+            let max_name_len = list_width.saturating_sub(badge.len() + 6); // 6 = marker + padding
+            let truncated_name = if prompt.name.len() > max_name_len {
+                format!("{}...", &prompt.name[..max_name_len.saturating_sub(3)])
+            } else {
+                prompt.name.clone()
+            };
+            let name_part = format!("{}{}", marker, truncated_name);
             // Calculate padding between name and badge.
             let padding_len = list_width
                 .saturating_sub(name_part.len())
@@ -236,11 +255,17 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 Span::styled(badge, badge_style),
             ]);
 
-            // -- Line 2: indented description --
+            // -- Line 2: indented description (truncated if too long) --
             let desc_style = Style::default().fg(Color::DarkGray);
+            let max_desc_len = list_width.saturating_sub(4); // 4 = indent
+            let truncated_desc = if prompt.description.len() > max_desc_len {
+                format!("{}...", &prompt.description[..max_desc_len.saturating_sub(3)])
+            } else {
+                prompt.description.clone()
+            };
             let line2 = Line::from(vec![
                 Span::raw("    "),
-                Span::styled(prompt.description.clone(), desc_style),
+                Span::styled(truncated_desc, desc_style),
             ]);
 
             // -- Line 3: blank spacer --
@@ -252,7 +277,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 ListItem::new(line3),
             ]
         })
-        .collect();
+        .collect::<Vec<_>>());
 
     let list = List::new(items).block(Block::default());
 
