@@ -76,3 +76,30 @@ pub fn stop_daemon() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn socket_path_is_in_tmp() {
+        let path = socket_path();
+        assert!(path.to_string_lossy().contains("nerve"));
+    }
+
+    #[test]
+    fn is_daemon_running_false_when_no_socket() {
+        // Clean up any existing socket first
+        let path = socket_path();
+        let _ = std::fs::remove_file(&path);
+        assert!(!is_daemon_running());
+    }
+
+    #[test]
+    fn stop_daemon_no_panic_when_not_running() {
+        let _ = std::fs::remove_file(socket_path());
+        // Should not panic even if daemon isn't running
+        let result = stop_daemon();
+        assert!(result.is_ok());
+    }
+}

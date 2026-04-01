@@ -195,4 +195,117 @@ mod tests {
     fn list_sessions_doesnt_panic() {
         let _ = list_sessions(); // Just verify no panic
     }
+
+    #[test]
+    fn session_from_app_captures_all_state() {
+        let mut app = crate::app::App::new();
+        app.add_user_message("hello".into());
+        app.add_assistant_message("hi".into());
+        app.selected_model = "opus".into();
+        app.selected_provider = "openai".into();
+        app.agent_mode = true;
+        app.code_mode = true;
+
+        let session = session_from_app(&app);
+        assert_eq!(session.selected_model, "opus");
+        assert_eq!(session.selected_provider, "openai");
+        assert!(session.agent_mode);
+        assert!(session.code_mode);
+        assert_eq!(session.conversations.len(), 1);
+        assert_eq!(session.conversations[0].messages.len(), 2);
+    }
+
+    #[test]
+    fn restore_session_to_app_works() {
+        let session = Session {
+            id: "test".into(),
+            conversations: vec![
+                SessionConversation {
+                    id: "c1".into(),
+                    title: "Test Conv".into(),
+                    messages: vec![("user".into(), "hello".into())],
+                    created_at: chrono::Utc::now(),
+                },
+                SessionConversation {
+                    id: "c2".into(),
+                    title: "Second Conv".into(),
+                    messages: vec![],
+                    created_at: chrono::Utc::now(),
+                },
+            ],
+            active_conversation: 1,
+            selected_model: "haiku".into(),
+            selected_provider: "ollama".into(),
+            agent_mode: false,
+            code_mode: false,
+            saved_at: chrono::Utc::now(),
+        };
+
+        let mut app = crate::app::App::new();
+        restore_session_to_app(&session, &mut app);
+
+        assert_eq!(app.conversations.len(), 2);
+        assert_eq!(app.active_conversation, 1);
+        assert_eq!(app.selected_model, "haiku");
+        assert_eq!(app.selected_provider, "ollama");
+        assert_eq!(app.conversations[0].title, "Test Conv");
+    }
+
+    #[test]
+    fn restore_empty_session_creates_default_conversation() {
+        let session = Session {
+            id: "test".into(),
+            conversations: vec![],
+            active_conversation: 0,
+            selected_model: "sonnet".into(),
+            selected_provider: "claude_code".into(),
+            agent_mode: false,
+            code_mode: false,
+            saved_at: chrono::Utc::now(),
+        };
+
+        let mut app = crate::app::App::new();
+        restore_session_to_app(&session, &mut app);
+
+        assert_eq!(app.conversations.len(), 1); // Should create a default
+        assert_eq!(app.conversations[0].title, "New Conversation");
+    }
+
+    #[test]
+    fn restore_clamps_active_conversation() {
+        let session = Session {
+            id: "test".into(),
+            conversations: vec![SessionConversation {
+                id: "c1".into(),
+                title: "Only one".into(),
+                messages: vec![],
+                created_at: chrono::Utc::now(),
+            }],
+            active_conversation: 99, // Out of bounds
+            selected_model: "sonnet".into(),
+            selected_provider: "claude_code".into(),
+            agent_mode: false,
+            code_mode: false,
+            saved_at: chrono::Utc::now(),
+        };
+
+        let mut app = crate::app::App::new();
+        restore_session_to_app(&session, &mut app);
+        assert_eq!(app.active_conversation, 0); // Clamped
+    }
+
+    #[test]
+    fn session_save_load_preserves_messages() {
+        let mut app = crate::app::App::new();
+        app.add_user_message("test message 123".into());
+        app.add_assistant_message("response 456".into());
+
+        let session = session_from_app(&app);
+        save_session(&session).unwrap();
+
+        let loaded = load_last_session().unwrap();
+        assert_eq!(loaded.conversations[0].messages.len(), 2);
+        assert_eq!(loaded.conversations[0].messages[0].1, "test message 123");
+        assert_eq!(loaded.conversations[0].messages[1].1, "response 456");
+    }
 }
