@@ -111,8 +111,13 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load().context("failed to load configuration")?;
 
-    let provider = create_provider(&config, cli.provider.as_deref())
-        .context("failed to create AI provider")?;
+    let provider = match create_provider(&config, cli.provider.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Provider error: {e}");
+            std::process::exit(1);
+        }
+    };
     let provider: Arc<dyn AiProvider> = Arc::from(provider);
 
     let model = cli
@@ -222,7 +227,8 @@ fn create_provider(
                     custom.name.clone(),
                 )));
             }
-            anyhow::bail!("Unknown provider: {other}")
+            let help = provider_help_message(other);
+            anyhow::bail!("{help}")
         }
     }
 }
@@ -386,7 +392,8 @@ async fn event_loop(
                     provider = Arc::from(new_provider);
                 }
                 Err(e) => {
-                    app.status_message = Some(format!("Provider error: {e}"));
+                    let help = provider_help_message(&app.selected_provider);
+                    app.add_assistant_message(format!("Provider error: {e}\n\n{help}"));
                 }
             }
             app.provider_changed = false;
@@ -451,16 +458,14 @@ async fn event_loop(
                                 let _ = app.clipboard_manager.save();
                             }
 
-                            // Auto-set title from first user message.
+                            // Auto-set title from first user message (improved).
                             {
                                 let conv = app.current_conversation_mut();
                                 if conv.title == "New Conversation" {
                                     if let Some((_role, content)) =
                                         conv.messages.iter().find(|(r, _)| r == "user")
                                     {
-                                        let title: String =
-                                            content.chars().take(50).collect();
-                                        conv.title = title;
+                                        conv.title = generate_title(content);
                                     }
                                 }
                             }
@@ -715,11 +720,7 @@ async fn handle_key_event(
                 app.mode = AppMode::Normal;
             }
         }
-        AppMode::Settings => {
-            if code == KeyCode::Esc {
-                app.mode = AppMode::Normal;
-            }
-        }
+        AppMode::Settings => handle_settings(app, key),
         AppMode::ClipboardManager => handle_clipboard_manager(app, key),
         AppMode::HistoryBrowser => handle_history_browser(app, key),
         AppMode::SearchOverlay => handle_search(app, key),
@@ -804,6 +805,12 @@ async fn handle_common_ctrl(
         }
         KeyCode::Char('e') => {
             edit_last_message(app);
+            Ok(true)
+        }
+        KeyCode::Char(',') => {
+            app.mode = AppMode::Settings;
+            app.settings_tab = 0;
+            app.settings_select = 0;
             Ok(true)
         }
         _ => Ok(false),
@@ -921,38 +928,80 @@ async fn handle_normal_mode(
                 KeyCode::Right => app.move_cursor_right(),
                 KeyCode::Tab => {
                     if app.input.starts_with('/') {
-                        let partial = &app.input[1..]; // strip the /
-                        let commands = [
-                            "help", "clear", "new", "model", "models", "provider",
-                            "providers", "code", "cwd", "url", "kb", "auto", "status",
-                            "export", "rename", "system", "workspace", "run",
-                            "pipe", "diff", "test", "build", "git",
-                            "agent", "cd", "summary", "compact", "context", "tokens",
-                            "branch", "session", "usage", "cost", "limit", "copy",
-                        ];
-                        let matches: Vec<&&str> = commands
-                            .iter()
-                            .filter(|cmd| cmd.starts_with(partial))
-                            .collect();
-
-                        if matches.len() == 1 {
-                            // Exact completion
-                            app.input = format!("/{} ", matches[0]);
-                            app.cursor_position = app.input.len();
-                        } else if matches.len() > 1 {
-                            // Show options in status
-                            let options = matches
-                                .iter()
-                                .map(|c| format!("/{c}"))
-                                .collect::<Vec<_>>()
-                                .join("  ");
-                            app.status_message = Some(options);
-
-                            // Complete common prefix
-                            let common = common_prefix(&matches);
-                            if common.len() > partial.len() {
-                                app.input = format!("/{common}");
+                        // Check if this is a file command with a path to complete
+                        let parts: Vec<&str> = app.input.splitn(3, ' ').collect();
+                        if parts.len() >= 2 && (parts[0] == "/file" || parts[0] == "/files" || parts[0] == "/cd") {
+                            let partial = parts.last().unwrap_or(&"");
+                            if let Some(completed) = complete_file_path(partial) {
+                                let prefix = if parts.len() == 3 {
+                                    format!("{} {} ", parts[0], parts[1])
+                                } else {
+                                    format!("{} ", parts[0])
+                                };
+                                app.input = format!("{}{}", prefix, completed);
                                 app.cursor_position = app.input.len();
+                            } else {
+                                // Show multiple matches in status bar if any exist
+                                let file_matches = list_file_matches(partial);
+                                if file_matches.len() > 1 {
+                                    let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
+                                    let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
+                                    app.set_status(format!("{}{}", display.join("  "), suffix));
+                                }
+                            }
+                        } else {
+                            // Existing slash command completion
+                            let partial = &app.input[1..]; // strip the /
+                            let commands = [
+                                "help", "clear", "new", "model", "models", "provider",
+                                "providers", "code", "cwd", "url", "kb", "auto", "status",
+                                "export", "rename", "system", "workspace", "run",
+                                "pipe", "diff", "test", "build", "git",
+                                "agent", "cd", "summary", "compact", "context", "tokens",
+                                "branch", "session", "usage", "cost", "limit", "copy",
+                                "file", "files", "theme",
+                            ];
+                            let matches: Vec<&&str> = commands
+                                .iter()
+                                .filter(|cmd| cmd.starts_with(partial))
+                                .collect();
+
+                            if matches.len() == 1 {
+                                app.input = format!("/{} ", matches[0]);
+                                app.cursor_position = app.input.len();
+                            } else if matches.len() > 1 {
+                                let options = matches
+                                    .iter()
+                                    .map(|c| format!("/{c}"))
+                                    .collect::<Vec<_>>()
+                                    .join("  ");
+                                app.status_message = Some(options);
+
+                                let common = common_prefix(&matches);
+                                if common.len() > partial.len() {
+                                    app.input = format!("/{common}");
+                                    app.cursor_position = app.input.len();
+                                }
+                            }
+                        }
+                    } else if app.input.contains('@') {
+                        // Complete @file references
+                        if let Some(at_pos) = app.input.rfind('@') {
+                            let partial = &app.input[at_pos + 1..app.cursor_position];
+                            if partial.contains('.') || partial.contains('/') {
+                                if let Some(completed) = complete_file_path(partial) {
+                                    let before = app.input[..at_pos + 1].to_string();
+                                    let after = app.input[app.cursor_position..].to_string();
+                                    app.input = format!("{}{}{}", before, completed, after);
+                                    app.cursor_position = at_pos + 1 + completed.len();
+                                } else {
+                                    let file_matches = list_file_matches(partial);
+                                    if file_matches.len() > 1 {
+                                        let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
+                                        let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
+                                        app.set_status(format!("{}{}", display.join("  "), suffix));
+                                    }
+                                }
                             }
                         }
                     }
@@ -1373,6 +1422,376 @@ fn common_prefix(strings: &[&&str]) -> String {
             .min(prefix_len);
     }
     first[..prefix_len].to_string()
+}
+
+// ─── File path completion ──────────────────────────────────────────────────
+
+/// Attempt to complete a partial file path. Returns `Some(completed)` if there
+/// is exactly one match or a longer common prefix; `None` otherwise.
+fn complete_file_path(partial: &str) -> Option<String> {
+    use std::path::Path;
+
+    let path = if partial.starts_with("~/") {
+        dirs::home_dir()?.join(&partial[2..])
+    } else if partial.starts_with('/') {
+        std::path::PathBuf::from(partial)
+    } else {
+        std::env::current_dir().ok()?.join(partial)
+    };
+
+    // If the partial path points to an existing file, return it as-is
+    if path.exists() && path.is_file() {
+        return Some(partial.to_string());
+    }
+
+    // Get the parent directory and the prefix to match
+    let (dir, prefix) = if path.is_dir() {
+        (path.clone(), String::new())
+    } else {
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let file_prefix = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        (parent.to_path_buf(), file_prefix)
+    };
+
+    if !dir.exists() {
+        return None;
+    }
+
+    let mut matches: Vec<String> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            } // skip hidden
+            if !prefix.is_empty() && !name.starts_with(&prefix) {
+                continue;
+            }
+
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+            // Build the completed path relative to what the user typed
+            let completed = if partial.contains('/') {
+                let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
+                if is_dir {
+                    format!("{}{}/", dir_part, name)
+                } else {
+                    format!("{}{}", dir_part, name)
+                }
+            } else if is_dir {
+                format!("{}/", name)
+            } else {
+                name.clone()
+            };
+
+            matches.push(completed);
+        }
+    }
+
+    matches.sort();
+
+    if matches.len() == 1 {
+        Some(matches.into_iter().next().unwrap())
+    } else if matches.len() > 1 {
+        // Return common prefix if it extends beyond what was typed
+        let common = find_common_prefix_strings(&matches);
+        if common.len() > partial.len() {
+            Some(common)
+        } else {
+            None // No further completion possible, but matches exist
+        }
+    } else {
+        None
+    }
+}
+
+/// List all file matches for a partial path (used for showing options in status).
+fn list_file_matches(partial: &str) -> Vec<String> {
+    use std::path::Path;
+
+    let path = if partial.starts_with("~/") {
+        match dirs::home_dir() {
+            Some(h) => h.join(&partial[2..]),
+            None => return Vec::new(),
+        }
+    } else if partial.starts_with('/') {
+        std::path::PathBuf::from(partial)
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(partial),
+            Err(_) => return Vec::new(),
+        }
+    };
+
+    let (dir, prefix) = if path.is_dir() {
+        (path.clone(), String::new())
+    } else {
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let file_prefix = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        (parent.to_path_buf(), file_prefix)
+    };
+
+    if !dir.exists() {
+        return Vec::new();
+    }
+
+    let mut matches: Vec<String> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            if !prefix.is_empty() && !name.starts_with(&prefix) {
+                continue;
+            }
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                matches.push(format!("{}/", name));
+            } else {
+                matches.push(name);
+            }
+        }
+    }
+
+    matches.sort();
+    matches
+}
+
+/// Find the longest common prefix among a vec of owned strings.
+fn find_common_prefix_strings(strings: &[String]) -> String {
+    if strings.is_empty() {
+        return String::new();
+    }
+    let first = &strings[0];
+    let mut prefix_len = first.len();
+    for s in &strings[1..] {
+        prefix_len = first
+            .chars()
+            .zip(s.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(prefix_len);
+    }
+    first[..prefix_len].to_string()
+}
+
+// ─── Smart title generation ────────────────────────────────────────────────
+
+/// Generate a concise, meaningful title from the user's first message.
+fn generate_title(first_user_message: &str) -> String {
+    let msg = first_user_message.trim();
+
+    if msg.is_empty() {
+        return "New Conversation".into();
+    }
+
+    // If it starts with a slash command, use the command as context
+    if msg.starts_with('/') {
+        let parts: Vec<&str> = msg.splitn(3, ' ').collect();
+        return match parts.first().copied() {
+            Some("/file") => format!("File: {}", parts.get(1).unwrap_or(&"unknown")),
+            Some("/test") => "Test Run".into(),
+            Some("/build") => "Build".into(),
+            Some("/diff") => "Code Review (diff)".into(),
+            Some("/url") => format!(
+                "Web: {}",
+                parts
+                    .get(1)
+                    .map(|u| {
+                        u.split("//")
+                            .nth(1)
+                            .unwrap_or(u)
+                            .split('/')
+                            .next()
+                            .unwrap_or(u)
+                    })
+                    .unwrap_or("unknown")
+            ),
+            Some("/scaffold") => format!(
+                "Scaffold: {}",
+                parts
+                    .get(1..)
+                    .map(|p| p.join(" "))
+                    .unwrap_or_default()
+            ),
+            Some("/template") => format!("Template: {}", parts.get(1).unwrap_or(&"")),
+            Some(cmd) if cmd.len() > 1 => cmd[1..].to_string(), // Strip / and use command name
+            _ => "New Conversation".into(),
+        };
+    }
+
+    // For regular messages, try to extract a meaningful title
+    // Remove common prefixes (leading punctuation)
+    let cleaned = msg
+        .trim_start_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+
+    if cleaned.is_empty() {
+        return "New Conversation".into();
+    }
+
+    // If it's a question or ends a sentence, use the first sentence
+    if let Some(end) = cleaned.find(|c| c == '?' || c == '.' || c == '\n') {
+        let title: String = cleaned[..=end].chars().take(60).collect();
+        return title;
+    }
+
+    // Otherwise use first 50 chars at a word boundary
+    if cleaned.len() <= 50 {
+        return cleaned;
+    }
+
+    let truncated = &cleaned[..50];
+    if let Some(space) = truncated.rfind(' ') {
+        truncated[..space].to_string()
+    } else {
+        truncated.to_string()
+    }
+}
+
+// ─── Provider help messages ────────────────────────────────────────────────
+
+/// Return a helpful error/setup message for a given provider name.
+fn provider_help_message(provider: &str) -> String {
+    match provider {
+        "openai" => "OpenAI requires an API key.\n\n\
+            Set it via:\n\
+            \x20 1. Config: ~/.config/nerve/config.toml -> providers.openai.api_key\n\
+            \x20 2. Environment: export OPENAI_API_KEY=\"sk-...\"\n\n\
+            Get a key at: https://platform.openai.com/api-keys"
+            .into(),
+        "openrouter" => "OpenRouter requires an API key.\n\n\
+            Set it via:\n\
+            \x20 1. Config: ~/.config/nerve/config.toml -> providers.openrouter.api_key\n\
+            \x20 2. Environment: export OPENROUTER_API_KEY=\"sk-or-...\"\n\n\
+            Get a key at: https://openrouter.ai/keys"
+            .into(),
+        "claude_code" | "claude" => "Claude Code requires the `claude` CLI.\n\n\
+            Install it from: https://claude.ai/code\n\
+            Verify: claude --version"
+            .into(),
+        "ollama" => "Ollama needs to be running locally.\n\n\
+            Install: https://ollama.ai\n\
+            Start: ollama serve\n\
+            Pull a model: ollama pull llama3"
+            .into(),
+        "copilot" | "gh" => "GitHub Copilot requires the `gh` CLI with Copilot extension.\n\n\
+            Install gh: https://cli.github.com\n\
+            Add Copilot: gh extension install github/gh-copilot"
+            .into(),
+        _ => format!(
+            "Unknown provider: {provider}\n\nAvailable: claude_code, openai, openrouter, ollama, copilot"
+        ),
+    }
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────
+
+fn handle_settings(app: &mut App, key: crossterm::event::KeyEvent) {
+    match key.code {
+        KeyCode::Esc => {
+            // Save config and close
+            let mut cfg = Config::load().unwrap_or_default();
+            cfg.default_provider = app.selected_provider.clone();
+            cfg.default_model = app.selected_model.clone();
+            // Apply theme from selected preset
+            let presets = config::theme_presets();
+            if let Some((_, theme)) = presets.get(app.theme_index) {
+                cfg.theme = theme.clone();
+            }
+            let _ = cfg.save();
+            app.mode = AppMode::Normal;
+            app.set_status("Settings saved");
+        }
+        KeyCode::Tab => {
+            app.settings_tab = (app.settings_tab + 1) % 4;
+            app.settings_select = 0;
+        }
+        KeyCode::BackTab => {
+            app.settings_tab = if app.settings_tab == 0 {
+                3
+            } else {
+                app.settings_tab - 1
+            };
+            app.settings_select = 0;
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let max = settings_item_count(app.settings_tab);
+            if app.settings_select + 1 < max {
+                app.settings_select += 1;
+            }
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.settings_select = app.settings_select.saturating_sub(1);
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            toggle_setting(app);
+        }
+        _ => {}
+    }
+}
+
+fn settings_item_count(tab: usize) -> usize {
+    match tab {
+        0 => ui::settings::general_item_count(),
+        1 => ui::settings::providers_item_count(),
+        2 => ui::settings::theme_item_count(),
+        3 => ui::settings::keybinds_item_count(),
+        _ => 0,
+    }
+}
+
+fn toggle_setting(app: &mut App) {
+    match app.settings_tab {
+        0 => {
+            // General tab
+            match app.settings_select {
+                0 => {
+                    // Provider: cycle
+                    let providers = &app.available_providers;
+                    let idx = providers
+                        .iter()
+                        .position(|p| p == &app.selected_provider)
+                        .unwrap_or(0);
+                    app.selected_provider =
+                        providers[(idx + 1) % providers.len()].clone();
+                    app.provider_changed = true;
+                }
+                1 => {
+                    // Model: cycle
+                    let idx = app
+                        .available_models
+                        .iter()
+                        .position(|m| m == &app.selected_model)
+                        .unwrap_or(0);
+                    app.selected_model = app.available_models
+                        [(idx + 1) % app.available_models.len()]
+                    .clone();
+                }
+                2 => app.agent_mode = !app.agent_mode,
+                3 => app.code_mode = !app.code_mode,
+                4 => app.spending_limit.enabled = !app.spending_limit.enabled,
+                _ => {}
+            }
+        }
+        2 => {
+            // Theme tab: only the preset selector (item 0) cycles
+            if app.settings_select == 0 {
+                let presets = config::theme_presets();
+                app.theme_index = (app.theme_index + 1) % presets.len();
+            }
+        }
+        _ => {}
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -2952,6 +3371,51 @@ System\n\
         return true;
     }
 
+    // /theme — theme management.
+    if trimmed == "/theme" || trimmed.starts_with("/theme ") {
+        let rest = trimmed.strip_prefix("/theme").unwrap_or("").trim();
+        let presets = config::theme_presets();
+        if rest.is_empty() || rest == "list" {
+            let mut msg = "Available themes:\n\n".to_string();
+            for (i, (name, _)) in presets.iter().enumerate() {
+                let marker = if i == app.theme_index {
+                    "\u{25ba} "
+                } else {
+                    "  "
+                };
+                msg.push_str(&format!("{marker}{name}\n"));
+            }
+            msg.push_str("\nUsage: /theme <name> or /theme <number>");
+            app.add_assistant_message(msg);
+        } else {
+            let query = rest.to_lowercase();
+            if let Some(idx) = query
+                .parse::<usize>()
+                .ok()
+                .and_then(|n| {
+                    if n > 0 && n <= presets.len() {
+                        Some(n - 1)
+                    } else {
+                        None
+                    }
+                })
+            {
+                app.theme_index = idx;
+                app.set_status(format!("Theme: {}", presets[idx].0));
+            } else if let Some(idx) = presets
+                .iter()
+                .position(|(name, _)| name.to_lowercase().contains(&query))
+            {
+                app.theme_index = idx;
+                app.set_status(format!("Theme: {}", presets[idx].0));
+            } else {
+                app.set_status("Theme not found. Use /theme list");
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
     false
 }
 
@@ -3916,5 +4380,109 @@ mod tests {
     #[test]
     fn test_is_dangerous_redirect_to_dev() {
         assert!(is_dangerous_command("echo foo > /dev/sda"));
+    }
+
+    // ── generate_title tests ─────────────────────────────────────────
+
+    #[test]
+    fn generate_title_question() {
+        assert_eq!(
+            generate_title("How do I implement a binary search?"),
+            "How do I implement a binary search?"
+        );
+    }
+
+    #[test]
+    fn generate_title_long_message() {
+        let msg = "This is a very long message that goes on and on about various topics and should be truncated";
+        let title = generate_title(msg);
+        assert!(title.len() <= 60);
+    }
+
+    #[test]
+    fn generate_title_slash_command() {
+        assert_eq!(generate_title("/test"), "Test Run");
+        assert_eq!(generate_title("/diff"), "Code Review (diff)");
+        assert!(generate_title("/file src/main.rs").starts_with("File:"));
+    }
+
+    #[test]
+    fn generate_title_with_question_mark() {
+        assert_eq!(
+            generate_title("What is Rust? I want to learn"),
+            "What is Rust?"
+        );
+    }
+
+    #[test]
+    fn generate_title_empty() {
+        assert_eq!(generate_title(""), "New Conversation");
+        assert_eq!(generate_title("   "), "New Conversation");
+    }
+
+    #[test]
+    fn generate_title_short_message() {
+        assert_eq!(generate_title("Hello"), "Hello");
+    }
+
+    // ── complete_file_path tests ─────────────────────────────────────
+
+    #[test]
+    fn complete_file_path_finds_cargo() {
+        let result = complete_file_path("Cargo");
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("Cargo"));
+    }
+
+    #[test]
+    fn complete_file_path_directory() {
+        let result = complete_file_path("src/");
+        // Should return None (multiple matches) or a specific file
+        // Just verify no panic
+        let _ = result;
+    }
+
+    #[test]
+    fn complete_file_path_nonexistent() {
+        let result = complete_file_path("zzz_nonexistent_file_xyz");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn complete_file_path_exact_file() {
+        // Cargo.toml exists as-is
+        let result = complete_file_path("Cargo.toml");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "Cargo.toml");
+    }
+
+    // ── find_common_prefix_strings tests ─────────────────────────────
+
+    #[test]
+    fn find_common_prefix_strings_basic() {
+        let strs = vec!["src/main.rs".into(), "src/mod.rs".into()];
+        assert_eq!(find_common_prefix_strings(&strs), "src/m");
+    }
+
+    #[test]
+    fn find_common_prefix_strings_empty() {
+        let strs: Vec<String> = vec![];
+        assert_eq!(find_common_prefix_strings(&strs), "");
+    }
+
+    // ── provider_help_message tests ──────────────────────────────────
+
+    #[test]
+    fn provider_help_message_known() {
+        let msg = provider_help_message("openai");
+        assert!(msg.contains("API key"));
+        assert!(msg.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn provider_help_message_unknown() {
+        let msg = provider_help_message("foobar");
+        assert!(msg.contains("Unknown provider"));
+        assert!(msg.contains("Available"));
     }
 }
