@@ -162,6 +162,11 @@ pub struct App {
     pub usage_stats: crate::usage::UsageStats,
     pub spending_limit: crate::usage::SpendingLimit,
 
+    // -- settings overlay --
+    pub settings_tab: usize,
+    pub settings_select: usize,
+    pub theme_index: usize,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -252,6 +257,10 @@ impl App {
 
             usage_stats: crate::usage::UsageStats::new(),
             spending_limit: crate::usage::SpendingLimit::default(),
+
+            settings_tab: 0,
+            settings_select: 0,
+            theme_index: 0,
 
             status_message: None,
             status_time: None,
