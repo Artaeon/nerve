@@ -66,6 +66,7 @@ pub fn render_help(frame: &mut Frame) {
         ("", "Overlays"),
         ("Ctrl+P", "Prompt picker"),
         ("Ctrl+M", "Model selector"),
+        ("Ctrl+,", "Settings"),
         ("Ctrl+H", "Help (this screen)"),
         ("", ""),
         // -- Editing --

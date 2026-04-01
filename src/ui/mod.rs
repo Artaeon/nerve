@@ -5,6 +5,7 @@ pub mod help;
 pub mod history_browser;
 pub mod prompt_picker;
 pub mod search;
+pub mod settings;
 
 use ratatui::{
     Frame,
@@ -35,7 +36,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             return;
         }
         AppMode::Settings => {
-            render_settings_placeholder(frame, area);
+            settings::render_settings(frame, app, area);
             return;
         }
         _ => {}
@@ -915,34 +916,3 @@ fn render_provider_selector(frame: &mut Frame, app: &App) {
     frame.render_stateful_widget(list, popup_area, &mut state);
 }
 
-// ─── Settings placeholder ────────────────────────────────────────────────────
-
-fn render_settings_placeholder(frame: &mut Frame, area: Rect) {
-    let block = Block::default()
-        .title(Line::from(Span::styled(
-            " Settings ",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan))
-        .padding(Padding::new(2, 2, 1, 1));
-
-    let text = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(Span::styled(
-            "Settings panel coming soon.",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press Esc to go back.",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ])
-    .block(block)
-    .wrap(Wrap { trim: false });
-
-    frame.render_widget(text, area);
-}
