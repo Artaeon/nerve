@@ -370,7 +370,7 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
     // Show splash screen briefly.
     if !no_splash {
         terminal.draw(|frame| render_splash(frame, "Loading..."))?;
-        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
     let init_status = |terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>, msg: &str| {
@@ -386,6 +386,7 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
     init_status(&mut terminal, "Detecting workspace...");
 
     // Auto-detect workspace and inject system prompt with project context.
+    // Cache the full WorkspaceInfo so later commands don't re-scan the filesystem.
     let detected_workspace = workspace::detect_workspace();
     if let Some(ref ws) = detected_workspace {
         let sys_prompt = ws.to_system_prompt();
@@ -399,6 +400,7 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
             ws.tech_stack.join(", "),
         ));
     }
+    app.cached_workspace = detected_workspace.clone();
 
     init_status(&mut terminal, "Loading plugins...");
 
@@ -422,7 +424,7 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
 
     if !no_splash {
         terminal.draw(|frame| render_splash(frame, "Ready!"))?;
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     // Restore previous session if --continue was passed.
@@ -494,8 +496,14 @@ async fn event_loop(
             app.provider_changed = false;
         }
 
-        // Poll for events with a short timeout so we can service the stream.
-        if event::poll(std::time::Duration::from_millis(50))? {
+        // Adaptive poll: fast during streaming for smooth updates, slow when idle to save CPU.
+        let poll_duration = if app.is_streaming {
+            std::time::Duration::from_millis(16) // ~60fps for smooth streaming
+        } else {
+            std::time::Duration::from_millis(100) // 10fps when idle — saves CPU
+        };
+
+        if event::poll(poll_duration)? {
             match event::read()? {
                 Event::Key(key) => {
                     handle_key_event(app, key, &provider, config).await?;
@@ -1095,7 +1103,7 @@ async fn handle_normal_mode(
                                 "pipe", "diff", "test", "build", "git",
                                 "agent", "cd", "summary", "compact", "context", "tokens",
                                 "branch", "session", "usage", "cost", "limit", "copy",
-                                "file", "files", "theme",
+                                "file", "files", "theme", "alias", "repeat",
                             ];
                             let matches: Vec<&&str> = commands
                                 .iter()
@@ -1144,6 +1152,49 @@ async fn handle_normal_mode(
                             }
                         }
                     }
+                }
+                KeyCode::Up => {
+                    // Browse input history (older)
+                    if !app.input_history.is_empty() {
+                        match app.input_history_index {
+                            None => {
+                                // Save current input and go to most recent history
+                                app.input_saved = app.input.clone();
+                                app.input_history_index = Some(app.input_history.len() - 1);
+                                app.input = app.input_history.last().unwrap().clone();
+                                app.cursor_position = app.input.len();
+                            }
+                            Some(idx) if idx > 0 => {
+                                app.input_history_index = Some(idx - 1);
+                                app.input = app.input_history[idx - 1].clone();
+                                app.cursor_position = app.input.len();
+                            }
+                            _ => {} // At oldest entry, do nothing
+                        }
+                    }
+                }
+                KeyCode::Down => {
+                    // Browse input history (newer)
+                    match app.input_history_index {
+                        Some(idx) => {
+                            if idx + 1 < app.input_history.len() {
+                                app.input_history_index = Some(idx + 1);
+                                app.input = app.input_history[idx + 1].clone();
+                            } else {
+                                // Back to current input
+                                app.input_history_index = None;
+                                app.input = app.input_saved.clone();
+                            }
+                            app.cursor_position = app.input.len();
+                        }
+                        None => {} // Already at current input
+                    }
+                }
+                KeyCode::Home => {
+                    app.cursor_position = 0;
+                }
+                KeyCode::End => {
+                    app.cursor_position = app.input.len();
                 }
                 KeyCode::Char(c) => app.insert_char(c),
                 _ => {}
@@ -2098,6 +2149,14 @@ Automation\n\
   /auto create <name> Create custom automation\n\
   /auto delete <name> Delete custom automation\n\
 \n\
+Power User\n\
+  /alias              List all aliases\n\
+  /alias <n> <cmd>    Create alias (e.g. /alias t /run cargo test)\n\
+  /!!                 Recall last input (press Enter to send)\n\
+  /repeat             Same as /!!\n\
+  Up/Down (Insert)    Browse input history\n\
+  Home/End (Insert)   Jump to start/end of input\n\
+\n\
 Keybindings\n\
   Esc (streaming)     Stop generation\n\
   Ctrl+R              Regenerate last response\n\
@@ -2352,8 +2411,10 @@ System\n\
                 app.current_conversation_mut()
                     .messages
                     .insert(0, ("system".into(), tools_prompt));
-                // Inject project map for context
-                if let Some(ws) = crate::workspace::detect_workspace() {
+                // Inject project map for context (prefer cached workspace).
+                let ws_for_agent = app.cached_workspace.clone()
+                    .or_else(crate::workspace::detect_workspace);
+                if let Some(ws) = ws_for_agent {
                     let project_map =
                         crate::workspace::generate_project_map(&ws.root, 3);
                     // Truncate if very large (keep under 2000 chars)
@@ -2548,8 +2609,9 @@ System\n\
                         "Changed to {}",
                         target_path.display()
                     ));
-                    // Re-detect workspace
-                    if let Some(ws) = crate::workspace::detect_workspace() {
+                    // Re-detect workspace (directory changed, so invalidate cache).
+                    let ws = crate::workspace::detect_workspace();
+                    if let Some(ref ws) = ws {
                         app.set_status(format!(
                             "Changed to {} \u{2014} detected {:?} project: {}",
                             target_path.display(),
@@ -2557,6 +2619,7 @@ System\n\
                             ws.name
                         ));
                     }
+                    app.cached_workspace = ws;
                 }
                 Err(e) => app.set_status(format!("Error: {e}")),
             }
@@ -2816,9 +2879,11 @@ System\n\
         return true;
     }
 
-    // /workspace (or /ws) — show detected workspace info.
+    // /workspace (or /ws) — show detected workspace info (prefer cache).
     if trimmed == "/workspace" || trimmed == "/ws" {
-        match workspace::detect_workspace() {
+        let ws_info = app.cached_workspace.clone()
+            .or_else(workspace::detect_workspace);
+        match ws_info {
             Some(ws) => {
                 let info = format!(
                     "Workspace detected:\n\n\
@@ -3462,8 +3527,11 @@ System\n\
         let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
         ctx.push_str(&format!("\nTotal: {} messages, ~{} tokens estimated\n", conv.messages.len(), total));
 
-        // Show workspace if detected
-        if let Some(ws) = crate::workspace::detect_workspace() {
+        // Show workspace if detected (prefer cache).
+        let ws_for_ctx = app.cached_workspace.as_ref()
+            .cloned()
+            .or_else(crate::workspace::detect_workspace);
+        if let Some(ws) = ws_for_ctx {
             ctx.push_str(&format!("Workspace: {} ({:?})\n", ws.name, ws.project_type));
         }
 
@@ -3786,6 +3854,84 @@ System\n\
         }
         app.scroll_offset = 0;
         return true;
+    }
+
+    // ── /alias — user-defined command shortcuts ─────────────────────────
+
+    if trimmed == "/alias" || trimmed.starts_with("/alias ") {
+        let rest = trimmed.strip_prefix("/alias").unwrap_or("").trim();
+        if rest.is_empty() {
+            if app.aliases.is_empty() {
+                app.add_assistant_message(
+                    "No aliases set.\n\nUsage: /alias <name> <command>\nExample: /alias r /run cargo test".into(),
+                );
+            } else {
+                let mut msg = "Aliases:\n\n".to_string();
+                let mut sorted: Vec<_> = app.aliases.iter().collect();
+                sorted.sort_by_key(|(k, _)| k.clone());
+                for (name, cmd) in &sorted {
+                    msg.push_str(&format!("  /{name} \u{2192} {cmd}\n"));
+                }
+                app.add_assistant_message(msg);
+            }
+        } else {
+            let parts: Vec<&str> = rest.splitn(2, char::is_whitespace).collect();
+            if parts.len() >= 2 {
+                let name = parts[0].to_string();
+                let command = parts[1].trim().to_string();
+                app.set_status(format!("Alias set: /{name} \u{2192} {command}"));
+                app.aliases.insert(name, command);
+            } else {
+                app.set_status("Usage: /alias <name> <command>");
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // ── /!! or /repeat — recall last input ──────────────────────────────
+
+    if trimmed == "/!!" || trimmed == "/repeat" {
+        if let Some(last) = app.input_history.last().cloned() {
+            app.input = last;
+            app.cursor_position = app.input.len();
+            app.input_mode = InputMode::Insert;
+            app.set_status("Loaded last input \u{2014} press Enter to send");
+        } else {
+            app.set_status("No previous input");
+        }
+        return true;
+    }
+
+    // ── Alias expansion (check before returning false) ──────────────────
+
+    {
+        // Extract the command name (first word after the slash)
+        let cmd_name = trimmed
+            .strip_prefix('/')
+            .unwrap_or("")
+            .split_whitespace()
+            .next()
+            .unwrap_or("");
+        let remaining_args = trimmed
+            .strip_prefix('/')
+            .unwrap_or("")
+            .strip_prefix(cmd_name)
+            .unwrap_or("")
+            .trim();
+
+        if let Some(aliased) = app.aliases.get(cmd_name).cloned() {
+            let full = if remaining_args.is_empty() {
+                aliased.clone()
+            } else {
+                format!("{} {}", aliased, remaining_args)
+            };
+            app.input = full;
+            app.cursor_position = app.input.len();
+            app.input_mode = InputMode::Insert;
+            app.set_status(format!("Expanded alias: /{cmd_name}"));
+            return true;
+        }
     }
 
     false
@@ -5293,6 +5439,26 @@ mod tests {
         let title = generate_title("/scaffold a REST API in Go");
         assert!(
             title.starts_with("Scaffold:") || title.contains("scaffold") || title.contains("REST"),
+        );
+    }
+
+    #[test]
+    fn builtin_prompts_cached_is_fast() {
+        // Access the lazy cache — first or subsequent (another test may have
+        // triggered init already since LazyLock is process-global).
+        let first_count = crate::prompts::BUILTIN_CACHE.len();
+        assert!(first_count >= 130, "expected >= 130 builtins, got {first_count}");
+
+        // 1000 cached accesses should complete well under 10ms.
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            assert_eq!(crate::prompts::BUILTIN_CACHE.len(), first_count);
+        }
+        let hot = start.elapsed();
+
+        assert!(
+            hot < std::time::Duration::from_millis(10),
+            "1000 cached BUILTIN_CACHE accesses should be <10ms, took {hot:?}",
         );
     }
 }

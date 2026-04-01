@@ -38,7 +38,6 @@ dirs = "6"
 
 # Error handling
 anyhow = "1"
-thiserror = "2"
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
@@ -53,14 +52,10 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Async streams
-tokio-stream = "0.1"
 futures = "0.3"
 
 # Syntax highlighting
 syntect = "5"
-
-# Markdown parsing
-pulldown-cmark = "0.12"
 
 # Tracing/logging
 tracing = "0.1"
