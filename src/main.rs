@@ -77,6 +77,10 @@ struct Cli {
     /// Resume the last session
     #[arg(short = 'c', long = "continue")]
     continue_session: bool,
+
+    /// Skip the splash screen
+    #[arg(long)]
+    no_splash: bool,
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -159,7 +163,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Interactive TUI.
-    run_tui(provider, config, cli.continue_session).await
+    run_tui(provider, config, cli.continue_session, cli.no_splash).await
 }
 
 // ─── Provider creation ──────────────────────────────────────────────────────
@@ -296,9 +300,62 @@ async fn list_models(provider: &dyn AiProvider) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ─── Splash screen ─────────────────────────────────────────────────────────
+
+fn render_splash(frame: &mut ratatui::Frame, status: &str) {
+    use ratatui::{
+        layout::{Alignment, Constraint, Direction, Layout},
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::{Block, Clear, Paragraph},
+    };
+
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Min(12),
+            Constraint::Percentage(30),
+        ])
+        .split(area);
+
+    let center = chunks[1];
+
+    let art_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim_style = Style::default().fg(Color::DarkGray);
+    let version_style = Style::default().fg(Color::Yellow);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("    _   __", art_style)),
+        Line::from(Span::styled("   / | / /__  ______   _____", art_style)),
+        Line::from(Span::styled("  /  |/ / _ \\/ ___/ | / / _ \\", art_style)),
+        Line::from(Span::styled(" / /|  /  __/ /   | |/ /  __/", art_style)),
+        Line::from(Span::styled("/_/ |_/\\___/_/    |___/\\___/", art_style)),
+        Line::from(""),
+        Line::from(Span::styled("  Raw AI power in your terminal", dim_style)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  v0.1.0", version_style),
+            Span::styled("  |  ", dim_style),
+            Span::styled(status.to_string(), dim_style),
+        ]),
+        Line::from(""),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Center)
+        .block(Block::default());
+
+    frame.render_widget(paragraph, center);
+}
+
 // ─── Interactive TUI ────────────────────────────────────────────────────────
 
-async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session: bool) -> anyhow::Result<()> {
+async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session: bool, no_splash: bool) -> anyhow::Result<()> {
     // Enter the alternate screen and enable raw mode.
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -310,28 +367,63 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
     let backend = ratatui::backend::CrosstermBackend::new(stdout);
     let mut terminal = ratatui::Terminal::new(backend)?;
 
+    // Show splash screen briefly.
+    if !no_splash {
+        terminal.draw(|frame| render_splash(frame, "Loading..."))?;
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    }
+
+    let init_status = |terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>, msg: &str| {
+        if !no_splash {
+            terminal.draw(|frame| render_splash(frame, msg)).ok();
+        }
+    };
+
     let mut app = App::new();
     app.selected_model = config.default_model.clone();
     app.selected_provider = config.default_provider.clone();
 
+    init_status(&mut terminal, "Detecting workspace...");
+
     // Auto-detect workspace and inject system prompt with project context.
-    if let Some(ws) = workspace::detect_workspace() {
+    let detected_workspace = workspace::detect_workspace();
+    if let Some(ref ws) = detected_workspace {
         let sys_prompt = ws.to_system_prompt();
         app.current_conversation_mut()
             .messages
             .insert(0, ("system".into(), sys_prompt));
-        app.set_status(format!(
-            "{:?} project '{}' | {} > {} | /help for commands",
-            ws.project_type, ws.name, app.selected_provider, app.selected_model
+        app.detected_workspace = Some(format!(
+            "{} ({:?}) \u{2014} {}",
+            ws.name,
+            ws.project_type,
+            ws.tech_stack.join(", "),
         ));
     }
+
+    init_status(&mut terminal, "Loading plugins...");
 
     // Load plugins from ~/.config/nerve/plugins/
     let loaded_plugins = plugins::load_plugins();
     if !loaded_plugins.is_empty() {
         app.set_status(format!("{} plugin(s) loaded", loaded_plugins.len()));
     }
-    app.plugins = loaded_plugins;
+    app.plugins = loaded_plugins.clone();
+
+    // Build startup status line.
+    let mut info_parts = vec![format!("{} > {}", app.selected_provider, app.selected_model)];
+    if let Some(ref ws) = detected_workspace {
+        info_parts.push(format!("{:?}: {}", ws.project_type, ws.name));
+    }
+    if !loaded_plugins.is_empty() {
+        info_parts.push(format!("{} plugin(s)", loaded_plugins.len()));
+    }
+    info_parts.push("/help for commands".into());
+    app.set_status(info_parts.join(" | "));
+
+    if !no_splash {
+        terminal.draw(|frame| render_splash(frame, "Ready!"))?;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 
     // Restore previous session if --continue was passed.
     if continue_session {
@@ -511,27 +603,67 @@ async fn event_loop(
                                     && app.agent_iterations < 10
                                 {
                                     app.agent_iterations += 1;
+
+                                    // Show what the agent is doing in a human-readable way
+                                    let mut action_summary = String::new();
+                                    for call in &tool_calls {
+                                        let brief = match call.tool.as_str() {
+                                            "read_file" => format!("Reading {}", call.args.get("path").unwrap_or(&"?".into())),
+                                            "write_file" => format!("Writing {}", call.args.get("path").unwrap_or(&"?".into())),
+                                            "edit_file" => format!("Editing {}", call.args.get("path").unwrap_or(&"?".into())),
+                                            "run_command" => format!("Running: {}", call.args.get("command").unwrap_or(&"?".into())),
+                                            "list_files" => format!("Listing {}", call.args.get("path").unwrap_or(&".".into())),
+                                            "search_code" => format!("Searching for '{}'", call.args.get("pattern").unwrap_or(&"?".into())),
+                                            "create_directory" => format!("Creating {}", call.args.get("path").unwrap_or(&"?".into())),
+                                            "find_files" => format!("Finding {}", call.args.get("pattern").unwrap_or(&"*".into())),
+                                            "read_lines" => format!("Reading lines from {}", call.args.get("path").unwrap_or(&"?".into())),
+                                            _ => format!("{}", call.tool),
+                                        };
+                                        action_summary.push_str(&format!("  > {brief}\n"));
+                                    }
                                     app.set_status(format!(
-                                        "Agent executing {} tool(s)... (iteration {})",
-                                        tool_calls.len(),
-                                        app.agent_iterations
+                                        "Agent (step {}/10):\n{}",
+                                        app.agent_iterations, action_summary
                                     ));
 
                                     // Execute tools and build results message
                                     let mut results =
-                                        String::from("Tool execution results:\n\n");
-                                    for call in &tool_calls {
+                                        String::from("I executed your tool calls. Here are the results:\n\n");
+                                    let mut all_success = true;
+
+                                    for (idx, call) in tool_calls.iter().enumerate() {
                                         let result =
                                             crate::agent::tools::execute_tool(call);
-                                        let status = if result.success {
-                                            "SUCCESS"
+                                        if !result.success {
+                                            all_success = false;
+                                        }
+                                        let status_icon = if result.success {
+                                            "OK"
                                         } else {
-                                            "FAILED"
+                                            "ERROR"
                                         };
                                         results.push_str(&format!(
-                                            "<tool_result>\ntool: {}\nstatus: {status}\noutput:\n{}\n</tool_result>\n\n",
-                                            result.tool, result.output
+                                            "### Tool {}: {} [{}]\n```\n{}\n```\n\n",
+                                            idx + 1,
+                                            result.tool,
+                                            status_icon,
+                                            // Truncate very long outputs to save tokens
+                                            if result.output.len() > 5000 {
+                                                format!(
+                                                    "{}...\n[Output truncated: {} chars total]",
+                                                    &result.output[..5000],
+                                                    result.output.len()
+                                                )
+                                            } else {
+                                                result.output.clone()
+                                            }
                                         ));
+                                    }
+
+                                    if !all_success {
+                                        results.push_str(
+                                            "Some tools failed. Please review the errors above and adjust your approach.\n",
+                                        );
                                     }
 
                                     // Add tool results as a user message
@@ -1851,7 +1983,7 @@ AI Provider\n\
   /model <name>       Switch model\n\
   /models             List available models\n\
   /code on|off        Toggle code mode (Claude Code only)\n\
-  /agent on|off       Toggle agent mode (AI tool loop)\n\
+  /agent on|off|status Toggle agent mode (AI tool loop)\n\
   /cwd <dir>          Set working directory\n\
   /cd <dir>           Change working directory\n\
 \n\
@@ -2136,7 +2268,8 @@ System\n\
                     .messages
                     .retain(|(r, c)| {
                         !(r == "system"
-                            && c.contains("You have access to the following tools"))
+                            && (c.contains("You have access to the following tools")
+                                || c.contains("You are Nerve, an AI coding assistant")))
                     });
                 app.current_conversation_mut()
                     .messages
@@ -2147,13 +2280,39 @@ System\n\
             }
             "off" => {
                 app.agent_mode = false;
+                app.agent_iterations = 0;
+                crate::agent::tools::reset_tool_counter();
                 app.current_conversation_mut()
                     .messages
                     .retain(|(r, c)| {
                         !(r == "system"
-                            && c.contains("You have access to the following tools"))
+                            && (c.contains("You have access to the following tools")
+                                || c.contains("You are Nerve, an AI coding assistant")))
                     });
                 app.set_status("Agent mode OFF \u{2014} chat only");
+            }
+            "status" => {
+                let tools = crate::agent::tools::available_tools();
+                let mut msg = format!(
+                    "Agent Mode: {}\n\n",
+                    if app.agent_mode { "ACTIVE" } else { "INACTIVE" }
+                );
+                msg.push_str(&format!(
+                    "Iterations this task: {}/10\n",
+                    app.agent_iterations
+                ));
+                msg.push_str(&format!("Available tools ({}):\n", tools.len()));
+                for tool in &tools {
+                    msg.push_str(&format!("  - {}: {}\n", tool.name, tool.description));
+                }
+                msg.push_str(&format!(
+                    "\nCode mode: {}\n",
+                    if app.code_mode { "ON" } else { "OFF" }
+                ));
+                if let Some(ref dir) = app.working_dir {
+                    msg.push_str(&format!("Working directory: {dir}\n"));
+                }
+                app.add_assistant_message(msg);
             }
             _ => {
                 let status = if app.agent_mode { "ON" } else { "OFF" };
@@ -2164,7 +2323,7 @@ System\n\
                      - Run shell commands\n\
                      - Search code\n\
                      - Create directories\n\n\
-                     Usage: /agent on | /agent off"
+                     Usage: /agent on | /agent off | /agent status"
                 ));
             }
         }
