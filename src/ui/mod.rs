@@ -695,8 +695,14 @@ pub(crate) fn model_info(id: &str) -> (&str, &str, &str) {
         "haiku" => ("Claude Haiku 4.5", "Claude Code", "200K ctx"),
         "gpt-4o" => ("GPT-4o", "OpenAI", "128K ctx"),
         "gpt-4o-mini" => ("GPT-4o Mini", "OpenAI", "128K ctx"),
-        "llama3" => ("Llama 3", "Ollama", "8K ctx"),
-        other => (other, "Other", ""),
+        "copilot" => ("GitHub Copilot", "Copilot", "8K ctx"),
+        // OpenRouter models
+        "anthropic/claude-sonnet-4-20250514" => ("Claude Sonnet 4", "OpenRouter", "200K ctx"),
+        "openai/gpt-4o" => ("GPT-4o", "OpenRouter", "128K ctx"),
+        "meta-llama/llama-3-70b" => ("Llama 3 70B", "OpenRouter", "8K ctx"),
+        "google/gemini-pro" => ("Gemini Pro", "OpenRouter", "32K ctx"),
+        // Ollama and other models — show the ID as the name
+        other => (other, "Ollama", ""),
     }
 }
 
@@ -720,13 +726,24 @@ fn format_elapsed(secs: f64) -> String {
 fn render_model_selector(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
-    // Group models by provider, preserving the order defined here.
-    let provider_groups: &[(&str, &[&str])] = &[
-        ("Claude Code", &["opus", "sonnet", "haiku"]),
-        ("OpenAI", &["gpt-4o", "gpt-4o-mini"]),
-        ("Ollama", &["llama3"]),
-        ("Other", &[]),
+    // Dynamically group available models by their provider_group from model_info.
+    // Preserve a preferred ordering for known groups.
+    let group_order: &[&str] = &[
+        "Claude Code",
+        "OpenAI",
+        "OpenRouter",
+        "Copilot",
+        "Ollama",
+        "Other",
     ];
+
+    // Build a map from group name -> list of model IDs.
+    let mut group_map: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for model_id in &app.available_models {
+        let (_, group, _) = model_info(model_id);
+        group_map.entry(group).or_default().push(model_id.as_str());
+    }
 
     // Build lines and track which line indices correspond to selectable models.
     let mut lines: Vec<Line<'_>> = Vec::new();
@@ -734,29 +751,25 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
     // Map from flat model index -> line index (for scroll tracking).
     let mut _model_line_map: Vec<usize> = Vec::new();
 
-    // Collect "other" models not in any predefined group.
-    let known: std::collections::HashSet<&str> =
-        ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini", "llama3"]
-            .iter()
-            .copied()
-            .collect();
-    let other_models: Vec<&str> = app
-        .available_models
-        .iter()
-        .filter(|m| !known.contains(m.as_str()))
-        .map(|m| m.as_str())
-        .collect();
+    // Collect groups in preferred order, then any remaining groups.
+    let mut seen_groups: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut ordered_groups: Vec<&str> = Vec::new();
+    for &g in group_order {
+        if group_map.contains_key(g) {
+            ordered_groups.push(g);
+            seen_groups.insert(g);
+        }
+    }
+    for g in group_map.keys() {
+        if !seen_groups.contains(g) {
+            ordered_groups.push(g);
+        }
+    }
 
-    for &(provider_name, group_models) in provider_groups {
-        // Determine which models in this group are actually available.
-        let models_in_group: Vec<&str> = if provider_name == "Other" {
-            other_models.clone()
-        } else {
-            group_models
-                .iter()
-                .filter(|id| app.available_models.contains(&id.to_string()))
-                .copied()
-                .collect()
+    for provider_name in &ordered_groups {
+        let models_in_group = match group_map.get(provider_name) {
+            Some(models) => models.clone(),
+            None => continue,
         };
         if models_in_group.is_empty() {
             continue;
@@ -1019,7 +1032,7 @@ mod tests {
     fn model_info_unknown_model() {
         let (name, group, ctx) = model_info("totally_unknown_model");
         assert_eq!(name, "totally_unknown_model");
-        assert_eq!(group, "Other");
+        assert_eq!(group, "Ollama");
         assert!(ctx.is_empty());
     }
 }

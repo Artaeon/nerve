@@ -245,6 +245,63 @@ fn create_provider_from_app(config: &Config, app: &App) -> anyhow::Result<Box<dy
     }
 }
 
+/// Detect locally-installed Ollama models by shelling out to `ollama list`.
+/// Falls back to a single "llama3" entry if Ollama is unavailable.
+fn detect_ollama_models() -> Vec<String> {
+    match std::process::Command::new("ollama").args(["list"]).output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let models: Vec<String> = stdout
+                .lines()
+                .skip(1) // Skip header line "NAME  ID  SIZE  MODIFIED"
+                .filter_map(|line| {
+                    let name = line.split_whitespace().next()?;
+                    if name.is_empty() {
+                        None
+                    } else {
+                        Some(name.to_string())
+                    }
+                })
+                .collect();
+            if models.is_empty() {
+                vec!["llama3".into()]
+            } else {
+                models
+            }
+        }
+        _ => vec!["llama3".into()], // Fallback if ollama not running
+    }
+}
+
+/// Return the default model for a given provider.
+fn default_model_for_provider(provider: &str) -> &'static str {
+    match provider {
+        "claude_code" | "claude" => "sonnet",
+        "openai" => "gpt-4o",
+        "openrouter" => "anthropic/claude-sonnet-4-20250514",
+        "ollama" => "llama3",
+        "copilot" | "gh" => "copilot",
+        _ => "default",
+    }
+}
+
+/// Return the list of available models for a given provider.
+fn models_for_provider(provider: &str) -> Vec<String> {
+    match provider {
+        "claude_code" | "claude" => vec!["opus".into(), "sonnet".into(), "haiku".into()],
+        "openai" => vec!["gpt-4o".into(), "gpt-4o-mini".into()],
+        "openrouter" => vec![
+            "anthropic/claude-sonnet-4-20250514".into(),
+            "openai/gpt-4o".into(),
+            "meta-llama/llama-3-70b".into(),
+            "google/gemini-pro".into(),
+        ],
+        "copilot" | "gh" => vec!["copilot".into()],
+        "ollama" => detect_ollama_models(),
+        _ => vec!["default".into()],
+    }
+}
+
 /// Resolve an API key: prefer the config value, fall back to an environment
 /// variable. Returns an error if neither is set.
 fn resolve_api_key(config_value: Option<&str>, env_var: &str) -> anyhow::Result<String> {
@@ -342,6 +399,66 @@ fn render_splash(frame: &mut ratatui::Frame, status: &str) {
         .block(Block::default());
 
     frame.render_widget(paragraph, center);
+}
+
+fn render_goodbye(frame: &mut ratatui::Frame, app: &crate::app::App) {
+    use ratatui::{
+        layout::{Alignment, Constraint, Direction, Layout},
+        style::{Color, Modifier, Style},
+        text::{Line, Span},
+        widgets::{Block, Clear, Paragraph},
+    };
+
+    let area = frame.area();
+    frame.render_widget(Clear, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(35),
+            Constraint::Min(8),
+            Constraint::Percentage(35),
+        ])
+        .split(area);
+
+    let art_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let stat_style = Style::default().fg(Color::Yellow);
+
+    // Session stats
+    let msg_count: usize = app.conversations.iter().map(|c| c.messages.len()).sum();
+    let conv_count = app.conversations.len();
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("  Thanks for using Nerve.", art_style)),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Session: ", dim),
+            Span::styled(
+                format!("{conv_count} conversation(s), {msg_count} message(s)"),
+                stat_style,
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Cost: ", dim),
+            Span::styled(app.usage_stats.format_cost(), stat_style),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  nerve --continue to resume  |  nerve --help for options",
+            dim,
+        )),
+        Line::from(""),
+    ];
+
+    let paragraph = Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .block(Block::default());
+
+    frame.render_widget(paragraph, chunks[1]);
 }
 
 // ─── Interactive TUI ────────────────────────────────────────────────────────
@@ -449,6 +566,12 @@ async fn run_tui(
     // Auto-save session on every quit path.
     let sess = session::session_from_app(&app);
     let _ = session::save_session(&sess);
+
+    // Show goodbye splash before leaving.
+    if !no_splash {
+        terminal.draw(|frame| render_goodbye(frame, &app))?;
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
 
     // Restore terminal state regardless of how we exited.
     crossterm::terminal::disable_raw_mode()?;
@@ -1115,6 +1238,7 @@ async fn handle_normal_mode(
                                 "providers",
                                 "code",
                                 "cwd",
+                                "ollama",
                                 "url",
                                 "kb",
                                 "auto",
@@ -1433,6 +1557,8 @@ fn handle_provider_select(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some(provider_name) = app.available_providers.get(app.provider_select_index) {
                 app.selected_provider = provider_name.clone();
                 app.provider_changed = true;
+                app.selected_model = default_model_for_provider(&app.selected_provider).into();
+                app.available_models = models_for_provider(&app.selected_provider);
                 app.set_status(format!("Provider switched to {}", provider_name));
             }
             app.mode = AppMode::Normal;
@@ -2060,6 +2186,8 @@ fn toggle_setting(app: &mut App) {
                         .unwrap_or(0);
                     app.selected_provider = providers[(idx + 1) % providers.len()].clone();
                     app.provider_changed = true;
+                    app.selected_model = default_model_for_provider(&app.selected_provider).into();
+                    app.available_models = models_for_provider(&app.selected_provider);
                 }
                 1 => {
                     // Model: cycle
@@ -2142,6 +2270,7 @@ AI Provider\n\
   /providers          List available providers\n\
   /model <name>       Switch model\n\
   /models             List available models\n\
+  /ollama             Manage Ollama models (list/pull/remove)\n\
   /code on|off        Toggle code mode (Claude Code only)\n\
   /agent on|off|status Toggle agent mode (AI tool loop)\n\
   /agent undo          Roll back to pre-agent git checkpoint\n\
@@ -2372,12 +2501,92 @@ System\n\
         if valid.contains(&name) {
             app.selected_provider = name.to_string();
             app.provider_changed = true;
+            app.selected_model = default_model_for_provider(&app.selected_provider).into();
+            app.available_models = models_for_provider(&app.selected_provider);
             app.set_status(format!("Switched to provider: {name}"));
         } else {
             app.add_assistant_message(format!(
                 "Unknown provider: {name}\nAvailable: claude_code, ollama, openai, openrouter, copilot"
             ));
         }
+        return true;
+    }
+
+    // /ollama — manage Ollama models (list, pull, remove).
+    if trimmed == "/ollama" || trimmed.starts_with("/ollama ") {
+        let ollama_rest = trimmed.strip_prefix("/ollama").unwrap_or("").trim();
+        let ollama_args: Vec<String> = ollama_rest
+            .split_whitespace()
+            .map(|s| s.to_string())
+            .collect();
+        let subcmd = ollama_args.first().map(|s| s.as_str()).unwrap_or("list");
+        match subcmd {
+            "list" => {
+                let models = detect_ollama_models();
+                let mut msg = "Ollama models on this machine:\n\n".to_string();
+                for model in &models {
+                    let active = if *model == app.selected_model {
+                        " (active)"
+                    } else {
+                        ""
+                    };
+                    msg.push_str(&format!("  {model}{active}\n"));
+                }
+                msg.push_str("\nUse: /model <name> to switch\nPull new: /ollama pull <name>");
+                app.add_assistant_message(msg);
+            }
+            "pull" => {
+                if let Some(model_name) = ollama_args.get(1) {
+                    app.set_status(format!("Pulling {model_name}... (this may take a while)"));
+                    app.add_assistant_message(format!(
+                        "Pulling Ollama model: {model_name}\n\n\
+                         This runs in the background. \
+                         Use `/ollama list` to check when it's available."
+                    ));
+                    let name = model_name.clone();
+                    std::thread::spawn(move || {
+                        let _ = std::process::Command::new("ollama")
+                            .args(["pull", &name])
+                            .output();
+                    });
+                } else {
+                    app.set_status("Usage: /ollama pull <model_name>".to_string());
+                }
+            }
+            "remove" | "rm" => {
+                if let Some(model_name) = ollama_args.get(1) {
+                    match std::process::Command::new("ollama")
+                        .args(["rm", model_name])
+                        .output()
+                    {
+                        Ok(output) if output.status.success() => {
+                            app.set_status(format!("Removed {model_name}"));
+                            if app.selected_provider == "ollama" {
+                                app.available_models = detect_ollama_models();
+                            }
+                        }
+                        Ok(output) => {
+                            let stderr = String::from_utf8_lossy(&output.stderr);
+                            app.set_status(format!("Failed: {stderr}"));
+                        }
+                        Err(e) => app.set_status(format!("Error: {e}")),
+                    }
+                } else {
+                    app.set_status("Usage: /ollama remove <model_name>".to_string());
+                }
+            }
+            _ => {
+                app.add_assistant_message(
+                    "Ollama Commands:\n\n  \
+                     /ollama list          Show installed models\n  \
+                     /ollama pull <name>   Download a model\n  \
+                     /ollama remove <name> Remove a model\n\n\
+                     Popular models: llama3, mistral, codellama, qwen2.5"
+                        .into(),
+                );
+            }
+        }
+        app.scroll_offset = 0;
         return true;
     }
 
@@ -2968,8 +3177,7 @@ System\n\
 
         let agent_status = if app.agent_mode { "ON" } else { "OFF" };
         let mut status = format!(
-            "Nerve v0.1.0\n\
-             \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\n\
+            "Nerve v0.1.0\n{}\n\
              Provider:   {}\n\
              Model:      {}\n\
              Code Mode:  {}\n\
@@ -2984,6 +3192,7 @@ System\n\
              \n\
              Config:  {}\n\
              History: {}",
+            "=".repeat(25),
             app.selected_provider,
             app.selected_model,
             code_status,
