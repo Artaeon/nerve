@@ -474,6 +474,9 @@ async fn event_loop(
             app.status_time = None;
         }
 
+        // Advance animation frame counter (wraps on overflow).
+        app.thinking_frame = app.thinking_frame.wrapping_add(1);
+
         // Draw the UI.
         terminal.draw(|frame| ui::draw(frame, app))?;
 

@@ -173,6 +173,11 @@ pub struct App {
     /// Human-readable summary of the detected project workspace.
     pub detected_workspace: Option<String>,
 
+    // -- animation --
+    /// Frame counter for animated UI elements (spinners, pulsing indicators).
+    /// Incremented every draw cycle; wraps on overflow.
+    pub thinking_frame: usize,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -270,6 +275,8 @@ impl App {
             theme_index: 0,
 
             detected_workspace: None,
+
+            thinking_frame: 0,
 
             status_message: None,
             status_time: None,
