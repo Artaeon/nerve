@@ -15,6 +15,7 @@ mod scaffold;
 mod scraper;
 mod shell;
 mod ui;
+mod usage;
 mod plugins;
 mod session;
 mod workspace;
@@ -424,6 +425,24 @@ async fn event_loop(
                             // Grab the content before finish_streaming moves it.
                             let response_content = app.streaming_response.clone();
                             app.finish_streaming();
+
+                            // Track usage (estimate tokens from message lengths).
+                            {
+                                let tokens_sent: usize = app
+                                    .current_conversation()
+                                    .messages
+                                    .iter()
+                                    .map(|(_, c)| c.len() / 4 + 1)
+                                    .sum();
+                                let tokens_received = response_content.len() / 4 + 1;
+                                app.usage_stats.record_request(
+                                    tokens_sent,
+                                    tokens_received,
+                                    &app.selected_provider,
+                                    &app.selected_model,
+                                );
+                            }
+
                             if !response_content.is_empty() {
                                 app.clipboard_manager.add(
                                     response_content,
@@ -827,6 +846,25 @@ async fn handle_normal_mode(
                 KeyCode::BackTab => cycle_conversation_back(app),
                 KeyCode::Char('q') => app.should_quit = true,
                 KeyCode::Char('x') => delete_last_exchange(app),
+                KeyCode::Char(c @ '1'..='9') => {
+                    let n = c.to_digit(10).unwrap() as usize;
+                    let conv = app.current_conversation();
+                    let idx = conv.messages.len().saturating_sub(n);
+                    if let Some((role, content)) = conv.messages.get(idx) {
+                        let role = role.clone();
+                        let content = content.clone();
+                        match clipboard::copy_to_clipboard(&content) {
+                            Ok(()) => {
+                                app.clipboard_manager.add(content, ClipboardSource::ManualCopy);
+                                let _ = app.clipboard_manager.save();
+                                app.set_status(format!("Copied message #{n} ({role}) to clipboard"));
+                            }
+                            Err(e) => app.set_status(format!("Clipboard error: {e}")),
+                        }
+                    } else {
+                        app.set_status(format!("No message #{n}"));
+                    }
+                }
                 _ => {}
             }
         }
@@ -890,7 +928,7 @@ async fn handle_normal_mode(
                             "export", "rename", "system", "workspace", "run",
                             "pipe", "diff", "test", "build", "git",
                             "agent", "cd", "summary", "compact", "context", "tokens",
-                            "branch", "session",
+                            "branch", "session", "usage", "cost", "limit", "copy",
                         ];
                         let matches: Vec<&&str> = commands
                             .iter()
@@ -1384,6 +1422,8 @@ Chat\n\
   /rename <title>     Rename current conversation\n\
   /export             Export conversation to markdown\n\
   /copy               Copy last AI response to clipboard\n\
+  /copy <n>           Copy message #n (counting from bottom)\n\
+  /copy code          Copy last code block from AI response\n\
   /copy all           Copy entire conversation\n\
   /copy last          Copy last message (any role)\n\
   /system <prompt>    Set system prompt for conversation\n\
@@ -1466,6 +1506,14 @@ Branching\n\
 \n\
 Workspace\n\
   /workspace          Show detected project info\n\
+\n\
+Usage & Cost\n\
+  /usage              Show session usage stats (estimated)\n\
+  /cost               Alias for /usage\n\
+  /limit              Show spending limit info\n\
+  /limit on           Enable spending limit\n\
+  /limit off          Disable spending limit\n\
+  /limit set <$>      Set spending limit amount\n\
 \n\
 System\n\
   /status             Show system status\n\
@@ -2213,14 +2261,54 @@ System\n\
                 .last()
                 .map(|(_, c)| c.clone())
                 .unwrap_or_default(),
-            _ => {
-                // Default: last AI response
+            "code" => {
+                // Find the last code block in the conversation
                 conv.messages
                     .iter()
                     .rev()
-                    .find(|(r, _)| r == "assistant")
-                    .map(|(_, c)| c.clone())
+                    .filter(|(r, _)| r == "assistant")
+                    .find_map(|(_, content)| {
+                        let mut in_block = false;
+                        let mut code = String::new();
+                        let mut last_code: Option<String> = None;
+                        for line in content.lines() {
+                            if line.starts_with("```") {
+                                if in_block {
+                                    last_code = Some(code.clone());
+                                    code.clear();
+                                    in_block = false;
+                                } else {
+                                    in_block = true;
+                                    code.clear();
+                                }
+                            } else if in_block {
+                                if !code.is_empty() {
+                                    code.push('\n');
+                                }
+                                code.push_str(line);
+                            }
+                        }
+                        last_code
+                    })
                     .unwrap_or_default()
+            }
+            other => {
+                if let Ok(num) = other.parse::<usize>() {
+                    // /copy <n> — copy message #n counting from bottom
+                    let idx = conv.messages.len().saturating_sub(num);
+                    conv.messages
+                        .get(idx)
+                        .map(|(_, c)| c.clone())
+                        .unwrap_or_default()
+                } else {
+                    // Default: last AI response
+                    conv.messages
+                        .iter()
+                        .rev()
+                        .find(|(r, _)| r == "assistant")
+                        .map(|(_, c)| c.clone())
+                        .unwrap_or_default()
+                }
             }
         };
         if text.is_empty() {
@@ -2771,6 +2859,85 @@ System\n\
         return true;
     }
 
+    // /usage or /cost — show session usage stats.
+    if trimmed == "/usage" || trimmed == "/cost" {
+        let stats = &app.usage_stats;
+        let msg = format!(
+            "Session Usage (estimated)\n\
+             {}\n\
+             \n\
+             Requests: {}\n\
+             Tokens sent: ~{}\n\
+             Tokens received: ~{}\n\
+             Estimated cost: {}\n\
+             \n\
+             Provider: {}\n\
+             Model: {}",
+            "=".repeat(25),
+            stats.total_requests,
+            stats.total_tokens_sent,
+            stats.total_tokens_received,
+            stats.format_cost(),
+            app.selected_provider,
+            app.selected_model,
+        );
+        app.add_assistant_message(msg);
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /limit — manage spending limits.
+    if trimmed == "/limit" || trimmed.starts_with("/limit ") {
+        let rest = trimmed.strip_prefix("/limit").unwrap_or("").trim();
+        let args: Vec<&str> = rest.split_whitespace().collect();
+        let subcmd = args.first().copied().unwrap_or("info");
+        match subcmd {
+            "on" => {
+                app.spending_limit.enabled = true;
+                app.set_status(format!(
+                    "Spending limit ON: ${:.2}/session",
+                    app.spending_limit.max_cost_usd
+                ));
+            }
+            "off" => {
+                app.spending_limit.enabled = false;
+                app.set_status("Spending limit OFF".to_string());
+            }
+            "set" => {
+                if let Some(amount) = args.get(1).and_then(|s| s.parse::<f64>().ok()) {
+                    app.spending_limit.max_cost_usd = amount;
+                    app.spending_limit.enabled = true;
+                    app.set_status(format!("Spending limit set to ${:.2}/session", amount));
+                } else {
+                    app.set_status("Usage: /limit set <amount_usd>".to_string());
+                }
+            }
+            _ => {
+                let limit = &app.spending_limit;
+                let status = if limit.enabled { "ON" } else { "OFF" };
+                app.add_assistant_message(format!(
+                    "Spending Limits\n\
+                     {}\n\
+                     \n\
+                     Status: {}\n\
+                     Max cost: ${:.2}/session\n\
+                     Current cost: {}\n\
+                     \n\
+                     Commands:\n\
+                     \x20 /limit on       Enable limit\n\
+                     \x20 /limit off      Disable limit\n\
+                     \x20 /limit set <$>  Set limit amount",
+                    "=".repeat(25),
+                    status,
+                    limit.max_cost_usd,
+                    app.usage_stats.format_cost()
+                ));
+                app.scroll_offset = 0;
+            }
+        }
+        return true;
+    }
+
     false
 }
 
@@ -3240,6 +3407,26 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
     if app.is_streaming {
         app.set_status("Already streaming \u{2014} press Esc to cancel first");
         return;
+    }
+
+    // Check spending limit before sending.
+    {
+        let estimated_tokens: usize = app
+            .current_conversation()
+            .messages
+            .iter()
+            .map(|(_, c)| c.len() / 4 + 1)
+            .sum::<usize>()
+            + 4000; // +4000 for expected response
+        if let Some(warning) = app.spending_limit.would_exceed(
+            &app.usage_stats,
+            estimated_tokens,
+            &app.selected_provider,
+            &app.selected_model,
+        ) {
+            app.add_assistant_message(format!("Warning: {warning}"));
+            return;
+        }
     }
 
     // Find the most recent user message for KB context lookup.
