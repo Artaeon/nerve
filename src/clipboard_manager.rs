@@ -342,4 +342,48 @@ mod tests {
         assert_eq!(deserialized.content, entry.content);
         assert_eq!(deserialized.preview, entry.preview);
     }
+
+    #[test]
+    fn add_generates_correct_preview() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("This is a test message\nwith multiple lines\nand content".into(), ClipboardSource::AiResponse);
+        let entry = &cm.entries()[0];
+        // Preview should replace newlines with spaces
+        assert!(!entry.preview.contains('\n'));
+        assert!(entry.preview.contains("This is a test message"));
+    }
+
+    #[test]
+    fn search_with_fuzzy_match() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("Rust programming language".into(), ClipboardSource::AiResponse);
+        cm.add("Python scripting language".into(), ClipboardSource::AiResponse);
+        cm.add("JavaScript web language".into(), ClipboardSource::AiResponse);
+
+        let results = cm.search("rust");
+        assert!(!results.is_empty());
+        // First result should be about Rust
+        assert!(results[0].1.content.contains("Rust"));
+    }
+
+    #[test]
+    fn clipboard_save_load_roundtrip() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("Test content for save".into(), ClipboardSource::UserCopy);
+        cm.save().unwrap();
+
+        let loaded = ClipboardManager::load().unwrap();
+        assert!(!loaded.entries().is_empty());
+    }
+
+    #[test]
+    fn remove_by_index_shifts_entries() {
+        let mut cm = ClipboardManager::new(10);
+        cm.add("first".into(), ClipboardSource::AiResponse);
+        cm.add("second".into(), ClipboardSource::AiResponse);
+        cm.add("third".into(), ClipboardSource::AiResponse);
+
+        cm.remove(1); // Remove "second" (newest-first, so index 1 = "second")
+        assert_eq!(cm.entries().len(), 2);
+    }
 }

@@ -254,4 +254,66 @@ mod tests {
         let result = delete_conversation("nonexistent-id-that-does-not-exist");
         assert!(result.is_ok(), "Deleting a missing conversation should be Ok");
     }
+
+    #[test]
+    fn save_and_list_multiple() {
+        let mut ids = Vec::new();
+        // Save 3 conversations
+        for i in 0..3 {
+            let id = format!("test_multi_{i}_{}", uuid::Uuid::new_v4());
+            let record = ConversationRecord {
+                id: id.clone(),
+                title: format!("Test Conv {i}"),
+                messages: vec![MessageRecord {
+                    role: "user".into(),
+                    content: format!("Message {i}"),
+                    timestamp: chrono::Utc::now(),
+                }],
+                model: "sonnet".into(),
+                created_at: chrono::Utc::now(),
+                updated_at: chrono::Utc::now(),
+            };
+            save_conversation(&record).unwrap();
+            ids.push(id);
+        }
+
+        let list = list_conversations().unwrap();
+        assert!(list.len() >= 3);
+
+        // Clean up
+        for id in &ids {
+            delete_conversation(id).unwrap();
+        }
+    }
+
+    #[test]
+    fn load_nonexistent_fails() {
+        let result = load_conversation("totally_nonexistent_id_xyz_123");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn conversation_record_with_many_messages() {
+        let messages: Vec<MessageRecord> = (0..100).map(|i| MessageRecord {
+            role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+            content: format!("Message number {i}"),
+            timestamp: chrono::Utc::now(),
+        }).collect();
+
+        let id = format!("test_large_{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "Large Conversation".into(),
+            messages,
+            model: "opus".into(),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+        assert_eq!(loaded.messages.len(), 100);
+
+        delete_conversation(&id).unwrap();
+    }
 }

@@ -498,4 +498,41 @@ mod tests {
         assert_eq!(restored.name, "Test");
         assert_eq!(restored.steps.len(), 1);
     }
+
+    #[test]
+    fn all_automations_includes_custom_after_save() {
+        // Save a custom automation with a unique name
+        let name = format!("TestCustom_{}", uuid::Uuid::new_v4());
+        let mut auto = Automation::new(name.clone(), "Test".into());
+        auto.add_step(AutomationStep {
+            name: "Step1".into(),
+            prompt_template: "Do {{input}}".into(),
+            model: None,
+        });
+        let _ = save_automation(&auto);
+
+        // all_automations should include builtins + custom
+        let all = all_automations();
+        assert!(all.len() > builtin_automations().len()); // Has at least the custom one extra
+        assert!(all.iter().any(|a| a.name == name));
+
+        // Clean up
+        let _ = delete_automation(&name);
+    }
+
+    #[test]
+    fn find_automation_case_insensitive_lookup() {
+        let result = find_automation("code review pipeline");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().name, "Code Review Pipeline");
+    }
+
+    #[test]
+    fn builtin_automation_step_count() {
+        let builtins = builtin_automations();
+        // Verify specific automations have expected step counts
+        let code_review = builtins.iter().find(|a| a.name == "Code Review Pipeline");
+        assert!(code_review.is_some());
+        assert!(code_review.unwrap().steps.len() >= 3);
+    }
 }

@@ -702,4 +702,43 @@ mod tests {
         assert!(formatted.contains("```rust"));
         assert!(formatted.contains("fn main()"));
     }
+
+    #[test]
+    fn read_files_context_real_mixed() {
+        let results = read_files_context(&["Cargo.toml", "nonexistent_file_xyz.rs"]);
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_err());
+    }
+
+    #[test]
+    fn expand_file_references_multiple_real() {
+        // With two @file references, one real and one fake
+        let text = "check @Cargo.toml and @nonexistent.xyz";
+        let expanded = expand_file_references(text);
+        // Cargo.toml should be expanded, nonexistent should remain
+        assert!(expanded.contains("[package]") || expanded.contains("nerve")); // Cargo.toml content
+        assert!(expanded.contains("@nonexistent.xyz")); // Not found, left as-is
+    }
+
+    #[test]
+    fn detect_language_comprehensive() {
+        // Test all supported languages
+        let cases = vec![
+            ("test.rs", "rust"), ("test.py", "python"), ("test.js", "javascript"),
+            ("test.ts", "typescript"), ("test.go", "go"), ("test.rb", "ruby"),
+            ("test.java", "java"), ("test.c", "c"), ("test.cpp", "cpp"),
+            ("test.cs", "csharp"), ("test.swift", "swift"), ("test.kt", "kotlin"),
+            ("test.php", "php"), ("test.sh", "bash"), ("test.sql", "sql"),
+            ("test.html", "html"), ("test.css", "css"), ("test.json", "json"),
+            ("test.yaml", "yaml"), ("test.toml", "toml"), ("test.xml", "xml"),
+            ("test.md", "markdown"), ("test.dart", "dart"), ("test.zig", "zig"),
+            ("test.lua", "lua"), ("test.ex", "elixir"), ("test.hs", "haskell"),
+            ("test.unknown", "text"),
+        ];
+        for (filename, expected) in cases {
+            let lang = detect_language(std::path::Path::new(filename));
+            assert_eq!(lang, expected, "Wrong language for {filename}");
+        }
+    }
 }

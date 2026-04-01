@@ -258,4 +258,32 @@ mod tests {
         assert!(cost > 0.0);
         assert!(cost < cost_per_million_tokens("openrouter", "gpt-4o"));
     }
+
+    #[test]
+    fn cost_unknown_provider_is_zero() {
+        assert_eq!(cost_per_million_tokens("some_random_provider", "model"), 0.0);
+    }
+
+    #[test]
+    fn spending_limit_default_is_disabled() {
+        let limit = SpendingLimit::default();
+        assert!(!limit.enabled);
+        assert_eq!(limit.max_cost_usd, 5.0);
+    }
+
+    #[test]
+    fn usage_stats_new_has_session_start() {
+        let stats = UsageStats::new();
+        assert!(stats.session_start.is_some());
+        assert_eq!(stats.total_requests, 0);
+    }
+
+    #[test]
+    fn record_request_free_provider_zero_cost() {
+        let mut stats = UsageStats::new();
+        stats.record_request(50000, 25000, "ollama", "llama3");
+        assert_eq!(stats.estimated_cost_usd, 0.0);
+        assert_eq!(stats.total_requests, 1);
+        assert_eq!(stats.total_tokens_sent, 50000);
+    }
 }
