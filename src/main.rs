@@ -663,6 +663,7 @@ async fn event_loop(
                         // Grab the content before finish_streaming moves it.
                         let response_content = app.streaming_response.clone();
                         app.finish_streaming();
+                        app.scroll_offset = 0; // Auto-scroll to show the new response
 
                         // Track usage (estimate tokens from message lengths).
                         {
@@ -824,11 +825,16 @@ async fn event_loop(
                                     // Add tool results as a user message
                                     app.add_user_message(results);
 
-                                    // Apply context management based on provider
-                                    let limit =
+                                    // Apply context management based on provider (halved in Efficient mode)
+                                    let base_limit =
                                         crate::agent::context::ContextManager::recommended_limit(
                                             &app.selected_provider,
                                         );
+                                    let limit = if app.active_mode == app::NerveMode::Efficient {
+                                        base_limit / 2
+                                    } else {
+                                        base_limit
+                                    };
                                     let context_mgr =
                                         crate::agent::context::ContextManager::new(limit);
 
@@ -1270,6 +1276,7 @@ async fn handle_normal_mode(
                                 "theme",
                                 "alias",
                                 "repeat",
+                                "mode",
                             ];
                             let matches: Vec<&&str> = commands
                                 .iter()
@@ -1368,7 +1375,17 @@ async fn handle_normal_mode(
                 KeyCode::End => {
                     app.cursor_position = app.input.len();
                 }
-                KeyCode::Char(c) => app.insert_char(c),
+                KeyCode::Char(c) => {
+                    // Special: "/" at start of empty input opens the Nerve Bar
+                    if c == '/' && app.input.is_empty() {
+                        app.mode = AppMode::CommandBar;
+                        app.command_bar_input.clear();
+                        app.command_bar_select_index = 0;
+                        app.command_bar_category = 0;
+                    } else {
+                        app.insert_char(c);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1559,7 +1576,12 @@ fn handle_provider_select(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.provider_changed = true;
                 app.selected_model = default_model_for_provider(&app.selected_provider).into();
                 app.available_models = models_for_provider(&app.selected_provider);
-                app.set_status(format!("Provider switched to {}", provider_name));
+                // Show available models in status
+                let model_list = app.available_models.join(", ");
+                app.set_status(format!(
+                    "Switched to {} | Model: {} | Available: {}",
+                    provider_name, app.selected_model, model_list
+                ));
             }
             app.mode = AppMode::Normal;
         }
@@ -2276,6 +2298,7 @@ AI Provider\n\
   /agent undo          Roll back to pre-agent git checkpoint\n\
   /agent diff          Show what the agent changed (git diff)\n\
   /agent commit [msg]  Commit agent changes\n\
+  /mode <name>        Switch smart mode (efficient/thorough/agent/learning)\n\
   /cwd <dir>          Set working directory\n\
   /cd <dir>           Change working directory\n\
 \n\
@@ -4117,6 +4140,95 @@ System\n\
         return true;
     }
 
+    // /mode — switch smart mode.
+    if trimmed == "/mode" || trimmed.starts_with("/mode ") {
+        let rest = trimmed.strip_prefix("/mode").unwrap_or("").trim();
+        match rest {
+            "efficient" | "eco" => {
+                app.active_mode = app::NerveMode::Efficient;
+                let sys = "You are a helpful assistant. Be concise and direct. \
+                           Avoid unnecessary explanations. Use bullet points over paragraphs. \
+                           Show code without verbose commentary. One-sentence answers when possible.";
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| !(r == "system" && c.contains("Be concise")));
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys.into()));
+                app.set_status("Mode: Efficient \u{2014} concise responses, auto-compact enabled");
+            }
+            "thorough" | "detailed" => {
+                app.active_mode = app::NerveMode::Thorough;
+                let sys = "You are a thorough, expert assistant. Provide detailed explanations with examples. \
+                           Show your reasoning step by step. Include edge cases and caveats. \
+                           When showing code, explain the key design decisions.";
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| !(r == "system" && c.contains("thorough")));
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys.into()));
+                app.set_status("Mode: Thorough \u{2014} detailed responses with explanations");
+            }
+            "agent" => {
+                app.active_mode = app::NerveMode::Agent;
+                app.agent_mode = true;
+                let tools_prompt = crate::agent::tools::tools_system_prompt();
+                app.current_conversation_mut().messages.retain(|(r, c)| {
+                    !(r == "system"
+                        && (c.contains("You have access to the following tools")
+                            || c.contains("You are Nerve, an AI coding assistant")))
+                });
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), tools_prompt));
+                app.set_status("Mode: Agent \u{2014} AI has tool access for coding tasks");
+            }
+            "learning" | "teach" => {
+                app.active_mode = app::NerveMode::Learning;
+                let sys = "You are a patient teacher. Explain concepts from first principles. \
+                           Use analogies and real-world examples. Break complex topics into simple steps. \
+                           After explaining, ask a question to check understanding. \
+                           Provide exercises when appropriate.";
+                app.current_conversation_mut()
+                    .messages
+                    .retain(|(r, c)| !(r == "system" && c.contains("patient teacher")));
+                app.current_conversation_mut()
+                    .messages
+                    .insert(0, ("system".into(), sys.into()));
+                app.set_status("Mode: Learning \u{2014} explanations optimized for understanding");
+            }
+            "standard" | "default" | "reset" => {
+                app.active_mode = app::NerveMode::Standard;
+                app.agent_mode = false;
+                app.current_conversation_mut().messages.retain(|(r, c)| {
+                    !(r == "system"
+                        && (c.contains("Be concise")
+                            || c.contains("thorough")
+                            || c.contains("You have access to the following tools")
+                            || c.contains("You are Nerve, an AI coding assistant")
+                            || c.contains("patient teacher")))
+                });
+                app.set_status("Mode: Standard \u{2014} default behavior");
+            }
+            _ => {
+                let current = format!("{:?}", app.active_mode);
+                app.add_assistant_message(format!(
+                    "Current mode: {current}\n\n\
+                     Available modes:\n\n\
+                     /mode efficient   Concise responses, saves tokens\n\
+                     /mode thorough    Detailed explanations with examples\n\
+                     /mode agent       Coding agent with file/command tools\n\
+                     /mode learning    Patient explanations, exercises\n\
+                     /mode standard    Reset to default\n\n\
+                     Each mode adjusts the AI's behavior and system prompt."
+                ));
+            }
+        }
+        app.scroll_offset = 0;
+        return true;
+    }
+
     // /theme — theme management.
     if trimmed == "/theme" || trimmed.starts_with("/theme ") {
         let rest = trimmed.strip_prefix("/theme").unwrap_or("").trim();
@@ -4730,8 +4842,14 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
         .map(|(_, content)| content.clone())
         .unwrap_or_default();
 
-    // Apply context management based on provider
-    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    // Apply context management based on provider (halved in Efficient mode)
+    let base_limit =
+        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let limit = if app.active_mode == app::NerveMode::Efficient {
+        base_limit / 2
+    } else {
+        base_limit
+    };
     let cm = crate::agent::context::ContextManager::new(limit);
 
     // First compact tool results if in agent mode
@@ -4824,8 +4942,14 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
         return;
     }
 
-    // Apply context management based on provider
-    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    // Apply context management based on provider (halved in Efficient mode)
+    let base_limit =
+        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let limit = if app.active_mode == app::NerveMode::Efficient {
+        base_limit / 2
+    } else {
+        base_limit
+    };
     let cm = crate::agent::context::ContextManager::new(limit);
 
     let conversation_messages = if app.agent_mode {
@@ -5760,6 +5884,7 @@ mod tests {
             "/status",
             "/tokens",
             "/compact",
+            "/mode efficient",
         ];
 
         for cmd in commands {
