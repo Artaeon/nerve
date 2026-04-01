@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static TOOL_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
+const MAX_TOOL_EXECUTIONS: usize = 100;
 
 /// A tool the AI agent can invoke
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,8 +184,25 @@ fn is_known_arg(key: &str) -> bool {
     )
 }
 
-/// Execute a tool call and return the result
+/// Reset the per-session tool execution counter.
+pub fn reset_tool_counter() {
+    TOOL_EXEC_COUNT.store(0, Ordering::Relaxed);
+}
+
+/// Execute a tool call and return the result, enforcing a per-session
+/// execution limit.
 pub fn execute_tool(call: &ToolCall) -> ToolResult {
+    let count = TOOL_EXEC_COUNT.fetch_add(1, Ordering::Relaxed);
+    if count >= MAX_TOOL_EXECUTIONS {
+        return ToolResult {
+            tool: call.tool.clone(),
+            success: false,
+            output: format!(
+                "Tool execution limit reached ({MAX_TOOL_EXECUTIONS}). Start a new session."
+            ),
+        };
+    }
+
     match call.tool.as_str() {
         "read_file" => execute_read_file(call),
         "write_file" => execute_write_file(call),
@@ -200,6 +221,16 @@ pub fn execute_tool(call: &ToolCall) -> ToolResult {
 
 fn execute_read_file(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+
+    // Security: block reading sensitive files
+    if crate::shell::is_sensitive_file(path) {
+        return ToolResult {
+            tool: "read_file".into(),
+            success: false,
+            output: "Blocked: this file may contain secrets".into(),
+        };
+    }
+
     match std::fs::read_to_string(path) {
         Ok(content) => {
             // Truncate very large files
@@ -230,6 +261,15 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
     let content = call.args.get("content").map(|s| s.as_str()).unwrap_or("");
 
+    // Security: block writing to protected system paths
+    if crate::shell::is_protected_path(path) {
+        return ToolResult {
+            tool: "write_file".into(),
+            success: false,
+            output: format!("Blocked: cannot write to protected path: {path}"),
+        };
+    }
+
     // Create parent directories
     if let Some(parent) = Path::new(path).parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -253,6 +293,15 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
     let old_text = call.args.get("old_text").map(|s| s.as_str()).unwrap_or("");
     let new_text = call.args.get("new_text").map(|s| s.as_str()).unwrap_or("");
+
+    // Security: block editing protected system paths
+    if crate::shell::is_protected_path(path) {
+        return ToolResult {
+            tool: "edit_file".into(),
+            success: false,
+            output: format!("Blocked: cannot edit protected path: {path}"),
+        };
+    }
 
     match std::fs::read_to_string(path) {
         Ok(content) => {
@@ -287,6 +336,16 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
 
 fn execute_run_command(call: &ToolCall) -> ToolResult {
     let cmd = call.args.get("command").map(|s| s.as_str()).unwrap_or("");
+
+    // Security: block dangerous commands from agent
+    if crate::shell::is_dangerous_command(cmd) {
+        return ToolResult {
+            tool: "run_command".into(),
+            success: false,
+            output: "Blocked: this command is potentially destructive".into(),
+        };
+    }
+
     match crate::shell::run_command(cmd) {
         Ok(result) => ToolResult {
             tool: "run_command".into(),
@@ -370,6 +429,16 @@ fn execute_search_code(call: &ToolCall) -> ToolResult {
 
 fn execute_create_dir(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+
+    // Security: block creating directories in protected system paths
+    if crate::shell::is_protected_path(path) {
+        return ToolResult {
+            tool: "create_directory".into(),
+            success: false,
+            output: format!("Blocked: cannot create directory in protected path: {path}"),
+        };
+    }
+
     match std::fs::create_dir_all(path) {
         Ok(()) => ToolResult {
             tool: "create_directory".into(),
@@ -618,5 +687,117 @@ new_text: fn new() {
         assert_eq!(content, "goodbye world");
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Security tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn agent_blocks_dangerous_commands() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "run_command".into(),
+            args: [("command".into(), "rm -rf /".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+    }
+
+    #[test]
+    fn agent_allows_safe_commands() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "run_command".into(),
+            args: [("command".into(), "echo hello".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+    }
+
+    #[test]
+    fn agent_blocks_write_to_protected_path() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "write_file".into(),
+            args: [
+                ("path".into(), "/etc/passwd".into()),
+                ("content".into(), "bad".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+        assert!(result.output.contains("protected"));
+    }
+
+    #[test]
+    fn agent_blocks_edit_protected_path() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "edit_file".into(),
+            args: [
+                ("path".into(), "/usr/bin/something".into()),
+                ("old_text".into(), "a".into()),
+                ("new_text".into(), "b".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+    }
+
+    #[test]
+    fn agent_blocks_create_dir_in_protected_path() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "create_directory".into(),
+            args: [("path".into(), "/etc/nerve_test".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+    }
+
+    #[test]
+    fn agent_blocks_reading_sensitive_files() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_file".into(),
+            args: [("path".into(), "/home/user/.ssh/id_rsa".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+        assert!(result.output.contains("secrets"));
+    }
+
+    #[test]
+    fn agent_blocks_reading_env_file() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_file".into(),
+            args: [("path".into(), ".env".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Blocked"));
+    }
+
+    #[test]
+    fn tool_execution_limit() {
+        // Set the counter just below the limit, then verify the next call
+        // is blocked. This avoids issues with parallel test execution
+        // sharing the global counter.
+        TOOL_EXEC_COUNT.store(MAX_TOOL_EXECUTIONS, Ordering::Relaxed);
+        let call = ToolCall {
+            tool: "list_files".into(),
+            args: [("path".into(), ".".into())].into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("limit"));
+        reset_tool_counter(); // Clean up for other tests
     }
 }
