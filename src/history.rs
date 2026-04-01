@@ -19,6 +19,9 @@ pub struct ConversationRecord {
     pub messages: Vec<MessageRecord>,
     /// Model identifier used for this conversation.
     pub model: String,
+    /// Provider used for this conversation (e.g. "claude_code", "ollama").
+    #[serde(default)]
+    pub provider: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -136,6 +139,7 @@ mod tests {
                 },
             ],
             model: "test-model".to_string(),
+            provider: "claude_code".to_string(),
             created_at: now,
             updated_at: now,
         }
@@ -271,6 +275,7 @@ mod tests {
                     timestamp: chrono::Utc::now(),
                 }],
                 model: "sonnet".into(),
+                provider: "claude_code".into(),
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             };
@@ -309,6 +314,7 @@ mod tests {
             title: "Large Conversation".into(),
             messages,
             model: "opus".into(),
+            provider: "claude_code".into(),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

@@ -508,6 +508,7 @@ mod tests {
                 })
                 .collect(),
             model: "opus".into(),
+            provider: "claude_code".into(),
             created_at: ts,
             updated_at: ts,
         }
