@@ -666,7 +666,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 // ─── Model info helper ──────────────────────────────────────────────────────
 
 /// Returns (display_name, provider_group, context) for a known model ID.
-fn model_info(id: &str) -> (&str, &str, &str) {
+pub(crate) fn model_info(id: &str) -> (&str, &str, &str) {
     match id {
         "opus" => ("Claude Opus 4.6", "Claude Code", "1M ctx"),
         "sonnet" => ("Claude Sonnet 4.6", "Claude Code", "200K ctx"),
@@ -833,7 +833,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
 // ─── Provider selector overlay ───────────────────────────────────────────────
 
 /// Human-friendly display name for a provider key.
-fn provider_display_name(key: &str) -> &'static str {
+pub(crate) fn provider_display_name(key: &str) -> &'static str {
     match key {
         "claude_code" | "claude" => "Claude Code",
         "ollama" => "Ollama",
@@ -844,7 +844,7 @@ fn provider_display_name(key: &str) -> &'static str {
 }
 
 /// Short description for the provider selector overlay.
-fn provider_description(key: &str) -> &'static str {
+pub(crate) fn provider_description(key: &str) -> &'static str {
     match key {
         "claude_code" | "claude" => "subscription, no API key",
         "ollama" => "local, no API key",
@@ -928,5 +928,56 @@ fn render_provider_selector(frame: &mut Frame, app: &App) {
     state.select(Some(app.provider_select_index));
 
     frame.render_stateful_widget(list, popup_area, &mut state);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_display_names() {
+        assert_eq!(provider_display_name("claude_code"), "Claude Code");
+        assert_eq!(provider_display_name("claude"), "Claude Code");
+        assert_eq!(provider_display_name("openai"), "OpenAI");
+        assert_eq!(provider_display_name("ollama"), "Ollama");
+        assert_eq!(provider_display_name("openrouter"), "OpenRouter");
+        // Unknown should return "Custom"
+        let unknown = provider_display_name("unknown_provider");
+        assert_eq!(unknown, "Custom");
+    }
+
+    #[test]
+    fn provider_descriptions() {
+        let desc = provider_description("openai");
+        assert!(desc.contains("API key"), "OpenAI desc should mention API key, got: {desc}");
+
+        let desc = provider_description("ollama");
+        assert!(desc.contains("local") || desc.contains("no API"),
+            "Ollama desc should mention local, got: {desc}");
+
+        let desc = provider_description("claude_code");
+        assert!(desc.contains("subscription"),
+            "Claude Code desc should mention subscription, got: {desc}");
+    }
+
+    #[test]
+    fn model_info_known_models() {
+        let (name, group, ctx) = model_info("opus");
+        assert!(name.contains("Opus"), "expected Opus in name, got: {name}");
+        assert!(group.contains("Claude"), "expected Claude in group, got: {group}");
+        assert!(!ctx.is_empty(), "context should not be empty");
+
+        let (name, group, _ctx) = model_info("gpt-4o");
+        assert!(name.contains("GPT"), "expected GPT in name, got: {name}");
+        assert_eq!(group, "OpenAI");
+    }
+
+    #[test]
+    fn model_info_unknown_model() {
+        let (name, group, ctx) = model_info("totally_unknown_model");
+        assert_eq!(name, "totally_unknown_model");
+        assert_eq!(group, "Other");
+        assert!(ctx.is_empty());
+    }
 }
 

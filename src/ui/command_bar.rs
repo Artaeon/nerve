@@ -14,14 +14,14 @@ use crate::prompts;
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 /// Build the list of category tab labels: "All" followed by every real category.
-fn category_tabs() -> Vec<String> {
+pub(crate) fn category_tabs() -> Vec<String> {
     std::iter::once("All".to_string())
         .chain(prompts::categories())
         .collect()
 }
 
 /// Apply both category and fuzzy-search filters, returning scored results.
-fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
+pub(crate) fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
     let all_prompts = prompts::all_prompts();
     let tabs = category_tabs();
     let active_cat = tabs.get(app.command_bar_category).map(|s| s.as_str());
@@ -338,4 +338,110 @@ pub fn selected_prompt(app: &App) -> Option<prompts::SmartPrompt> {
     filtered_prompts(app)
         .get(app.command_bar_select_index)
         .map(|(_, p)| p.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+
+    #[test]
+    fn filtered_prompts_all_category() {
+        let mut app = App::new();
+        app.command_bar_category = 0; // "All"
+        app.command_bar_input.clear();
+        let results = filtered_prompts(&app);
+        assert!(results.len() >= 130, "expected >= 130 prompts, got {}", results.len());
+    }
+
+    #[test]
+    fn filtered_prompts_specific_category() {
+        let mut app = App::new();
+        let tabs = category_tabs();
+        let coding_idx = tabs.iter().position(|t| t == "Coding").unwrap_or(2);
+        app.command_bar_category = coding_idx;
+        app.command_bar_input.clear();
+        let results = filtered_prompts(&app);
+        assert!(results.len() >= 10, "expected >= 10 Coding prompts, got {}", results.len());
+        assert!(results.len() < 130, "expected fewer than all prompts");
+        for (_, prompt) in &results {
+            assert_eq!(prompt.category, "Coding");
+        }
+    }
+
+    #[test]
+    fn filtered_prompts_search_narrows_results() {
+        let mut app = App::new();
+        app.command_bar_category = 0;
+        app.command_bar_input = "rust code review".into();
+        let results = filtered_prompts(&app);
+        assert!(results.len() >= 1, "should find at least one prompt matching 'rust code review'");
+        let all_count = {
+            app.command_bar_input.clear();
+            filtered_prompts(&app).len()
+        };
+        app.command_bar_input = "rust code review".into();
+        let narrowed = filtered_prompts(&app);
+        assert!(narrowed.len() < all_count, "search should narrow results");
+    }
+
+    #[test]
+    fn filtered_prompts_no_match() {
+        let mut app = App::new();
+        app.command_bar_category = 0;
+        app.command_bar_input = "zzzzzznonexistent".into();
+        let results = filtered_prompts(&app);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn matched_prompt_count_empty_query() {
+        let mut app = App::new();
+        app.command_bar_input.clear();
+        let count = matched_prompt_count(&app);
+        assert!(count >= 130, "expected >= 130, got {}", count);
+    }
+
+    #[test]
+    fn matched_prompt_count_with_query() {
+        let mut app = App::new();
+        app.command_bar_input = "summarize".into();
+        let count = matched_prompt_count(&app);
+        assert!(count >= 1);
+        assert!(count < 130);
+    }
+
+    #[test]
+    fn selected_prompt_first_item() {
+        let mut app = App::new();
+        app.command_bar_input.clear();
+        app.command_bar_select_index = 0;
+        let prompt = selected_prompt(&app);
+        assert!(prompt.is_some());
+    }
+
+    #[test]
+    fn selected_prompt_out_of_bounds() {
+        let mut app = App::new();
+        app.command_bar_input = "zzzzz".into();
+        app.command_bar_select_index = 999;
+        let prompt = selected_prompt(&app);
+        assert!(prompt.is_none());
+    }
+
+    #[test]
+    fn category_tabs_starts_with_all() {
+        let tabs = category_tabs();
+        assert_eq!(tabs[0], "All");
+        assert!(tabs.len() >= 15, "expected >= 15 category tabs, got {}", tabs.len());
+    }
+
+    #[test]
+    fn search_matches_template_content() {
+        let mut app = App::new();
+        app.command_bar_category = 0;
+        app.command_bar_input = "OWASP".into();
+        let results = filtered_prompts(&app);
+        assert!(!results.is_empty(), "should find Security Audit by template content");
+    }
 }
