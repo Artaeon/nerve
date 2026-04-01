@@ -675,39 +675,26 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ));
         }
 
-        // Smart mode badge (skip Standard and Agent — Agent already shows its own badge)
-        match app.active_mode {
-            crate::app::NerveMode::Efficient => {
-                left_spans.push(sep.clone());
-                left_spans.push(Span::styled(
-                    " ECO ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            crate::app::NerveMode::Learning => {
-                left_spans.push(sep.clone());
-                left_spans.push(Span::styled(
-                    " LEARN ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            crate::app::NerveMode::Thorough => {
-                left_spans.push(sep.clone());
-                left_spans.push(Span::styled(
-                    " FULL ",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            _ => {} // Standard and Agent don't need extra badge
+        // Smart mode badge based on mode_name (skip "standard" and "agent")
+        if app.mode_name != "standard" && app.mode_name != "agent" {
+            let badge_color = match app.mode_name.as_str() {
+                "efficient" | "eco" => Color::Green,
+                "thorough" => Color::Cyan,
+                "learning" => Color::Blue,
+                "auto" => Color::Yellow,
+                "code" => Color::Magenta,
+                "review" => Color::Red,
+                _ => Color::DarkGray,
+            };
+            let badge_text = app.mode_name.to_uppercase();
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                format!(" {} ", badge_text),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(badge_color)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
 
         let left_line = Line::from(left_spans);
@@ -862,6 +849,24 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
             lines.push(Line::from(Span::styled(label, style)));
             model_index += 1;
         }
+
+        // Show download hint for Ollama
+        if *provider_name == "Ollama" {
+            lines.push(Line::from(""));
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    "\u{2193} Download more models: /ollama pull <name>",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::ITALIC),
+                ),
+            ]));
+            lines.push(Line::from(Span::styled(
+                "    Popular: llama3, mistral, codellama, qwen2.5, phi3, gemma2",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
     }
 
     // Calculate popup dimensions
@@ -886,7 +891,11 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
         )
         .title_bottom(
             Line::from(Span::styled(
-                " Enter: Select | Esc: Cancel ",
+                if app.selected_provider == "ollama" {
+                    " Enter: Select | /ollama pull <name> to download | Esc: Cancel "
+                } else {
+                    " Enter: Select | Esc: Cancel "
+                },
                 Style::default().fg(Color::DarkGray),
             ))
             .alignment(Alignment::Center),
