@@ -207,4 +207,55 @@ mod tests {
         stats.estimated_cost_usd = 1.23;
         assert_eq!(stats.format_cost(), "$1.23");
     }
+
+    #[test]
+    fn record_multiple_requests_accumulates() {
+        let mut stats = UsageStats::new();
+        stats.record_request(1000, 500, "openai", "gpt-4o");
+        stats.record_request(2000, 1000, "openai", "gpt-4o");
+        assert_eq!(stats.total_requests, 2);
+        assert_eq!(stats.total_tokens_sent, 3000);
+        assert_eq!(stats.total_tokens_received, 1500);
+    }
+
+    #[test]
+    fn spending_limit_request_count() {
+        let limit = SpendingLimit {
+            max_cost_usd: 100.0,
+            max_requests: Some(5),
+            max_tokens: None,
+            enabled: true,
+        };
+        let mut stats = UsageStats::new();
+        for _ in 0..5 {
+            stats.record_request(100, 50, "ollama", "llama3");
+        }
+        assert!(limit.would_exceed(&stats, 100, "ollama", "llama3").is_some());
+    }
+
+    #[test]
+    fn spending_limit_token_count() {
+        let limit = SpendingLimit {
+            max_cost_usd: 100.0,
+            max_requests: None,
+            max_tokens: Some(1000),
+            enabled: true,
+        };
+        let mut stats = UsageStats::new();
+        stats.record_request(600, 500, "ollama", "llama3");
+        assert!(limit.would_exceed(&stats, 100, "ollama", "llama3").is_some());
+    }
+
+    #[test]
+    fn cost_openrouter_claude_model() {
+        let cost = cost_per_million_tokens("openrouter", "anthropic/claude-3.5-sonnet");
+        assert!(cost > 0.0);
+    }
+
+    #[test]
+    fn cost_openrouter_llama_model() {
+        let cost = cost_per_million_tokens("openrouter", "meta-llama/llama-3-70b");
+        assert!(cost > 0.0);
+        assert!(cost < cost_per_million_tokens("openrouter", "gpt-4o"));
+    }
 }

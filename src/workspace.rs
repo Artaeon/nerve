@@ -746,4 +746,68 @@ mod tests {
         assert!(ws.key_files.contains(&"src/main.rs".to_string()));
         fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn detect_java_maven_project() {
+        let dir = std::env::temp_dir().join("nerve_test_java");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("pom.xml"), "<project></project>").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Java);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_ruby_project() {
+        let dir = std::env::temp_dir().join("nerve_test_ruby");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Ruby);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn detect_elixir_project() {
+        let dir = std::env::temp_dir().join("nerve_test_elixir");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("mix.exs"), "defmodule MyApp do end").unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Elixir);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn system_prompt_contains_tech_stack() {
+        let ws = WorkspaceInfo {
+            root: std::path::PathBuf::from("/tmp"),
+            project_type: ProjectType::Rust,
+            name: "myapp".into(),
+            description: "A test app".into(),
+            key_files: vec!["Cargo.toml".into()],
+            tech_stack: vec!["Rust".into(), "tokio".into(), "axum".into()],
+        };
+        let prompt = ws.to_system_prompt();
+        assert!(prompt.contains("tokio"));
+        assert!(prompt.contains("axum"));
+        assert!(prompt.contains("myapp"));
+    }
+
+    #[test]
+    fn node_detects_typescript() {
+        let dir = std::env::temp_dir().join("nerve_test_node_ts");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("package.json"),
+            r#"{"name":"tsapp","devDependencies":{"typescript":"5.0"}}"#,
+        )
+        .unwrap();
+        let ws = detect_workspace_at(&dir).unwrap();
+        assert!(ws.tech_stack.iter().any(|t| t == "typescript"));
+        fs::remove_dir_all(&dir).ok();
+    }
 }

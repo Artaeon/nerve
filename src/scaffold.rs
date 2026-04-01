@@ -2346,4 +2346,71 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
+
+    #[test]
+    fn rust_lib_template_has_lib_rs() {
+        let t = get_template("rust-lib").unwrap();
+        assert!(
+            t.files
+                .iter()
+                .any(|f| f.path == "src/lib.rs" || f.path.contains("lib.rs")),
+            "rust-lib should have lib.rs"
+        );
+    }
+
+    #[test]
+    fn go_api_template_has_go_mod() {
+        let t = get_template("go-api").unwrap();
+        assert!(
+            t.files.iter().any(|f| f.path == "go.mod"),
+            "go-api should have go.mod"
+        );
+    }
+
+    #[test]
+    fn python_cli_template_has_pyproject() {
+        let t = get_template("python-cli").unwrap();
+        assert!(
+            t.files.iter().any(|f| f.path == "pyproject.toml"),
+            "python-cli should have pyproject.toml"
+        );
+    }
+
+    #[test]
+    fn node_react_template_has_vite_config() {
+        let t = get_template("node-react").unwrap();
+        let has_vite = t
+            .files
+            .iter()
+            .any(|f| f.path.contains("vite") || f.content.contains("vite"));
+        assert!(has_vite, "node-react should reference vite");
+    }
+
+    #[test]
+    fn all_templates_have_entry_point() {
+        for t in builtin_templates() {
+            let has_entry = t.files.iter().any(|f| {
+                f.path.contains("main")
+                    || f.path.contains("index")
+                    || f.path.contains("app")
+                    || f.path.contains("lib")
+                    || f.path.contains("cli")
+            });
+            assert!(has_entry, "Template {} missing entry point file", t.name);
+        }
+    }
+
+    #[test]
+    fn templates_no_duplicate_files() {
+        for t in builtin_templates() {
+            let paths: Vec<&str> = t.files.iter().map(|f| f.path.as_str()).collect();
+            let unique: std::collections::HashSet<&str> = paths.iter().cloned().collect();
+            assert_eq!(
+                paths.len(),
+                unique.len(),
+                "Template {} has duplicate file paths",
+                t.name
+            );
+        }
+    }
 }
