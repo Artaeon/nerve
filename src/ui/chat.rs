@@ -43,17 +43,34 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line<'_>> = Vec::new();
 
     if conversation.messages.is_empty() && !app.is_streaming {
-        // Empty state — show a rich branded welcome screen.
-        let box_fg = Style::default().fg(Color::DarkGray);
-        let art_style = Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD);
-        let tagline_style = Style::default().fg(Color::DarkGray);
+        // Empty state — show a branded welcome screen.
+        // Use a compact variant for narrow terminals (< 60 cols).
         let section_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let key_style = Style::default().fg(Color::Yellow);
         let desc_style = Style::default().fg(Color::White);
+
+      if area.width < 60 {
+        // Compact welcome for narrow terminals
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Nerve — AI for your terminal",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Type a message or press Ctrl+K for prompts",
+            Style::default().fg(Color::DarkGray),
+        )));
+        lines.push(Line::from(""));
+      } else {
+        // Full welcome screen with ASCII art
+        let box_fg = Style::default().fg(Color::DarkGray);
+        let art_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let tagline_style = Style::default().fg(Color::DarkGray);
 
         lines.push(Line::from(""));
 
@@ -161,6 +178,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         }
 
         lines.push(Line::from(""));
+      } // end else (full welcome)
     }
 
     let gutter = Span::styled(
