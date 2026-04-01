@@ -122,6 +122,10 @@ pub struct App {
     pub history_entries: Vec<crate::history::ConversationRecord>,
     pub history_select_index: usize,
     pub history_search: String,
+    /// When `true`, a second press of `d` is required to confirm deletion.
+    pub history_delete_pending: bool,
+    /// Sort mode for history list: 0=date, 1=title, 2=message count.
+    pub history_sort: usize,
 
     // -- provider selection --
     pub available_providers: Vec<String>,
@@ -237,6 +241,8 @@ impl App {
             history_entries: Vec::new(),
             history_select_index: 0,
             history_search: String::new(),
+            history_delete_pending: false,
+            history_sort: 0,
 
             available_providers: vec![
                 "claude_code".into(),
@@ -1639,5 +1645,29 @@ mod tests {
         app.insert_char('!');
         assert_eq!(app.input, "hello!");
         assert_eq!(app.cursor_position, 6);
+    }
+
+    // ── Extended default field checks ──────────────────────────────────
+
+    #[test]
+    fn app_new_has_correct_defaults_extended() {
+        let app = App::new();
+        assert!(!app.agent_has_stash);
+        assert_eq!(app.history_sort, 0);
+        assert!(!app.history_delete_pending);
+        assert_eq!(app.thinking_frame, 0);
+        assert_eq!(app.theme_index, 0);
+        assert_eq!(app.settings_tab, 0);
+        assert_eq!(app.settings_select, 0);
+        assert!(app.detected_workspace.is_none());
+    }
+
+    #[test]
+    fn app_set_status_timer() {
+        let mut app = App::new();
+        app.set_status("test");
+        assert!(app.status_time.is_some());
+        // The timer should be very recent
+        assert!(app.status_time.unwrap().elapsed().as_secs() < 1);
     }
 }

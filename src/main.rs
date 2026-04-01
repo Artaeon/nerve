@@ -929,6 +929,8 @@ async fn handle_common_ctrl(
                 history::list_conversations().unwrap_or_default();
             app.history_select_index = 0;
             app.history_search.clear();
+            app.history_delete_pending = false;
+            app.history_sort = 0;
             app.mode = AppMode::HistoryBrowser;
             Ok(true)
         }
@@ -1400,9 +1402,19 @@ fn handle_clipboard_manager(app: &mut App, key: crossterm::event::KeyEvent) {
 fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
         KeyCode::Esc => {
-            app.mode = AppMode::Normal;
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+            } else {
+                app.mode = AppMode::Normal;
+            }
         }
         KeyCode::Enter => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+                return;
+            }
             let filtered = filtered_history_entries(app);
             if let Some(record) = filtered.get(app.history_select_index).cloned() {
                 let conv = app::Conversation {
@@ -1426,23 +1438,53 @@ fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
         KeyCode::Char('d') if app.history_search.is_empty() => {
-            let filtered = filtered_history_entries(app);
-            if let Some(record) = filtered.get(app.history_select_index).cloned() {
-                let _ = history::delete_conversation(&record.id);
-                app.history_entries.retain(|r| r.id != record.id);
-                let new_count = filtered_history_entries(app).len();
-                if app.history_select_index >= new_count && new_count > 0 {
-                    app.history_select_index = new_count - 1;
-                } else if new_count == 0 {
-                    app.history_select_index = 0;
+            if app.history_delete_pending {
+                // Confirmed — delete
+                let filtered = filtered_history_entries(app);
+                if let Some(record) = filtered.get(app.history_select_index).cloned() {
+                    let _ = history::delete_conversation(&record.id);
+                    app.history_entries.retain(|r| r.id != record.id);
+                    let new_count = filtered_history_entries(app).len();
+                    if app.history_select_index >= new_count && new_count > 0 {
+                        app.history_select_index = new_count - 1;
+                    } else if new_count == 0 {
+                        app.history_select_index = 0;
+                    }
+                    app.set_status("Conversation deleted");
                 }
-                app.status_message = Some("Conversation deleted".into());
+                app.history_delete_pending = false;
+            } else {
+                app.history_delete_pending = true;
+                app.set_status("Press 'd' again to confirm deletion, any other key to cancel");
             }
         }
+        KeyCode::Char('s') if app.history_search.is_empty() => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+                return;
+            }
+            app.history_sort = (app.history_sort + 1) % 3;
+            let sort_name = match app.history_sort {
+                0 => "Date (newest first)",
+                1 => "Title (A-Z)",
+                2 => "Messages (most first)",
+                _ => "Date",
+            };
+            app.set_status(format!("Sort: {sort_name}"));
+        }
         KeyCode::Up | KeyCode::Char('k') if app.history_search.is_empty() => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+            }
             app.history_select_index = app.history_select_index.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') if app.history_search.is_empty() => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+            }
             let count = ui::history_browser::filtered_history_count(app);
             if app.history_select_index + 1 < count {
                 app.history_select_index += 1;
@@ -1458,14 +1500,28 @@ fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
         KeyCode::Backspace => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+            }
             app.history_search.pop();
             app.history_select_index = 0;
         }
         KeyCode::Char(c) => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+                return;
+            }
             app.history_search.push(c);
             app.history_select_index = 0;
         }
-        _ => {}
+        _ => {
+            if app.history_delete_pending {
+                app.history_delete_pending = false;
+                app.set_status("Deletion cancelled");
+            }
+        }
     }
 }
 
@@ -1474,7 +1530,8 @@ fn filtered_history_entries(app: &App) -> Vec<history::ConversationRecord> {
     use fuzzy_matcher::skim::SkimMatcherV2;
     let matcher = SkimMatcherV2::default();
     let query = &app.history_search;
-    app.history_entries
+    let mut entries: Vec<history::ConversationRecord> = app
+        .history_entries
         .iter()
         .filter(|record| {
             if query.is_empty() {
@@ -1491,7 +1548,16 @@ fn filtered_history_entries(app: &App) -> Vec<history::ConversationRecord> {
             false
         })
         .cloned()
-        .collect()
+        .collect();
+
+    // Apply sort order to match the rendering
+    match app.history_sort {
+        1 => entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+        2 => entries.sort_by(|a, b| b.messages.len().cmp(&a.messages.len())),
+        _ => {} // Already sorted by date (default from list_conversations)
+    }
+
+    entries
 }
 
 // ── Search overlay ─────────────────────────────────────────────────────────
@@ -5205,5 +5271,28 @@ mod tests {
             let msg = provider_help_message(p);
             assert!(!msg.is_empty(), "Empty help for provider: {p}");
         }
+    }
+
+    // ── generate_title: additional slash commands ─────────────────────
+
+    #[test]
+    fn generate_title_file_with_path() {
+        let title = generate_title("/file src/lib.rs");
+        assert!(title.starts_with("File:"));
+    }
+
+    #[test]
+    fn generate_title_agent_command() {
+        // /agent is not a specially handled command, so generate_title
+        // strips the leading "/" and returns just the command name.
+        assert_eq!(generate_title("/agent on"), "agent");
+    }
+
+    #[test]
+    fn generate_title_scaffold_command() {
+        let title = generate_title("/scaffold a REST API in Go");
+        assert!(
+            title.starts_with("Scaffold:") || title.contains("scaffold") || title.contains("REST"),
+        );
     }
 }

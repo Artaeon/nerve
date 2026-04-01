@@ -48,6 +48,57 @@ pub(crate) fn format_relative_time(dt: &DateTime<Utc>) -> String {
     format!("{}mo ago", diff.num_days() / 30)
 }
 
+/// Highlight all case-insensitive occurrences of `query` in `text`, returning a
+/// styled `Line` with matching substrings shown as black-on-yellow.
+fn highlight_search_matches<'a>(text: &str, query: &str) -> Line<'a> {
+    highlight_search_matches_styled(
+        text,
+        query,
+        Style::default().fg(Color::White),
+        Style::default().fg(Color::Black).bg(Color::Yellow),
+    )
+}
+
+/// Like `highlight_search_matches` but with configurable styles for normal and
+/// highlighted text.
+fn highlight_search_matches_styled<'a>(
+    text: &str,
+    query: &str,
+    normal_style: Style,
+    highlight_style: Style,
+) -> Line<'a> {
+    if query.is_empty() {
+        return Line::from(Span::styled(text.to_string(), normal_style));
+    }
+
+    let query_lower = query.to_lowercase();
+    let text_lower = text.to_lowercase();
+
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(pos) = text_lower[cursor..].find(&query_lower) {
+        let abs_pos = cursor + pos;
+        if abs_pos > cursor {
+            spans.push(Span::styled(text[cursor..abs_pos].to_string(), normal_style));
+        }
+        spans.push(Span::styled(
+            text[abs_pos..abs_pos + query_lower.len()].to_string(),
+            highlight_style,
+        ));
+        cursor = abs_pos + query_lower.len();
+    }
+    if cursor < text.len() {
+        spans.push(Span::styled(text[cursor..].to_string(), normal_style));
+    }
+
+    if spans.is_empty() {
+        Line::from(Span::styled(text.to_string(), normal_style))
+    } else {
+        Line::from(spans)
+    }
+}
+
 /// Return the filtered list of history entries based on the current search query.
 pub(crate) fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
     let matcher = SkimMatcherV2::default();
@@ -80,6 +131,7 @@ pub(crate) fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
 fn build_left_panel_items<'a>(
     filtered: &[&'a ConversationRecord],
     select_index: usize,
+    search_query: &str,
 ) -> (Vec<ListItem<'a>>, Vec<Option<usize>>) {
     let mut items: Vec<ListItem<'a>> = Vec::new();
     let mut index_map: Vec<Option<usize>> = Vec::new();
@@ -118,13 +170,23 @@ fn build_left_panel_items<'a>(
         let time_str = format_relative_time(&record.updated_at);
         let title_display: String = record.title.chars().take(30).collect();
 
-        let line = Line::from(vec![
-            Span::styled(
-                if is_selected { "  > " } else { "    " },
+        let prefix = if is_selected { "  > " } else { "    " };
+        let line = if !search_query.is_empty() && !is_selected {
+            let mut spans = vec![Span::styled(prefix, style)];
+            let title_line = highlight_search_matches_styled(
+                &title_display,
+                search_query,
                 style,
-            ),
-            Span::styled(title_display, style),
-        ]);
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            );
+            spans.extend(title_line.spans);
+            Line::from(spans)
+        } else {
+            Line::from(vec![
+                Span::styled(prefix, style),
+                Span::styled(title_display, style),
+            ])
+        };
         let detail_line = Line::from(vec![
             Span::styled("      ", meta_style),
             Span::styled(
@@ -146,7 +208,14 @@ fn build_left_panel_items<'a>(
 
 /// Render the full-screen history browser.
 pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
-    let filtered = filtered_entries(app);
+    let mut filtered = filtered_entries(app);
+
+    // Apply sort order
+    match app.history_sort {
+        1 => filtered.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
+        2 => filtered.sort_by(|a, b| b.messages.len().cmp(&a.messages.len())),
+        _ => {} // Already sorted by date (default from list_conversations)
+    }
 
     // ── Outer block ──────────────────────────────────────────────────
     let outer = Block::default()
@@ -207,25 +276,37 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
 
     // ── Handle empty history ────────────────────────────────────────
     if filtered.is_empty() {
-        let empty_msg = if app.history_entries.is_empty() {
-            "No conversations yet"
+        let empty_lines = if app.history_entries.is_empty() {
+            vec![
+                Line::from(Span::styled(
+                    "No conversations yet",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
         } else {
-            "No conversations match the filter"
+            vec![
+                Line::from(Span::styled(
+                    format!("No conversations match \"{}\"", app.history_search),
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Try a different search, or press Esc to clear",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
         };
-        let empty_paragraph = Paragraph::new(Line::from(Span::styled(
-            empty_msg,
-            Style::default().fg(Color::DarkGray),
-        )))
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::NONE)
-                .padding(Padding::new(0, 0, vert[1].height / 2, 0)),
-        );
+        let empty_paragraph = Paragraph::new(empty_lines)
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .borders(Borders::NONE)
+                    .padding(Padding::new(0, 0, vert[1].height / 3, 0)),
+            );
         frame.render_widget(empty_paragraph, vert[1]);
 
         // Help bar
-        let help_text = "Esc: Close";
+        let help_text = "/: Search | Esc: Close";
         let help_widget = Paragraph::new(Line::from(Span::styled(
             help_text,
             Style::default().fg(Color::DarkGray),
@@ -242,7 +323,7 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
         .split(vert[1]);
 
     // ── Left panel: conversation list grouped by date ───────────────
-    let (left_items, index_map) = build_left_panel_items(&filtered, app.history_select_index);
+    let (left_items, index_map) = build_left_panel_items(&filtered, app.history_select_index, &app.history_search);
 
     // Find the ListState index that corresponds to the selected entry.
     let list_state_index = index_map
@@ -270,13 +351,22 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
     let preview_lines = if let Some(record) = filtered.get(app.history_select_index) {
         let mut lines: Vec<Line<'_>> = Vec::new();
 
-        // Title
-        lines.push(Line::from(Span::styled(
-            &record.title,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
+        // Title (with search highlighting if applicable)
+        if !app.history_search.is_empty() {
+            lines.push(highlight_search_matches_styled(
+                &record.title,
+                &app.history_search,
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            lines.push(Line::from(Span::styled(
+                record.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
         lines.push(Line::from(Span::styled(
             format!(
                 "Model: {} | {} messages | {}",
@@ -314,10 +404,15 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
                 .join("\n");
             let truncated: String = content_preview.chars().take(300).collect();
             for content_line in truncated.lines() {
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", content_line),
-                    Style::default().fg(Color::White),
-                )));
+                let line_text = format!("  {}", content_line);
+                if !app.history_search.is_empty() {
+                    lines.push(highlight_search_matches(&line_text, &app.history_search));
+                } else {
+                    lines.push(Line::from(Span::styled(
+                        line_text,
+                        Style::default().fg(Color::White),
+                    )));
+                }
             }
             if msg.content.len() > 300 || msg.content.lines().count() > 4 {
                 lines.push(Line::from(Span::styled(
@@ -363,12 +458,25 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(preview, columns[1]);
 
     // ── Bottom help bar ─────────────────────────────────────────────
-    let help_text = format!(
-        "{}/{} conversations | Enter: Load | d: Delete | Esc: Close | {}: Navigate",
-        filtered.len(),
-        app.history_entries.len(),
-        "\u{2191}\u{2193}",
-    );
+    let sort_label = match app.history_sort {
+        1 => "Title",
+        2 => "Messages",
+        _ => "Date",
+    };
+    let help_text = if app.history_delete_pending {
+        format!(
+            "{}/{} | d: Confirm Delete | Any key: Cancel",
+            filtered.len(),
+            app.history_entries.len(),
+        )
+    } else {
+        format!(
+            "{}/{} | Enter: Load | d: Delete | s: Sort ({}) | /: Search | Esc: Close",
+            filtered.len(),
+            app.history_entries.len(),
+            sort_label,
+        )
+    };
     let help_widget = Paragraph::new(Line::from(Span::styled(
         help_text,
         Style::default().fg(Color::DarkGray),
@@ -525,5 +633,63 @@ mod tests {
 
         app.history_search = "A".into();
         assert_eq!(filtered_history_count(&app), filtered_entries(&app).len());
+    }
+
+    #[test]
+    fn highlight_search_matches_no_match() {
+        let line = highlight_search_matches("hello world", "xyz");
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content, "hello world");
+    }
+
+    #[test]
+    fn highlight_search_matches_single_match() {
+        let line = highlight_search_matches("hello world", "world");
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content, "hello ");
+        assert_eq!(line.spans[1].content, "world");
+        // The match should have a yellow background
+        assert_eq!(line.spans[1].style.bg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn highlight_search_matches_case_insensitive() {
+        let line = highlight_search_matches("Hello World", "hello");
+        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans[0].content, "Hello");
+        assert_eq!(line.spans[0].style.bg, Some(Color::Yellow));
+        assert_eq!(line.spans[1].content, " World");
+    }
+
+    #[test]
+    fn highlight_search_matches_multiple_occurrences() {
+        let line = highlight_search_matches("foo bar foo baz foo", "foo");
+        // Should be: "foo", " bar ", "foo", " baz ", "foo"
+        assert_eq!(line.spans.len(), 5);
+        assert_eq!(line.spans[0].content, "foo");
+        assert_eq!(line.spans[0].style.bg, Some(Color::Yellow));
+        assert_eq!(line.spans[1].content, " bar ");
+        assert_eq!(line.spans[2].content, "foo");
+        assert_eq!(line.spans[2].style.bg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn highlight_search_matches_empty_query() {
+        let line = highlight_search_matches("hello", "");
+        // Empty query should not highlight anything
+        assert_eq!(line.spans.len(), 1);
+        assert_eq!(line.spans[0].content, "hello");
+    }
+
+    #[test]
+    fn delete_pending_initializes_false() {
+        let app = App::new();
+        assert!(!app.history_delete_pending);
+    }
+
+    #[test]
+    fn sort_mode_initializes_zero() {
+        let app = App::new();
+        assert_eq!(app.history_sort, 0);
     }
 }
