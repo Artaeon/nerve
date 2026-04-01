@@ -1,7 +1,7 @@
-use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
-use std::fs;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 /// Serializable session state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +47,10 @@ pub fn save_session(session: &Session) -> anyhow::Result<()> {
     fs::write(&path, json)?;
 
     // Also save a named copy
-    let named_path = dir.join(format!("session_{}.json", session.id.chars().take(8).collect::<String>()));
+    let named_path = dir.join(format!(
+        "session_{}.json",
+        session.id.chars().take(8).collect::<String>()
+    ));
     fs::write(named_path, serde_json::to_string(session)?)?;
 
     Ok(())
@@ -72,8 +75,12 @@ pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
-        if path.file_name().and_then(|n| n.to_str()) == Some("last_session.json") { continue; }
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        if path.file_name().and_then(|n| n.to_str()) == Some("last_session.json") {
+            continue;
+        }
 
         if let Ok(content) = fs::read_to_string(&path)
             && let Ok(session) = serde_json::from_str::<Session>(&content)
@@ -104,14 +111,16 @@ pub fn delete_session(id: &str) -> anyhow::Result<()> {
 pub fn session_from_app(app: &crate::app::App) -> Session {
     Session {
         id: uuid::Uuid::new_v4().to_string(),
-        conversations: app.conversations.iter().map(|conv| {
-            SessionConversation {
+        conversations: app
+            .conversations
+            .iter()
+            .map(|conv| SessionConversation {
                 id: conv.id.clone(),
                 title: conv.title.clone(),
                 messages: conv.messages.clone(),
                 created_at: conv.created_at,
-            }
-        }).collect(),
+            })
+            .collect(),
         active_conversation: app.active_conversation,
         selected_model: app.selected_model.clone(),
         selected_provider: app.selected_provider.clone(),
@@ -135,7 +144,9 @@ pub fn restore_session_to_app(session: &Session, app: &mut crate::app::App) {
     if app.conversations.is_empty() {
         app.conversations.push(crate::app::Conversation::new());
     }
-    app.active_conversation = session.active_conversation.min(app.conversations.len().saturating_sub(1));
+    app.active_conversation = session
+        .active_conversation
+        .min(app.conversations.len().saturating_sub(1));
     app.selected_model = session.selected_model.clone();
     app.selected_provider = session.selected_provider.clone();
     app.agent_mode = session.agent_mode;

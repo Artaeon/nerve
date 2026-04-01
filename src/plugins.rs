@@ -1,6 +1,6 @@
-use serde::{Serialize, Deserialize};
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,7 +19,9 @@ pub struct PluginManifest {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone)]
 pub struct Plugin {
@@ -61,7 +63,12 @@ impl Plugin {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            anyhow::bail!("Plugin '{}' failed (exit {}): {}", self.manifest.name, output.status, stderr);
+            anyhow::bail!(
+                "Plugin '{}' failed (exit {}): {}",
+                self.manifest.name,
+                output.status,
+                stderr
+            );
         }
 
         Ok(if stdout.is_empty() { stderr } else { stdout })
@@ -88,26 +95,37 @@ pub fn load_plugins() -> Vec<Plugin> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
 
             let manifest_path = path.join("plugin.toml");
-            if !manifest_path.exists() { continue; }
+            if !manifest_path.exists() {
+                continue;
+            }
 
             match fs::read_to_string(&manifest_path) {
-                Ok(content) => {
-                    match toml::from_str::<PluginManifest>(&content) {
-                        Ok(manifest) => {
-                            if manifest.enabled {
-                                plugins.push(Plugin { manifest, dir: path });
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to parse plugin manifest at {}: {e}", manifest_path.display());
+                Ok(content) => match toml::from_str::<PluginManifest>(&content) {
+                    Ok(manifest) => {
+                        if manifest.enabled {
+                            plugins.push(Plugin {
+                                manifest,
+                                dir: path,
+                            });
                         }
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse plugin manifest at {}: {e}",
+                            manifest_path.display()
+                        );
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!("Failed to read plugin manifest at {}: {e}", manifest_path.display());
+                    tracing::warn!(
+                        "Failed to read plugin manifest at {}: {e}",
+                        manifest_path.display()
+                    );
                 }
             }
         }
@@ -167,7 +185,9 @@ pub fn list_all_plugins() -> Vec<(PluginManifest, bool)> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
 
             let manifest_path = path.join("plugin.toml");
             if let Ok(content) = fs::read_to_string(&manifest_path)

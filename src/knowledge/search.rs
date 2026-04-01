@@ -1,5 +1,5 @@
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 
 use super::store::{Chunk, KnowledgeBase};
 
@@ -52,7 +52,11 @@ pub fn search_knowledge(kb: &KnowledgeBase, query: &str, max_results: usize) -> 
         })
         .collect();
 
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results.truncate(max_results);
     results
 }
@@ -100,9 +104,27 @@ mod tests {
             word_count: 20,
         };
         let chunks = vec![
-            Chunk { id: "c1".into(), document_id: "d1".into(), content: "Rust is a systems programming language focused on safety".into(), index: 0, word_count: 9 },
-            Chunk { id: "c2".into(), document_id: "d1".into(), content: "Python is an interpreted language for scripting".into(), index: 1, word_count: 7 },
-            Chunk { id: "c3".into(), document_id: "d1".into(), content: "JavaScript runs in the browser and on servers".into(), index: 2, word_count: 8 },
+            Chunk {
+                id: "c1".into(),
+                document_id: "d1".into(),
+                content: "Rust is a systems programming language focused on safety".into(),
+                index: 0,
+                word_count: 9,
+            },
+            Chunk {
+                id: "c2".into(),
+                document_id: "d1".into(),
+                content: "Python is an interpreted language for scripting".into(),
+                index: 1,
+                word_count: 7,
+            },
+            Chunk {
+                id: "c3".into(),
+                document_id: "d1".into(),
+                content: "JavaScript runs in the browser and on servers".into(),
+                index: 2,
+                word_count: 8,
+            },
         ];
         kb.add_document(doc, chunks);
         kb
@@ -154,8 +176,12 @@ mod tests {
         let kb = make_search_kb();
         let results = search_knowledge(&kb, "language", 10);
         for window in results.windows(2) {
-            assert!(window[0].score >= window[1].score,
-                "results not sorted: {} < {}", window[0].score, window[1].score);
+            assert!(
+                window[0].score >= window[1].score,
+                "results not sorted: {} < {}",
+                window[0].score,
+                window[1].score
+            );
         }
     }
 

@@ -1,5 +1,5 @@
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -44,7 +44,8 @@ pub(crate) fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
         cat_filtered
             .iter()
             .filter_map(|p| {
-                let haystack = format!("{} {} {} {}", p.name, p.description, p.category, p.template);
+                let haystack =
+                    format!("{} {} {} {}", p.name, p.description, p.category, p.template);
                 matcher
                     .fuzzy_match(&haystack, query)
                     .map(|score| (score, (*p).clone()))
@@ -63,8 +64,12 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ── Dimensions: centered popup 80% wide, 70% tall ───────────────────
-    let popup_width = (area.width * 80 / 100).max(50).min(area.width.saturating_sub(2));
-    let popup_height = (area.height * 70 / 100).max(16).min(area.height.saturating_sub(2));
+    let popup_width = (area.width * 80 / 100)
+        .max(50)
+        .min(area.width.saturating_sub(2));
+    let popup_height = (area.height * 70 / 100)
+        .max(16)
+        .min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -96,7 +101,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(3), // search input
             Constraint::Length(1), // category tabs
-            Constraint::Min(5),   // prompt list
+            Constraint::Min(5),    // prompt list
             Constraint::Length(6), // preview panel
             Constraint::Length(1), // footer
         ])
@@ -110,7 +115,10 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(app.command_bar_input.as_str(), Style::default().fg(Color::White)),
+        Span::styled(
+            app.command_bar_input.as_str(),
+            Style::default().fg(Color::White),
+        ),
         Span::styled(
             "\u{258c}", // ▌ cursor
             Style::default()
@@ -162,7 +170,10 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let mut tab_spans: Vec<Span> = Vec::new();
     let mut pos = 0usize;
     if scroll_x > 0 {
-        tab_spans.push(Span::styled("\u{25c0} ", Style::default().fg(Color::DarkGray)));
+        tab_spans.push(Span::styled(
+            "\u{25c0} ",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
     for (i, (label, _is_active)) in tab_labels.iter().enumerate() {
         let w = label.len() + 2;
@@ -186,7 +197,10 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
         pos = end;
     }
     if cursor > scroll_x + available_width {
-        tab_spans.push(Span::styled(" \u{25b6}", Style::default().fg(Color::DarkGray)));
+        tab_spans.push(Span::styled(
+            " \u{25b6}",
+            Style::default().fg(Color::DarkGray),
+        ));
     }
 
     let tab_line = Paragraph::new(Line::from(tab_spans));
@@ -209,77 +223,84 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     if scored.is_empty() && !query.is_empty() {
         let no_results = ListItem::new(Line::from(Span::styled(
             "  No prompts match your search. Try a different term.",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC),
         )));
         items.push(no_results);
     }
 
-    items.extend(scored
-        .iter()
-        .enumerate()
-        .flat_map(|(i, (_score, prompt))| {
-            let is_selected = i == app.command_bar_select_index;
+    items.extend(
+        scored
+            .iter()
+            .enumerate()
+            .flat_map(|(i, (_score, prompt))| {
+                let is_selected = i == app.command_bar_select_index;
 
-            // -- Line 1: [marker] Name                        [Category] --
-            let marker = if is_selected { "\u{25b6} " } else { "  " };
-            let name_style = if is_selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            let badge = format!("[{}]", prompt.category);
-            // Truncate long prompt names to fit the available width.
-            let max_name_len = list_width.saturating_sub(badge.len() + 6); // 6 = marker + padding
-            let truncated_name = if prompt.name.len() > max_name_len {
-                format!("{}...", &prompt.name[..max_name_len.saturating_sub(3)])
-            } else {
-                prompt.name.clone()
-            };
-            let name_part = format!("{}{}", marker, truncated_name);
-            // Calculate padding between name and badge.
-            let padding_len = list_width
-                .saturating_sub(name_part.len())
-                .saturating_sub(badge.len())
-                .max(2);
-            let padding = " ".repeat(padding_len);
+                // -- Line 1: [marker] Name                        [Category] --
+                let marker = if is_selected { "\u{25b6} " } else { "  " };
+                let name_style = if is_selected {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                let badge = format!("[{}]", prompt.category);
+                // Truncate long prompt names to fit the available width.
+                let max_name_len = list_width.saturating_sub(badge.len() + 6); // 6 = marker + padding
+                let truncated_name = if prompt.name.len() > max_name_len {
+                    format!("{}...", &prompt.name[..max_name_len.saturating_sub(3)])
+                } else {
+                    prompt.name.clone()
+                };
+                let name_part = format!("{}{}", marker, truncated_name);
+                // Calculate padding between name and badge.
+                let padding_len = list_width
+                    .saturating_sub(name_part.len())
+                    .saturating_sub(badge.len())
+                    .max(2);
+                let padding = " ".repeat(padding_len);
 
-            let badge_style = if is_selected {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
+                let badge_style = if is_selected {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
 
-            let line1 = Line::from(vec![
-                Span::styled(name_part, name_style),
-                Span::raw(padding),
-                Span::styled(badge, badge_style),
-            ]);
+                let line1 = Line::from(vec![
+                    Span::styled(name_part, name_style),
+                    Span::raw(padding),
+                    Span::styled(badge, badge_style),
+                ]);
 
-            // -- Line 2: indented description (truncated if too long) --
-            let desc_style = Style::default().fg(Color::DarkGray);
-            let max_desc_len = list_width.saturating_sub(4); // 4 = indent
-            let truncated_desc = if prompt.description.len() > max_desc_len {
-                format!("{}...", &prompt.description[..max_desc_len.saturating_sub(3)])
-            } else {
-                prompt.description.clone()
-            };
-            let line2 = Line::from(vec![
-                Span::raw("    "),
-                Span::styled(truncated_desc, desc_style),
-            ]);
+                // -- Line 2: indented description (truncated if too long) --
+                let desc_style = Style::default().fg(Color::DarkGray);
+                let max_desc_len = list_width.saturating_sub(4); // 4 = indent
+                let truncated_desc = if prompt.description.len() > max_desc_len {
+                    format!(
+                        "{}...",
+                        &prompt.description[..max_desc_len.saturating_sub(3)]
+                    )
+                } else {
+                    prompt.description.clone()
+                };
+                let line2 = Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(truncated_desc, desc_style),
+                ]);
 
-            // -- Line 3: blank spacer --
-            let line3 = Line::from("");
+                // -- Line 3: blank spacer --
+                let line3 = Line::from("");
 
-            vec![
-                ListItem::new(line1),
-                ListItem::new(line2),
-                ListItem::new(line3),
-            ]
-        })
-        .collect::<Vec<_>>());
+                vec![
+                    ListItem::new(line1),
+                    ListItem::new(line2),
+                    ListItem::new(line3),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
 
     let list = List::new(items).block(Block::default());
 
@@ -353,7 +374,11 @@ mod tests {
         app.command_bar_category = 0; // "All"
         app.command_bar_input.clear();
         let results = filtered_prompts(&app);
-        assert!(results.len() >= 130, "expected >= 130 prompts, got {}", results.len());
+        assert!(
+            results.len() >= 130,
+            "expected >= 130 prompts, got {}",
+            results.len()
+        );
     }
 
     #[test]
@@ -364,7 +389,11 @@ mod tests {
         app.command_bar_category = coding_idx;
         app.command_bar_input.clear();
         let results = filtered_prompts(&app);
-        assert!(results.len() >= 10, "expected >= 10 Coding prompts, got {}", results.len());
+        assert!(
+            results.len() >= 10,
+            "expected >= 10 Coding prompts, got {}",
+            results.len()
+        );
         assert!(results.len() < 130, "expected fewer than all prompts");
         for (_, prompt) in &results {
             assert_eq!(prompt.category, "Coding");
@@ -377,7 +406,10 @@ mod tests {
         app.command_bar_category = 0;
         app.command_bar_input = "rust code review".into();
         let results = filtered_prompts(&app);
-        assert!(results.len() >= 1, "should find at least one prompt matching 'rust code review'");
+        assert!(
+            !results.is_empty(),
+            "should find at least one prompt matching 'rust code review'"
+        );
         let all_count = {
             app.command_bar_input.clear();
             filtered_prompts(&app).len()
@@ -435,7 +467,11 @@ mod tests {
     fn category_tabs_starts_with_all() {
         let tabs = category_tabs();
         assert_eq!(tabs[0], "All");
-        assert!(tabs.len() >= 15, "expected >= 15 category tabs, got {}", tabs.len());
+        assert!(
+            tabs.len() >= 15,
+            "expected >= 15 category tabs, got {}",
+            tabs.len()
+        );
     }
 
     #[test]
@@ -444,6 +480,9 @@ mod tests {
         app.command_bar_category = 0;
         app.command_bar_input = "OWASP".into();
         let results = filtered_prompts(&app);
-        assert!(!results.is_empty(), "should find Security Audit by template content");
+        assert!(
+            !results.is_empty(),
+            "should find Security Audit by template content"
+        );
     }
 }

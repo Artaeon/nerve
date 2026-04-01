@@ -13,7 +13,9 @@ pub fn render_search(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ~60% width, 3 lines tall, positioned at top-center.
-    let popup_width = (area.width * 60 / 100).max(30).min(area.width.saturating_sub(2));
+    let popup_width = (area.width * 60 / 100)
+        .max(30)
+        .min(area.width.saturating_sub(2));
     let popup_height = 3u16;
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = 1; // near the top
@@ -42,14 +44,12 @@ pub fn render_search(frame: &mut Frame, app: &App) {
     };
 
     let block = Block::default()
-        .title(
-            Line::from(Span::styled(
-                " Search ",
-                Style::default()
-                    .fg(border_color)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        )
+        .title(Line::from(Span::styled(
+            " Search ",
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        )))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
         .padding(Padding::horizontal(1));

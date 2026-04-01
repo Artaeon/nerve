@@ -1,5 +1,5 @@
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -104,10 +104,7 @@ pub fn render_prompt_picker(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
             let marker = if is_selected { " > " } else { "   " };
-            ListItem::new(Line::from(Span::styled(
-                format!("{marker}{cat}"),
-                style,
-            )))
+            ListItem::new(Line::from(Span::styled(format!("{marker}{cat}"), style)))
         })
         .collect();
 

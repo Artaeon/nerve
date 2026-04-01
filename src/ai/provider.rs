@@ -75,7 +75,9 @@ pub trait AiProvider: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>>;
 
     /// List available models from the provider.
-    fn list_models(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>>;
+    fn list_models(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>>;
 
     /// The human-readable provider name (e.g. "OpenAI", "Ollama").
     fn name(&self) -> &str;

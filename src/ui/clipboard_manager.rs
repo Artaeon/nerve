@@ -14,8 +14,12 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ── Dimensions: centered popup ~70% wide, ~60% tall ─────────────
-    let popup_width = (area.width * 70 / 100).max(40).min(area.width.saturating_sub(4));
-    let popup_height = (area.height * 60 / 100).max(10).min(area.height.saturating_sub(4));
+    let popup_width = (area.width * 70 / 100)
+        .max(40)
+        .min(area.width.saturating_sub(4));
+    let popup_height = (area.height * 60 / 100)
+        .max(10)
+        .min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -117,11 +121,7 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
             // Layout: "{badge} {preview}  {time}"
             let overhead = badge.len() + 1 + 2 + time_str.len();
             let max_preview = content_width.saturating_sub(overhead);
-            let preview: String = entry
-                .preview
-                .chars()
-                .take(max_preview)
-                .collect();
+            let preview: String = entry.preview.chars().take(max_preview).collect();
 
             let line = Line::from(vec![
                 Span::styled(badge, badge_style),

@@ -128,7 +128,13 @@ pub fn delete_automation(name: &str) -> anyhow::Result<()> {
 fn sanitize_filename(name: &str) -> String {
     name.to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect()
 }
 
@@ -150,7 +156,8 @@ pub fn builtin_automations() -> Vec<Automation> {
             });
             a.add_step(AutomationStep {
                 name: "Suggest Fixes".into(),
-                prompt_template: "Now suggest specific fixes for each issue found:\n\n{{prev_output}}".into(),
+                prompt_template:
+                    "Now suggest specific fixes for each issue found:\n\n{{prev_output}}".into(),
                 model: None,
             });
             a.add_step(AutomationStep {
@@ -164,7 +171,8 @@ pub fn builtin_automations() -> Vec<Automation> {
         {
             let mut a = Automation::new(
                 "Content Optimizer".into(),
-                "Analyze content for clarity, rewrite with improvements, and create a summary.".into(),
+                "Analyze content for clarity, rewrite with improvements, and create a summary."
+                    .into(),
             );
             a.add_step(AutomationStep {
                 name: "Analyze Content".into(),
@@ -173,12 +181,14 @@ pub fn builtin_automations() -> Vec<Automation> {
             });
             a.add_step(AutomationStep {
                 name: "Rewrite Content".into(),
-                prompt_template: "Rewrite the content incorporating all improvements:\n\n{{prev_output}}".into(),
+                prompt_template:
+                    "Rewrite the content incorporating all improvements:\n\n{{prev_output}}".into(),
                 model: None,
             });
             a.add_step(AutomationStep {
                 name: "Summary & Headlines".into(),
-                prompt_template: "Create a brief summary and 3 alternative headlines:\n\n{{prev_output}}".into(),
+                prompt_template:
+                    "Create a brief summary and 3 alternative headlines:\n\n{{prev_output}}".into(),
                 model: None,
             });
             a
@@ -191,12 +201,15 @@ pub fn builtin_automations() -> Vec<Automation> {
             );
             a.add_step(AutomationStep {
                 name: "Research Questions".into(),
-                prompt_template: "Break down the following topic into 5 key research questions:\n\n{{input}}".into(),
+                prompt_template:
+                    "Break down the following topic into 5 key research questions:\n\n{{input}}"
+                        .into(),
                 model: None,
             });
             a.add_step(AutomationStep {
                 name: "Detailed Analysis".into(),
-                prompt_template: "For each question, provide a detailed analysis:\n\n{{prev_output}}".into(),
+                prompt_template:
+                    "For each question, provide a detailed analysis:\n\n{{prev_output}}".into(),
                 model: None,
             });
             a.add_step(AutomationStep {
@@ -219,7 +232,8 @@ pub fn builtin_automations() -> Vec<Automation> {
             });
             a.add_step(AutomationStep {
                 name: "Draft Email".into(),
-                prompt_template: "Draft a professional email based on the analysis:\n\n{{prev_output}}".into(),
+                prompt_template:
+                    "Draft a professional email based on the analysis:\n\n{{prev_output}}".into(),
                 model: None,
             });
             a
@@ -320,11 +334,7 @@ mod tests {
                 "Automation '{}' has empty description",
                 a.name
             );
-            assert!(
-                !a.steps.is_empty(),
-                "Automation '{}' has no steps",
-                a.name
-            );
+            assert!(!a.steps.is_empty(), "Automation '{}' has no steps", a.name);
         }
     }
 
@@ -360,7 +370,10 @@ mod tests {
     #[test]
     fn sanitize_filename_basic() {
         assert_eq!(sanitize_filename("Hello World"), "hello-world");
-        assert_eq!(sanitize_filename("Code Review Pipeline"), "code-review-pipeline");
+        assert_eq!(
+            sanitize_filename("Code Review Pipeline"),
+            "code-review-pipeline"
+        );
         assert_eq!(sanitize_filename("test_name"), "test_name");
         assert_eq!(sanitize_filename("special!@#chars"), "special---chars");
     }
@@ -422,7 +435,10 @@ mod tests {
     #[test]
     fn find_automation_missing_returns_error() {
         let result = find_automation("nonexistent automation xyz");
-        assert!(result.is_err(), "Should return error for missing automation");
+        assert!(
+            result.is_err(),
+            "Should return error for missing automation"
+        );
     }
 
     #[test]
@@ -463,14 +479,20 @@ mod tests {
     #[test]
     fn delete_missing_automation_returns_error() {
         let result = delete_automation("nonexistent_automation_xyz_12345");
-        assert!(result.is_err(), "Deleting nonexistent automation should error");
+        assert!(
+            result.is_err(),
+            "Deleting nonexistent automation should error"
+        );
     }
 
     #[test]
     fn builtin_automations_all_have_steps() {
         for auto in builtin_automations() {
-            assert!(!auto.steps.is_empty(),
-                "Automation '{}' has no steps", auto.name);
+            assert!(
+                !auto.steps.is_empty(),
+                "Automation '{}' has no steps",
+                auto.name
+            );
         }
     }
 
@@ -478,8 +500,12 @@ mod tests {
     fn builtin_steps_have_templates() {
         for auto in builtin_automations() {
             for step in &auto.steps {
-                assert!(!step.prompt_template.is_empty(),
-                    "Step '{}' in '{}' has empty template", step.name, auto.name);
+                assert!(
+                    !step.prompt_template.is_empty(),
+                    "Step '{}' in '{}' has empty template",
+                    step.name,
+                    auto.name
+                );
             }
         }
     }

@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -236,7 +236,10 @@ impl AiProvider for ClaudeCodeProvider {
             let _ = tx.send(StreamEvent::Done);
 
             // Reap the child so we don't leave zombies.
-            let status = child.wait().await.context("failed to wait on claude process")?;
+            let status = child
+                .wait()
+                .await
+                .context("failed to wait on claude process")?;
             if !status.success() {
                 let stderr_msg = if let Some(mut stderr) = stderr_handle {
                     let mut buf = String::new();
@@ -333,10 +336,7 @@ impl AiProvider for ClaudeCodeProvider {
                 tracing::info!("Claude Code session: {sid}");
             }
 
-            let result = json["result"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
+            let result = json["result"].as_str().unwrap_or("").to_string();
 
             Ok(result)
         })
@@ -391,10 +391,7 @@ mod tests {
 
     #[test]
     fn build_prompt_multiple_user_messages() {
-        let msgs = vec![
-            ChatMessage::user("First"),
-            ChatMessage::user("Second"),
-        ];
+        let msgs = vec![ChatMessage::user("First"), ChatMessage::user("Second")];
         let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
         assert!(system.is_none());
         assert_eq!(conversation, "First\n\nSecond");
@@ -425,7 +422,9 @@ mod tests {
         let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
         assert_eq!(system, Some("You are a tutor.".into()));
         assert!(conversation.contains("Explain closures."));
-        assert!(conversation.contains("[Previous assistant response: A closure captures variables from its environment.]"));
+        assert!(conversation.contains(
+            "[Previous assistant response: A closure captures variables from its environment.]"
+        ));
     }
 
     #[test]
@@ -437,7 +436,10 @@ mod tests {
         ];
         let (system, conversation) = ClaudeCodeProvider::build_prompt(&msgs);
         assert!(system.is_none());
-        assert_eq!(conversation, "Q1\n\n[Previous assistant response: A1]\n\nQ2");
+        assert_eq!(
+            conversation,
+            "Q1\n\n[Previous assistant response: A1]\n\nQ2"
+        );
     }
 
     // ── build_prompt: multiple system messages ──────────────────────────

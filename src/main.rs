@@ -10,14 +10,14 @@ mod files;
 mod history;
 mod keybinds;
 mod knowledge;
+mod plugins;
 mod prompts;
 mod scaffold;
 mod scraper;
+mod session;
 mod shell;
 mod ui;
 mod usage;
-mod plugins;
-mod session;
 mod workspace;
 
 use std::io::{self, Read as _};
@@ -174,19 +174,18 @@ fn create_provider(
 ) -> anyhow::Result<Box<dyn AiProvider>> {
     let provider_name = provider_override.unwrap_or(&config.default_provider);
     match provider_name {
-        "claude_code" | "claude" => {
-            Ok(Box::new(ClaudeCodeProvider::new()))
-        }
+        "claude_code" | "claude" => Ok(Box::new(ClaudeCodeProvider::new())),
         "openai" => {
             let pc = config.providers.openai.as_ref();
-            let key = resolve_api_key(
-                pc.and_then(|p| p.api_key.as_deref()),
-                "OPENAI_API_KEY",
-            )?;
+            let key = resolve_api_key(pc.and_then(|p| p.api_key.as_deref()), "OPENAI_API_KEY")?;
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            Ok(Box::new(OpenAiProvider::new(key, base_url, "OpenAI".into())))
+            Ok(Box::new(OpenAiProvider::new(
+                key,
+                base_url,
+                "OpenAI".into(),
+            )))
         }
         "ollama" => {
             let pc = config.providers.ollama.as_ref();
@@ -201,10 +200,7 @@ fn create_provider(
         }
         "openrouter" => {
             let pc = config.providers.openrouter.as_ref();
-            let key = resolve_api_key(
-                pc.and_then(|p| p.api_key.as_deref()),
-                "OPENROUTER_API_KEY",
-            )?;
+            let key = resolve_api_key(pc.and_then(|p| p.api_key.as_deref()), "OPENROUTER_API_KEY")?;
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://openrouter.ai/api/v1".into());
@@ -214,17 +210,10 @@ fn create_provider(
                 "OpenRouter".into(),
             )))
         }
-        "copilot" | "gh" => {
-            Ok(Box::new(CopilotProvider::new()))
-        }
+        "copilot" | "gh" => Ok(Box::new(CopilotProvider::new())),
         other => {
             // Check custom providers.
-            if let Some(custom) = config
-                .providers
-                .custom
-                .iter()
-                .find(|c| c.name == other)
-            {
+            if let Some(custom) = config.providers.custom.iter().find(|c| c.name == other) {
                 return Ok(Box::new(OpenAiProvider::new(
                     custom.api_key.clone(),
                     custom.base_url.clone(),
@@ -324,7 +313,9 @@ fn render_splash(frame: &mut ratatui::Frame, status: &str) {
 
     let center = chunks[1];
 
-    let art_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let art_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
     let dim_style = Style::default().fg(Color::DarkGray);
     let version_style = Style::default().fg(Color::Yellow);
 
@@ -355,7 +346,12 @@ fn render_splash(frame: &mut ratatui::Frame, status: &str) {
 
 // ─── Interactive TUI ────────────────────────────────────────────────────────
 
-async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session: bool, no_splash: bool) -> anyhow::Result<()> {
+async fn run_tui(
+    provider: Arc<dyn AiProvider>,
+    config: Config,
+    continue_session: bool,
+    no_splash: bool,
+) -> anyhow::Result<()> {
     // Enter the alternate screen and enable raw mode.
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -373,11 +369,13 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
-    let init_status = |terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>, msg: &str| {
-        if !no_splash {
-            terminal.draw(|frame| render_splash(frame, msg)).ok();
-        }
-    };
+    let init_status =
+        |terminal: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<io::Stdout>>,
+         msg: &str| {
+            if !no_splash {
+                terminal.draw(|frame| render_splash(frame, msg)).ok();
+            }
+        };
 
     let mut app = App::new();
     app.selected_model = config.default_model.clone();
@@ -412,7 +410,10 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
     app.plugins = loaded_plugins.clone();
 
     // Build startup status line.
-    let mut info_parts = vec![format!("{} > {}", app.selected_provider, app.selected_model)];
+    let mut info_parts = vec![format!(
+        "{} > {}",
+        app.selected_provider, app.selected_model
+    )];
     if let Some(ref ws) = detected_workspace {
         info_parts.push(format!("{:?}: {}", ws.project_type, ws.name));
     }
@@ -432,7 +433,10 @@ async fn run_tui(provider: Arc<dyn AiProvider>, config: Config, continue_session
         match session::load_last_session() {
             Ok(sess) => {
                 session::restore_session_to_app(&sess, &mut app);
-                app.set_status(format!("Resumed session ({} conversation(s))", app.conversations.len()));
+                app.set_status(format!(
+                    "Resumed session ({} conversation(s))",
+                    app.conversations.len()
+                ));
             }
             Err(_) => {
                 app.set_status("No previous session found");
@@ -555,10 +559,8 @@ async fn event_loop(
                         }
 
                         if !response_content.is_empty() {
-                            app.clipboard_manager.add(
-                                response_content,
-                                ClipboardSource::AiResponse,
-                            );
+                            app.clipboard_manager
+                                .add(response_content, ClipboardSource::AiResponse);
                             let _ = app.clipboard_manager.save();
                         }
 
@@ -582,12 +584,10 @@ async fn event_loop(
                                 messages: conv
                                     .messages
                                     .iter()
-                                    .map(|(role, content)| {
-                                        history::MessageRecord {
-                                            role: role.clone(),
-                                            content: content.clone(),
-                                            timestamp: chrono::Utc::now(),
-                                        }
+                                    .map(|(role, content)| history::MessageRecord {
+                                        role: role.clone(),
+                                        content: content.clone(),
+                                        timestamp: chrono::Utc::now(),
                                     })
                                     .collect(),
                                 model: app.selected_model.clone(),
@@ -607,28 +607,52 @@ async fn event_loop(
                                 .map(|(_, c)| c.clone());
 
                             if let Some(response) = last_response {
-                                let tool_calls =
-                                    crate::agent::tools::parse_tool_calls(&response);
+                                let tool_calls = crate::agent::tools::parse_tool_calls(&response);
 
-                                if !tool_calls.is_empty()
-                                    && app.agent_iterations < 10
-                                {
+                                if !tool_calls.is_empty() && app.agent_iterations < 10 {
                                     app.agent_iterations += 1;
 
                                     // Show what the agent is doing in a human-readable way
                                     let mut action_summary = String::new();
                                     for call in &tool_calls {
                                         let brief = match call.tool.as_str() {
-                                            "read_file" => format!("Reading {}", call.args.get("path").unwrap_or(&"?".into())),
-                                            "write_file" => format!("Writing {}", call.args.get("path").unwrap_or(&"?".into())),
-                                            "edit_file" => format!("Editing {}", call.args.get("path").unwrap_or(&"?".into())),
-                                            "run_command" => format!("Running: {}", call.args.get("command").unwrap_or(&"?".into())),
-                                            "list_files" => format!("Listing {}", call.args.get("path").unwrap_or(&".".into())),
-                                            "search_code" => format!("Searching for '{}'", call.args.get("pattern").unwrap_or(&"?".into())),
-                                            "create_directory" => format!("Creating {}", call.args.get("path").unwrap_or(&"?".into())),
-                                            "find_files" => format!("Finding {}", call.args.get("pattern").unwrap_or(&"*".into())),
-                                            "read_lines" => format!("Reading lines from {}", call.args.get("path").unwrap_or(&"?".into())),
-                                            _ => format!("{}", call.tool),
+                                            "read_file" => format!(
+                                                "Reading {}",
+                                                call.args.get("path").unwrap_or(&"?".into())
+                                            ),
+                                            "write_file" => format!(
+                                                "Writing {}",
+                                                call.args.get("path").unwrap_or(&"?".into())
+                                            ),
+                                            "edit_file" => format!(
+                                                "Editing {}",
+                                                call.args.get("path").unwrap_or(&"?".into())
+                                            ),
+                                            "run_command" => format!(
+                                                "Running: {}",
+                                                call.args.get("command").unwrap_or(&"?".into())
+                                            ),
+                                            "list_files" => format!(
+                                                "Listing {}",
+                                                call.args.get("path").unwrap_or(&".".into())
+                                            ),
+                                            "search_code" => format!(
+                                                "Searching for '{}'",
+                                                call.args.get("pattern").unwrap_or(&"?".into())
+                                            ),
+                                            "create_directory" => format!(
+                                                "Creating {}",
+                                                call.args.get("path").unwrap_or(&"?".into())
+                                            ),
+                                            "find_files" => format!(
+                                                "Finding {}",
+                                                call.args.get("pattern").unwrap_or(&"*".into())
+                                            ),
+                                            "read_lines" => format!(
+                                                "Reading lines from {}",
+                                                call.args.get("path").unwrap_or(&"?".into())
+                                            ),
+                                            _ => call.tool.to_string(),
                                         };
                                         action_summary.push_str(&format!("  > {brief}\n"));
                                     }
@@ -638,21 +662,18 @@ async fn event_loop(
                                     ));
 
                                     // Execute tools and build results message
-                                    let mut results =
-                                        String::from("I executed your tool calls. Here are the results:\n\n");
+                                    let mut results = String::from(
+                                        "I executed your tool calls. Here are the results:\n\n",
+                                    );
                                     let mut all_success = true;
 
                                     for (idx, call) in tool_calls.iter().enumerate() {
-                                        let result =
-                                            crate::agent::tools::execute_tool(call);
+                                        let result = crate::agent::tools::execute_tool(call);
                                         if !result.success {
                                             all_success = false;
                                         }
-                                        let status_icon = if result.success {
-                                            "OK"
-                                        } else {
-                                            "ERROR"
-                                        };
+                                        let status_icon =
+                                            if result.success { "OK" } else { "ERROR" };
                                         results.push_str(&format!(
                                             "### Tool {}: {} [{}]\n```\n{}\n```\n\n",
                                             idx + 1,
@@ -681,62 +702,42 @@ async fn event_loop(
                                     app.add_user_message(results);
 
                                     // Apply context management based on provider
-                                    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
-                                    let context_mgr =
-                                        crate::agent::context::ContextManager::new(
-                                            limit,
+                                    let limit =
+                                        crate::agent::context::ContextManager::recommended_limit(
+                                            &app.selected_provider,
                                         );
+                                    let context_mgr =
+                                        crate::agent::context::ContextManager::new(limit);
 
                                     // First compact tool results, then overall conversation
-                                    let tool_compacted = context_mgr.compact_tool_results(
-                                        &app.current_conversation().messages,
-                                    );
-                                    let compacted = context_mgr.compact_messages(
-                                        &tool_compacted,
-                                    );
+                                    let tool_compacted = context_mgr
+                                        .compact_tool_results(&app.current_conversation().messages);
+                                    let compacted = context_mgr.compact_messages(&tool_compacted);
                                     let messages: Vec<ChatMessage> = compacted
                                         .iter()
-                                        .filter_map(|(role, content)| {
-                                            match role.as_str() {
-                                                "user" => {
-                                                    Some(ChatMessage::user(content))
-                                                }
-                                                "assistant" => {
-                                                    Some(ChatMessage::assistant(
-                                                        content,
-                                                    ))
-                                                }
-                                                "system" => {
-                                                    Some(ChatMessage::system(content))
-                                                }
-                                                _ => None,
-                                            }
+                                        .filter_map(|(role, content)| match role.as_str() {
+                                            "user" => Some(ChatMessage::user(content)),
+                                            "assistant" => Some(ChatMessage::assistant(content)),
+                                            "system" => Some(ChatMessage::system(content)),
+                                            _ => None,
                                         })
                                         .collect();
 
                                     // Trigger another AI call
                                     let model = app.selected_model.clone();
-                                    let (tx, new_rx) =
-                                        tokio::sync::mpsc::unbounded_channel();
+                                    let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
                                     app.stream_rx = Some(new_rx);
                                     app.is_streaming = true;
                                     app.streaming_response.clear();
-                                    app.streaming_start =
-                                        Some(std::time::Instant::now());
+                                    app.streaming_start = Some(std::time::Instant::now());
 
                                     let provider_clone = Arc::clone(&provider);
                                     tokio::spawn(async move {
                                         if let Err(e) = provider_clone
-                                            .chat_stream(
-                                                &messages,
-                                                &model,
-                                                tx.clone(),
-                                            )
+                                            .chat_stream(&messages, &model, tx.clone())
                                             .await
                                         {
-                                            let _ = tx.send(
-                                                StreamEvent::Error(e.to_string()),
-                                            );
+                                            let _ = tx.send(StreamEvent::Error(e.to_string()));
                                         }
                                     });
 
@@ -757,8 +758,7 @@ async fn event_loop(
                         break;
                     }
                     StreamEvent::Error(e) => {
-                        app.streaming_response
-                            .push_str(&format!("\n[Error: {e}]"));
+                        app.streaming_response.push_str(&format!("\n[Error: {e}]"));
                         app.finish_streaming();
                         finished = true;
                         break;
@@ -933,8 +933,7 @@ async fn handle_common_ctrl(
             Ok(true)
         }
         KeyCode::Char('o') => {
-            app.history_entries =
-                history::list_conversations().unwrap_or_default();
+            app.history_entries = history::list_conversations().unwrap_or_default();
             app.history_select_index = 0;
             app.history_search.clear();
             app.history_delete_pending = false;
@@ -1005,9 +1004,12 @@ async fn handle_normal_mode(
                         let content = content.clone();
                         match clipboard::copy_to_clipboard(&content) {
                             Ok(()) => {
-                                app.clipboard_manager.add(content, ClipboardSource::ManualCopy);
+                                app.clipboard_manager
+                                    .add(content, ClipboardSource::ManualCopy);
                                 let _ = app.clipboard_manager.save();
-                                app.set_status(format!("Copied message #{n} ({role}) to clipboard"));
+                                app.set_status(format!(
+                                    "Copied message #{n} ({role}) to clipboard"
+                                ));
                             }
                             Err(e) => app.set_status(format!("Clipboard error: {e}")),
                         }
@@ -1074,7 +1076,9 @@ async fn handle_normal_mode(
                     if app.input.starts_with('/') {
                         // Check if this is a file command with a path to complete
                         let parts: Vec<&str> = app.input.splitn(3, ' ').collect();
-                        if parts.len() >= 2 && (parts[0] == "/file" || parts[0] == "/files" || parts[0] == "/cd") {
+                        if parts.len() >= 2
+                            && (parts[0] == "/file" || parts[0] == "/files" || parts[0] == "/cd")
+                        {
                             let partial = parts.last().unwrap_or(&"");
                             if let Some(completed) = complete_file_path(partial) {
                                 let prefix = if parts.len() == 3 {
@@ -1088,8 +1092,13 @@ async fn handle_normal_mode(
                                 // Show multiple matches in status bar if any exist
                                 let file_matches = list_file_matches(partial);
                                 if file_matches.len() > 1 {
-                                    let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
-                                    let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
+                                    let display: Vec<String> =
+                                        file_matches.iter().take(10).cloned().collect();
+                                    let suffix = if file_matches.len() > 10 {
+                                        format!(" (+{})", file_matches.len() - 10)
+                                    } else {
+                                        String::new()
+                                    };
                                     app.set_status(format!("{}{}", display.join("  "), suffix));
                                 }
                             }
@@ -1097,13 +1106,46 @@ async fn handle_normal_mode(
                             // Existing slash command completion
                             let partial = &app.input[1..]; // strip the /
                             let commands = [
-                                "help", "clear", "new", "model", "models", "provider",
-                                "providers", "code", "cwd", "url", "kb", "auto", "status",
-                                "export", "rename", "system", "workspace", "run",
-                                "pipe", "diff", "test", "build", "git",
-                                "agent", "cd", "summary", "compact", "context", "tokens",
-                                "branch", "session", "usage", "cost", "limit", "copy",
-                                "file", "files", "theme", "alias", "repeat",
+                                "help",
+                                "clear",
+                                "new",
+                                "model",
+                                "models",
+                                "provider",
+                                "providers",
+                                "code",
+                                "cwd",
+                                "url",
+                                "kb",
+                                "auto",
+                                "status",
+                                "export",
+                                "rename",
+                                "system",
+                                "workspace",
+                                "run",
+                                "pipe",
+                                "diff",
+                                "test",
+                                "build",
+                                "git",
+                                "agent",
+                                "cd",
+                                "summary",
+                                "compact",
+                                "context",
+                                "tokens",
+                                "branch",
+                                "session",
+                                "usage",
+                                "cost",
+                                "limit",
+                                "copy",
+                                "file",
+                                "files",
+                                "theme",
+                                "alias",
+                                "repeat",
                             ];
                             let matches: Vec<&&str> = commands
                                 .iter()
@@ -1132,7 +1174,7 @@ async fn handle_normal_mode(
                         // Complete @file references
                         if let Some(at_pos) = app.input.rfind('@') {
                             let pos = app.cursor_position.min(app.input.len());
-                            if at_pos + 1 <= pos {
+                            if at_pos < pos {
                                 let partial = &app.input[at_pos + 1..pos];
                                 if partial.contains('.') || partial.contains('/') {
                                     if let Some(completed) = complete_file_path(partial) {
@@ -1143,9 +1185,18 @@ async fn handle_normal_mode(
                                     } else {
                                         let file_matches = list_file_matches(partial);
                                         if file_matches.len() > 1 {
-                                            let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
-                                            let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
-                                            app.set_status(format!("{}{}", display.join("  "), suffix));
+                                            let display: Vec<String> =
+                                                file_matches.iter().take(10).cloned().collect();
+                                            let suffix = if file_matches.len() > 10 {
+                                                format!(" (+{})", file_matches.len() - 10)
+                                            } else {
+                                                String::new()
+                                            };
+                                            app.set_status(format!(
+                                                "{}{}",
+                                                display.join("  "),
+                                                suffix
+                                            ));
                                         }
                                     }
                                 }
@@ -1175,19 +1226,16 @@ async fn handle_normal_mode(
                 }
                 KeyCode::Down => {
                     // Browse input history (newer)
-                    match app.input_history_index {
-                        Some(idx) => {
-                            if idx + 1 < app.input_history.len() {
-                                app.input_history_index = Some(idx + 1);
-                                app.input = app.input_history[idx + 1].clone();
-                            } else {
-                                // Back to current input
-                                app.input_history_index = None;
-                                app.input = app.input_saved.clone();
-                            }
-                            app.cursor_position = app.input.len();
+                    if let Some(idx) = app.input_history_index {
+                        if idx + 1 < app.input_history.len() {
+                            app.input_history_index = Some(idx + 1);
+                            app.input = app.input_history[idx + 1].clone();
+                        } else {
+                            // Back to current input
+                            app.input_history_index = None;
+                            app.input = app.input_saved.clone();
                         }
-                        None => {} // Already at current input
+                        app.cursor_position = app.input.len();
                     }
                 }
                 KeyCode::Home => {
@@ -1483,8 +1531,7 @@ fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.scroll_offset = 0;
                 app.streaming_response.clear();
                 app.is_streaming = false;
-                app.status_message =
-                    Some(format!("Loaded conversation: {}", record.title));
+                app.status_message = Some(format!("Loaded conversation: {}", record.title));
                 app.mode = AppMode::Normal;
             }
         }
@@ -1870,10 +1917,7 @@ fn generate_title(first_user_message: &str) -> String {
             ),
             Some("/scaffold") => format!(
                 "Scaffold: {}",
-                parts
-                    .get(1..)
-                    .map(|p| p.join(" "))
-                    .unwrap_or_default()
+                parts.get(1..).map(|p| p.join(" ")).unwrap_or_default()
             ),
             Some("/template") => format!("Template: {}", parts.get(1).unwrap_or(&"")),
             Some(cmd) if cmd.len() > 1 => cmd[1..].to_string(), // Strip / and use command name
@@ -2014,8 +2058,7 @@ fn toggle_setting(app: &mut App) {
                         .iter()
                         .position(|p| p == &app.selected_provider)
                         .unwrap_or(0);
-                    app.selected_provider =
-                        providers[(idx + 1) % providers.len()].clone();
+                    app.selected_provider = providers[(idx + 1) % providers.len()].clone();
                     app.provider_changed = true;
                 }
                 1 => {
@@ -2025,9 +2068,8 @@ fn toggle_setting(app: &mut App) {
                         .iter()
                         .position(|m| m == &app.selected_model)
                         .unwrap_or(0);
-                    app.selected_model = app.available_models
-                        [(idx + 1) % app.available_models.len()]
-                    .clone();
+                    app.selected_model =
+                        app.available_models[(idx + 1) % app.available_models.len()].clone();
                 }
                 2 => app.agent_mode = !app.agent_mode,
                 3 => app.code_mode = !app.code_mode,
@@ -2060,9 +2102,7 @@ async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider
     }
 
     // ── Slash-command dispatch ──────────────────────────────────────────
-    if text.starts_with('/')
-        && handle_slash_command(app, text, provider).await
-    {
+    if text.starts_with('/') && handle_slash_command(app, text, provider).await {
         return;
         // Not a recognised command — treat as a normal message.
     }
@@ -2072,11 +2112,7 @@ async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider
 
 /// Handle slash commands. Returns `true` if the command was recognised and
 /// handled (so the caller should *not* forward the text to the AI).
-async fn handle_slash_command(
-    app: &mut App,
-    text: &str,
-    provider: &Arc<dyn AiProvider>,
-) -> bool {
+async fn handle_slash_command(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -> bool {
     let trimmed = text.trim();
 
     // /help — show available commands as an assistant message.
@@ -2256,11 +2292,7 @@ System\n\
             .available_models
             .iter()
             .find(|m| m.as_str() == name)
-            .or_else(|| {
-                app.available_models
-                    .iter()
-                    .find(|m| m.starts_with(name))
-            })
+            .or_else(|| app.available_models.iter().find(|m| m.starts_with(name)))
             .cloned();
         match matched {
             Some(model) => {
@@ -2287,11 +2319,19 @@ System\n\
              {} copilot     - GitHub Copilot (requires gh CLI with Copilot extension)\n\n\
              Current: {}\n\
              Switch with: /provider <name> or Ctrl+T",
-            if current == "claude_code" || current == "claude" { "*" } else { " " },
+            if current == "claude_code" || current == "claude" {
+                "*"
+            } else {
+                " "
+            },
             if current == "ollama" { "*" } else { " " },
             if current == "openai" { "*" } else { " " },
             if current == "openrouter" { "*" } else { " " },
-            if current == "copilot" || current == "gh" { "*" } else { " " },
+            if current == "copilot" || current == "gh" {
+                "*"
+            } else {
+                " "
+            },
             current
         );
         app.add_assistant_message(list);
@@ -2320,7 +2360,15 @@ System\n\
             app.scroll_offset = 0;
             return true;
         }
-        let valid = ["claude_code", "claude", "ollama", "openai", "openrouter", "copilot", "gh"];
+        let valid = [
+            "claude_code",
+            "claude",
+            "ollama",
+            "openai",
+            "openrouter",
+            "copilot",
+            "gh",
+        ];
         if valid.contains(&name) {
             app.selected_provider = name.to_string();
             app.provider_changed = true;
@@ -2377,8 +2425,7 @@ System\n\
                     Some(q) => q,
                     None => format!("I've loaded content from {url}. Please summarise it."),
                 };
-                app.status_message =
-                    Some(format!("Scraped {url} ({} words)", result.word_count));
+                app.status_message = Some(format!("Scraped {url} ({} words)", result.word_count));
 
                 // Now send the user's question (or default) to the AI with the
                 // scraped context already in the conversation.
@@ -2401,28 +2448,24 @@ System\n\
                 app.agent_mode = true;
                 // Inject tools system prompt
                 let tools_prompt = crate::agent::tools::tools_system_prompt();
-                app.current_conversation_mut()
-                    .messages
-                    .retain(|(r, c)| {
-                        !(r == "system"
-                            && (c.contains("You have access to the following tools")
-                                || c.contains("You are Nerve, an AI coding assistant")))
-                    });
+                app.current_conversation_mut().messages.retain(|(r, c)| {
+                    !(r == "system"
+                        && (c.contains("You have access to the following tools")
+                            || c.contains("You are Nerve, an AI coding assistant")))
+                });
                 app.current_conversation_mut()
                     .messages
                     .insert(0, ("system".into(), tools_prompt));
                 // Inject project map for context (prefer cached workspace).
-                let ws_for_agent = app.cached_workspace.clone()
+                let ws_for_agent = app
+                    .cached_workspace
+                    .clone()
                     .or_else(crate::workspace::detect_workspace);
                 if let Some(ws) = ws_for_agent {
-                    let project_map =
-                        crate::workspace::generate_project_map(&ws.root, 3);
+                    let project_map = crate::workspace::generate_project_map(&ws.root, 3);
                     // Truncate if very large (keep under 2000 chars)
                     let map_context = if project_map.len() > 2000 {
-                        format!(
-                            "{}...\n[Project map truncated]",
-                            &project_map[..2000]
-                        )
+                        format!("{}...\n[Project map truncated]", &project_map[..2000])
                     } else {
                         project_map
                     };
@@ -2430,16 +2473,13 @@ System\n\
                         1,
                         (
                             "system".into(),
-                            format!(
-                                "Current project context:\n\n{map_context}"
-                            ),
+                            format!("Current project context:\n\n{map_context}"),
                         ),
                     );
                 }
                 // Git safety: create a checkpoint before agent starts
-                let git_status = crate::shell::run_command(
-                    "git rev-parse --is-inside-work-tree 2>/dev/null",
-                );
+                let git_status =
+                    crate::shell::run_command("git rev-parse --is-inside-work-tree 2>/dev/null");
                 if let Ok(ref result) = git_status {
                     if result.stdout.trim() == "true" {
                         let stash_result = crate::shell::run_command(
@@ -2453,14 +2493,10 @@ System\n\
                                 );
                             } else {
                                 app.agent_has_stash = false;
-                                app.set_status(
-                                    "Agent mode ON \u{2014} AI has tool access",
-                                );
+                                app.set_status("Agent mode ON \u{2014} AI has tool access");
                             }
                         } else {
-                            app.set_status(
-                                "Agent mode ON \u{2014} AI has tool access",
-                            );
+                            app.set_status("Agent mode ON \u{2014} AI has tool access");
                         }
                     } else {
                         app.set_status(
@@ -2477,13 +2513,11 @@ System\n\
                 app.agent_mode = false;
                 app.agent_iterations = 0;
                 crate::agent::tools::reset_tool_counter();
-                app.current_conversation_mut()
-                    .messages
-                    .retain(|(r, c)| {
-                        !(r == "system"
-                            && (c.contains("You have access to the following tools")
-                                || c.contains("You are Nerve, an AI coding assistant")))
-                    });
+                app.current_conversation_mut().messages.retain(|(r, c)| {
+                    !(r == "system"
+                        && (c.contains("You have access to the following tools")
+                            || c.contains("You are Nerve, an AI coding assistant")))
+                });
                 app.set_status("Agent mode OFF \u{2014} chat only");
             }
             "status" => {
@@ -2526,24 +2560,19 @@ System\n\
                     }
                 }
             }
-            "diff" => {
-                match crate::shell::run_command("git diff") {
-                    Ok(result) => {
-                        if result.stdout.trim().is_empty() {
-                            app.add_assistant_message(
-                                "No changes detected since agent started.".into(),
-                            );
-                        } else {
-                            let diff = format!(
-                                "Agent changes:\n\n```diff\n{}\n```",
-                                result.stdout,
-                            );
-                            app.add_assistant_message(diff);
-                        }
+            "diff" => match crate::shell::run_command("git diff") {
+                Ok(result) => {
+                    if result.stdout.trim().is_empty() {
+                        app.add_assistant_message(
+                            "No changes detected since agent started.".into(),
+                        );
+                    } else {
+                        let diff = format!("Agent changes:\n\n```diff\n{}\n```", result.stdout,);
+                        app.add_assistant_message(diff);
                     }
-                    Err(e) => app.set_status(format!("Error: {e}")),
                 }
-            }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            },
             _ if rest.starts_with("commit") => {
                 let commit_rest = rest.strip_prefix("commit").unwrap_or("").trim();
                 let msg = if commit_rest.is_empty() {
@@ -2589,26 +2618,18 @@ System\n\
         let rest = trimmed.strip_prefix("/cd").unwrap_or("").trim();
         if rest.is_empty() {
             let cwd = std::env::current_dir().unwrap_or_default();
-            app.add_assistant_message(format!(
-                "Current directory: {}",
-                cwd.display()
-            ));
+            app.add_assistant_message(format!("Current directory: {}", cwd.display()));
         } else {
             let target = rest;
             let target_path = if let Some(stripped) = target.strip_prefix("~/") {
-                dirs::home_dir()
-                    .unwrap_or_default()
-                    .join(stripped)
+                dirs::home_dir().unwrap_or_default().join(stripped)
             } else {
                 std::path::PathBuf::from(target)
             };
 
             match std::env::set_current_dir(&target_path) {
                 Ok(()) => {
-                    app.set_status(format!(
-                        "Changed to {}",
-                        target_path.display()
-                    ));
+                    app.set_status(format!("Changed to {}", target_path.display()));
                     // Re-detect workspace (directory changed, so invalidate cache).
                     let ws = crate::workspace::detect_workspace();
                     if let Some(ref ws) = ws {
@@ -2661,10 +2682,7 @@ System\n\
     if trimmed == "/cwd" || trimmed.starts_with("/cwd ") {
         let rest = trimmed.strip_prefix("/cwd").unwrap_or("").trim();
         if rest.is_empty() {
-            let current = app
-                .working_dir
-                .as_deref()
-                .unwrap_or("(not set)");
+            let current = app.working_dir.as_deref().unwrap_or("(not set)");
             app.add_assistant_message(format!(
                 "Working directory: {current}\n\
                  Use /cwd <path> to set a directory for Claude Code file access."
@@ -2776,18 +2794,15 @@ System\n\
         }
 
         let template_name = args[0];
-        let project_name = args
-            .get(1)
-            .copied()
-            .unwrap_or(template_name)
-            .to_string();
+        let project_name = args.get(1).copied().unwrap_or(template_name).to_string();
 
         match scaffold::get_template(template_name) {
             Some(mut template) => {
                 // Replace placeholders
                 for file in &mut template.files {
                     file.content = file.content.replace("{{name}}", &project_name);
-                    file.content = file.content
+                    file.content = file
+                        .content
                         .replace("{{description}}", &format!("A {project_name} project"));
                 }
 
@@ -2881,7 +2896,9 @@ System\n\
 
     // /workspace (or /ws) — show detected workspace info (prefer cache).
     if trimmed == "/workspace" || trimmed == "/ws" {
-        let ws_info = app.cached_workspace.clone()
+        let ws_info = app
+            .cached_workspace
+            .clone()
             .or_else(workspace::detect_workspace);
         match ws_info {
             Some(ws) => {
@@ -2941,9 +2958,7 @@ System\n\
         };
 
         let clip_count = app.clipboard_manager.entries().len();
-        let history_count = history::list_conversations()
-            .map(|v| v.len())
-            .unwrap_or(0);
+        let history_count = history::list_conversations().map(|v| v.len()).unwrap_or(0);
 
         let config_path = dirs::config_dir()
             .unwrap_or_else(|| std::path::PathBuf::from(".config"))
@@ -2987,11 +3002,16 @@ System\n\
         // Usage section
         status.push_str("\n\nUsage\n");
         status.push_str(&format!("  Requests: {}\n", app.usage_stats.total_requests));
-        status.push_str(&format!("  Tokens:   ~{} sent, ~{} received\n",
-            app.usage_stats.total_tokens_sent, app.usage_stats.total_tokens_received));
+        status.push_str(&format!(
+            "  Tokens:   ~{} sent, ~{} received\n",
+            app.usage_stats.total_tokens_sent, app.usage_stats.total_tokens_received
+        ));
         status.push_str(&format!("  Cost:     {}\n", app.usage_stats.format_cost()));
         if app.spending_limit.enabled {
-            status.push_str(&format!("  Limit:    ${:.2}/session\n", app.spending_limit.max_cost_usd));
+            status.push_str(&format!(
+                "  Limit:    ${:.2}/session\n",
+                app.spending_limit.max_cost_usd
+            ));
         }
 
         app.add_assistant_message(status);
@@ -3044,22 +3064,35 @@ System\n\
         let rest = trimmed.strip_prefix("/system").unwrap_or("").trim();
         if rest.is_empty() {
             // Show current system prompt
-            let sys = app.current_conversation().messages.iter()
+            let sys = app
+                .current_conversation()
+                .messages
+                .iter()
                 .find(|(r, _)| r == "system")
                 .map(|(_, c)| c.clone());
             match sys {
-                Some(prompt) => app.add_assistant_message(format!("Current system prompt:\n\n{prompt}")),
-                None => app.add_assistant_message("No system prompt set. Use /system <prompt> to set one.".into()),
+                Some(prompt) => {
+                    app.add_assistant_message(format!("Current system prompt:\n\n{prompt}"))
+                }
+                None => app.add_assistant_message(
+                    "No system prompt set. Use /system <prompt> to set one.".into(),
+                ),
             }
         } else if rest == "clear" {
-            app.current_conversation_mut().messages.retain(|(r, _)| r != "system");
+            app.current_conversation_mut()
+                .messages
+                .retain(|(r, _)| r != "system");
             app.status_message = Some("System prompt cleared".into());
         } else {
             let prompt = rest.to_string();
             // Remove any existing system prompt
-            app.current_conversation_mut().messages.retain(|(r, _)| r != "system");
+            app.current_conversation_mut()
+                .messages
+                .retain(|(r, _)| r != "system");
             // Insert at the beginning
-            app.current_conversation_mut().messages.insert(0, ("system".into(), prompt));
+            app.current_conversation_mut()
+                .messages
+                .insert(0, ("system".into(), prompt));
             app.status_message = Some("System prompt set".into());
         }
         app.scroll_offset = 0;
@@ -3079,7 +3112,6 @@ System\n\
         app.scroll_offset = 0;
         return true;
     }
-
 
     // /delete — delete current conversation (or all).
     if trimmed == "/delete" || trimmed.starts_with("/delete ") {
@@ -3111,13 +3143,12 @@ System\n\
         let rest = trimmed.strip_prefix("/copy").unwrap_or("").trim();
         let conv = app.current_conversation();
         let text = match rest {
-            "all" => {
-                conv.messages
-                    .iter()
-                    .map(|(role, content)| format!("{}: {}", role, content))
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            }
+            "all" => conv
+                .messages
+                .iter()
+                .map(|(role, content)| format!("{}: {}", role, content))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
             "last" => conv
                 .messages
                 .last()
@@ -3268,8 +3299,7 @@ System\n\
                     } else {
                         format!(" {diff_args}")
                     };
-                    let context =
-                        format!("Git diff{}:\n\n```diff\n{}\n```", label, result.stdout);
+                    let context = format!("Git diff{}:\n\n```diff\n{}\n```", label, result.stdout);
                     app.current_conversation_mut()
                         .messages
                         .push(("system".into(), context));
@@ -3321,8 +3351,7 @@ System\n\
                         .messages
                         .push(("system".into(), context));
                     app.add_assistant_message(output);
-                    app.status_message =
-                        Some("Build FAILED \u{2014} ask me to help fix it".into());
+                    app.status_message = Some("Build FAILED \u{2014} ask me to help fix it".into());
                 } else {
                     app.add_assistant_message(output);
                     app.status_message = Some("Build succeeded".into());
@@ -3378,33 +3407,36 @@ System\n\
                     Err(e) => app.set_status(format!("Error: {e}")),
                 }
             }
-            "list" => {
-                match session::list_sessions() {
-                    Ok(sessions) => {
-                        if sessions.is_empty() {
-                            app.add_assistant_message("No saved sessions.".into());
-                        } else {
-                            let mut msg = "Saved sessions:\n\n".to_string();
-                            for (id, date, count) in &sessions {
-                                msg.push_str(&format!("  {} — {} ({} conv)\n",
-                                    &id[..8], date.format("%Y-%m-%d %H:%M"), count));
-                            }
-                            msg.push_str("\nResume with: nerve --continue");
-                            app.add_assistant_message(msg);
+            "list" => match session::list_sessions() {
+                Ok(sessions) => {
+                    if sessions.is_empty() {
+                        app.add_assistant_message("No saved sessions.".into());
+                    } else {
+                        let mut msg = "Saved sessions:\n\n".to_string();
+                        for (id, date, count) in &sessions {
+                            msg.push_str(&format!(
+                                "  {} — {} ({} conv)\n",
+                                &id[..8],
+                                date.format("%Y-%m-%d %H:%M"),
+                                count
+                            ));
                         }
+                        msg.push_str("\nResume with: nerve --continue");
+                        app.add_assistant_message(msg);
                     }
-                    Err(e) => app.set_status(format!("Error: {e}")),
                 }
-            }
-            "restore" => {
-                match session::load_last_session() {
-                    Ok(sess) => {
-                        session::restore_session_to_app(&sess, app);
-                        app.set_status(format!("Session restored ({} conversations)", app.conversations.len()));
-                    }
-                    Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.set_status(format!("Error: {e}")),
+            },
+            "restore" => match session::load_last_session() {
+                Ok(sess) => {
+                    session::restore_session_to_app(&sess, app);
+                    app.set_status(format!(
+                        "Session restored ({} conversations)",
+                        app.conversations.len()
+                    ));
                 }
-            }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            },
             _ => {
                 let sess_info = format!(
                     "Session Info:\n  Conversations: {}\n  Active: {}\n  Model: {}\n  Provider: {}\n\nCommands:\n  /session save     Save current session\n  /session list     List saved sessions\n  /session restore  Restore last session\n  nerve --continue  Resume on startup",
@@ -3431,9 +3463,21 @@ System\n\
         summary.push_str(&format!("{}\n\n", "=".repeat(40)));
 
         let user_count = conv.messages.iter().filter(|(r, _)| r == "user").count();
-        let ai_count = conv.messages.iter().filter(|(r, _)| r == "assistant").count();
-        let total_words: usize = conv.messages.iter().map(|(_, c)| c.split_whitespace().count()).sum();
-        let total_tokens = conv.messages.iter().map(|(_, c)| c.len() / 4 + 1).sum::<usize>();
+        let ai_count = conv
+            .messages
+            .iter()
+            .filter(|(r, _)| r == "assistant")
+            .count();
+        let total_words: usize = conv
+            .messages
+            .iter()
+            .map(|(_, c)| c.split_whitespace().count())
+            .sum();
+        let total_tokens = conv
+            .messages
+            .iter()
+            .map(|(_, c)| c.len() / 4 + 1)
+            .sum::<usize>();
 
         summary.push_str(&format!("Messages: {} user, {} AI\n", user_count, ai_count));
         summary.push_str(&format!("Words: {}\n", total_words));
@@ -3445,7 +3489,9 @@ System\n\
             if role == "user" {
                 let brief: String = content.chars().take(80).collect();
                 summary.push_str(&format!("  {}. {}", i / 2 + 1, brief));
-                if content.len() > 80 { summary.push_str("..."); }
+                if content.len() > 80 {
+                    summary.push_str("...");
+                }
                 summary.push('\n');
             }
         }
@@ -3457,7 +3503,8 @@ System\n\
 
     // /compact — manually trigger context compaction.
     if trimmed == "/compact" {
-        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+        let limit =
+            crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
         let cm = crate::agent::context::ContextManager::new(limit);
         let messages = app.current_conversation().messages.clone();
 
@@ -3476,9 +3523,15 @@ System\n\
             app.set_status("Conversation already compact");
         } else {
             app.current_conversation_mut().messages = compacted;
-            let saved_tokens = crate::agent::context::ContextManager::conversation_tokens(&messages)
-                - crate::agent::context::ContextManager::conversation_tokens(&app.current_conversation().messages);
-            app.set_status(format!("Compacted: {} \u{2192} {} messages (~{} tokens saved)", before, after, saved_tokens));
+            let saved_tokens =
+                crate::agent::context::ContextManager::conversation_tokens(&messages)
+                    - crate::agent::context::ContextManager::conversation_tokens(
+                        &app.current_conversation().messages,
+                    );
+            app.set_status(format!(
+                "Compacted: {} \u{2192} {} messages (~{} tokens saved)",
+                before, after, saved_tokens
+            ));
         }
         return true;
     }
@@ -3487,7 +3540,8 @@ System\n\
     if trimmed == "/tokens" {
         let conv = app.current_conversation();
         let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
-        let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+        let limit =
+            crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
         let pct = (total as f64 / limit as f64 * 100.0).min(100.0);
 
         let mut msg = format!("Token Usage\n{}\n\n", "=".repeat(30));
@@ -3498,11 +3552,19 @@ System\n\
         msg.push_str("Breakdown by message:\n");
         for (i, (role, content)) in conv.messages.iter().enumerate() {
             let tokens = crate::agent::context::ContextManager::estimate_tokens(content);
-            msg.push_str(&format!("  {:>3}. [{:>9}] ~{:>6} tokens\n", i + 1, role, tokens));
+            msg.push_str(&format!(
+                "  {:>3}. [{:>9}] ~{:>6} tokens\n",
+                i + 1,
+                role,
+                tokens
+            ));
         }
 
         if pct > 70.0 {
-            msg.push_str(&format!("\nWarning: {:.0}% of context used. Consider /compact to save tokens.", pct));
+            msg.push_str(&format!(
+                "\nWarning: {:.0}% of context used. Consider /compact to save tokens.",
+                pct
+            ));
         }
 
         app.add_assistant_message(msg);
@@ -3520,15 +3582,27 @@ System\n\
             let preview: String = content.chars().take(60).collect();
             let ellipsis = if content.len() > 60 { "..." } else { "" };
 
-            ctx.push_str(&format!("  {:>3}. [{}] ~{} tokens: {}{}\n",
-                i + 1, role, tokens, preview, ellipsis));
+            ctx.push_str(&format!(
+                "  {:>3}. [{}] ~{} tokens: {}{}\n",
+                i + 1,
+                role,
+                tokens,
+                preview,
+                ellipsis
+            ));
         }
 
         let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
-        ctx.push_str(&format!("\nTotal: {} messages, ~{} tokens estimated\n", conv.messages.len(), total));
+        ctx.push_str(&format!(
+            "\nTotal: {} messages, ~{} tokens estimated\n",
+            conv.messages.len(),
+            total
+        ));
 
         // Show workspace if detected (prefer cache).
-        let ws_for_ctx = app.cached_workspace.as_ref()
+        let ws_for_ctx = app
+            .cached_workspace
+            .as_ref()
             .cloned()
             .or_else(crate::workspace::detect_workspace);
         if let Some(ws) = ws_for_ctx {
@@ -3541,8 +3615,10 @@ System\n\
     }
 
     // /plugin — manage plugins.
-    if trimmed == "/plugin" || trimmed == "/plugins"
-        || trimmed.starts_with("/plugin ") || trimmed.starts_with("/plugins ")
+    if trimmed == "/plugin"
+        || trimmed == "/plugins"
+        || trimmed.starts_with("/plugin ")
+        || trimmed.starts_with("/plugins ")
     {
         let rest = trimmed
             .strip_prefix("/plugins")
@@ -3567,29 +3643,33 @@ System\n\
                         let status = if *loaded { "enabled" } else { "disabled" };
                         msg.push_str(&format!(
                             "  /{:<15} {} (v{}) [{}]\n    {}\n\n",
-                            manifest.command, manifest.name, manifest.version, status, manifest.description
+                            manifest.command,
+                            manifest.name,
+                            manifest.version,
+                            status,
+                            manifest.description
                         ));
                     }
                     app.add_assistant_message(msg);
                 }
             }
-            "init" => {
-                match plugins::create_example_plugin() {
-                    Ok(path) => {
-                        app.add_assistant_message(format!(
+            "init" => match plugins::create_example_plugin() {
+                Ok(path) => {
+                    app.add_assistant_message(format!(
                             "Created example plugin at:\n  {}\n\nEdit plugin.toml and run.sh to customize.\nRestart Nerve to load new plugins.",
                             path.display()
                         ));
-                    }
-                    Err(e) => app.set_status(format!("Error: {e}")),
                 }
-            }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            },
             "reload" => {
                 app.plugins = plugins::load_plugins();
                 app.set_status(format!("{} plugin(s) loaded", app.plugins.len()));
             }
             _ => {
-                app.add_assistant_message("Usage: /plugin list | /plugin init | /plugin reload".into());
+                app.add_assistant_message(
+                    "Usage: /plugin list | /plugin init | /plugin reload".into(),
+                );
             }
         }
         app.scroll_offset = 0;
@@ -3619,8 +3699,10 @@ System\n\
     }
 
     // /branch — conversation branching.
-    if trimmed == "/branch" || trimmed == "/br"
-        || trimmed.starts_with("/branch ") || trimmed.starts_with("/br ")
+    if trimmed == "/branch"
+        || trimmed == "/br"
+        || trimmed.starts_with("/branch ")
+        || trimmed.starts_with("/br ")
     {
         let rest = if trimmed.starts_with("/branch") {
             trimmed.strip_prefix("/branch").unwrap_or("").trim()
@@ -3649,7 +3731,13 @@ System\n\
                     for (i, branch) in app.branches.iter().enumerate() {
                         let msg_count = branch.messages.len();
                         let time = branch.created_at.format("%H:%M:%S");
-                        msg.push_str(&format!("  {}. {} ({} messages, saved at {})\n", i + 1, branch.name, msg_count, time));
+                        msg.push_str(&format!(
+                            "  {}. {} ({} messages, saved at {})\n",
+                            i + 1,
+                            branch.name,
+                            msg_count,
+                            time
+                        ));
                     }
                     msg.push_str("\nUsage: /branch restore <number> | /branch delete <number>");
                     app.add_assistant_message(msg);
@@ -3696,14 +3784,23 @@ System\n\
                         let current = &app.current_conversation().messages;
                         let branched = &branch.messages;
 
-                        let common = current.iter().zip(branched.iter())
+                        let common = current
+                            .iter()
+                            .zip(branched.iter())
                             .take_while(|(a, b)| a == b)
                             .count();
 
-                        let mut msg = format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
+                        let mut msg =
+                            format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
                         msg.push_str(&format!("Common messages: {}\n", common));
-                        msg.push_str(&format!("Current has {} more message(s)\n", current.len().saturating_sub(common)));
-                        msg.push_str(&format!("Branch has {} more message(s)\n\n", branched.len().saturating_sub(common)));
+                        msg.push_str(&format!(
+                            "Current has {} more message(s)\n",
+                            current.len().saturating_sub(common)
+                        ));
+                        msg.push_str(&format!(
+                            "Branch has {} more message(s)\n\n",
+                            branched.len().saturating_sub(common)
+                        ));
 
                         if current.len() > common {
                             msg.push_str("Current (diverged):\n");
@@ -3829,17 +3926,13 @@ System\n\
             app.add_assistant_message(msg);
         } else {
             let query = rest.to_lowercase();
-            if let Some(idx) = query
-                .parse::<usize>()
-                .ok()
-                .and_then(|n| {
-                    if n > 0 && n <= presets.len() {
-                        Some(n - 1)
-                    } else {
-                        None
-                    }
-                })
-            {
+            if let Some(idx) = query.parse::<usize>().ok().and_then(|n| {
+                if n > 0 && n <= presets.len() {
+                    Some(n - 1)
+                } else {
+                    None
+                }
+            }) {
                 app.theme_index = idx;
                 app.set_status(format!("Theme: {}", presets[idx].0));
             } else if let Some(idx) = presets
@@ -3868,7 +3961,7 @@ System\n\
             } else {
                 let mut msg = "Aliases:\n\n".to_string();
                 let mut sorted: Vec<_> = app.aliases.iter().collect();
-                sorted.sort_by_key(|(k, _)| k.clone());
+                sorted.sort_by_key(|(k, _)| (*k).clone());
                 for (name, cmd) in &sorted {
                     msg.push_str(&format!("  /{name} \u{2192} {cmd}\n"));
                 }
@@ -4030,10 +4123,9 @@ fn handle_kb_command(app: &mut App, trimmed: &str) {
             Ok(kb) => {
                 let results = knowledge::search_knowledge(&kb, query, 5);
                 if results.is_empty() {
-                    app.current_conversation_mut().messages.push((
-                        "assistant".into(),
-                        format!("No results found for: {query}"),
-                    ));
+                    app.current_conversation_mut()
+                        .messages
+                        .push(("assistant".into(), format!("No results found for: {query}")));
                 } else {
                     let mut lines = vec![format!("Knowledge base results for \"{query}\":")];
                     for (i, r) in results.iter().enumerate() {
@@ -4044,7 +4136,11 @@ fn handle_kb_command(app: &mut App, trimmed: &str) {
                             r.document_title,
                             r.score,
                             preview,
-                            if r.chunk.content.len() > 200 { "..." } else { "" }
+                            if r.chunk.content.len() > 200 {
+                                "..."
+                            } else {
+                                ""
+                            }
                         ));
                     }
                     app.current_conversation_mut()
@@ -4054,9 +4150,8 @@ fn handle_kb_command(app: &mut App, trimmed: &str) {
                 app.scroll_offset = 0;
             }
             Err(_) => {
-                app.status_message = Some(
-                    "No default knowledge base found. Use /kb add <directory> first.".into(),
-                );
+                app.status_message =
+                    Some("No default knowledge base found. Use /kb add <directory> first.".into());
             }
         }
         return;
@@ -4116,11 +4211,7 @@ fn handle_kb_command(app: &mut App, trimmed: &str) {
 }
 
 /// Handle `/auto` sub-commands.
-async fn handle_auto_command(
-    app: &mut App,
-    trimmed: &str,
-    provider: &Arc<dyn AiProvider>,
-) {
+async fn handle_auto_command(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) {
     let rest = trimmed.strip_prefix("/auto").unwrap_or("").trim();
 
     // /auto list (or bare /auto)
@@ -4303,8 +4394,7 @@ async fn handle_auto_command(
     }
 
     // Unknown /auto sub-command.
-    app.status_message =
-        Some("Unknown /auto command. Use: list, run, create, delete, info".into());
+    app.status_message = Some("Unknown /auto command. Use: list, run, create, delete, info".into());
 }
 
 /// Execute an automation pipeline. Intermediate steps run non-streaming;
@@ -4377,12 +4467,8 @@ async fn run_automation(
             match provider.chat(&messages, &model_owned).await {
                 Ok(response) => prev_output = response,
                 Err(e) => {
-                    app.add_assistant_message(format!(
-                        "Automation error at step {}: {e}",
-                        i + 1,
-                    ));
-                    app.status_message =
-                        Some(format!("Automation failed at step {}", i + 1));
+                    app.add_assistant_message(format!("Automation error at step {}: {e}", i + 1,));
+                    app.status_message = Some(format!("Automation failed at step {}", i + 1));
                     return;
                 }
             }
@@ -4512,11 +4598,17 @@ async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) 
 
 /// Regenerate the last assistant response by removing it and re-sending.
 async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _config: &Config) {
-    if app.is_streaming { return; }
+    if app.is_streaming {
+        return;
+    }
 
     let conv = app.current_conversation_mut();
     // Remove the last assistant message
-    if let Some(pos) = conv.messages.iter().rposition(|(role, _)| role == "assistant") {
+    if let Some(pos) = conv
+        .messages
+        .iter()
+        .rposition(|(role, _)| role == "assistant")
+    {
         conv.messages.remove(pos);
     } else {
         app.set_status("No response to regenerate");
@@ -4568,7 +4660,9 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
 /// Edit the last user message: load it back into the input buffer and remove
 /// it (plus any assistant response after it) from the conversation.
 fn edit_last_message(app: &mut App) {
-    if app.is_streaming { return; }
+    if app.is_streaming {
+        return;
+    }
 
     let conv = app.current_conversation_mut();
 
@@ -4591,9 +4685,13 @@ fn edit_last_message(app: &mut App) {
 
 /// Delete the last message exchange (assistant + preceding user message).
 fn delete_last_exchange(app: &mut App) {
-    if app.is_streaming { return; }
+    if app.is_streaming {
+        return;
+    }
     let conv = app.current_conversation_mut();
-    if conv.messages.is_empty() { return; }
+    if conv.messages.is_empty() {
+        return;
+    }
 
     // Remove last message
     let last_role = conv.messages.last().map(|(r, _)| r.clone());
@@ -5055,7 +5153,8 @@ mod tests {
 
     #[test]
     fn generate_title_multiline_message() {
-        let title = generate_title("First line of the message\nSecond line with more detail\nThird line");
+        let title =
+            generate_title("First line of the message\nSecond line with more detail\nThird line");
         // Should use only up to the first newline (first sentence boundary)
         assert!(title.starts_with("First line of the message"));
         assert!(title.len() <= 60);
@@ -5128,7 +5227,11 @@ mod tests {
 
     #[test]
     fn find_common_prefix_partial() {
-        let strings = vec!["src/main.rs".to_string(), "src/app.rs".to_string(), "src/config.rs".to_string()];
+        let strings = vec![
+            "src/main.rs".to_string(),
+            "src/app.rs".to_string(),
+            "src/config.rs".to_string(),
+        ];
         assert_eq!(find_common_prefix_strings(&strings), "src/");
     }
 
@@ -5166,7 +5269,9 @@ mod tests {
     #[test]
     fn edit_last_message_with_only_system_messages() {
         let mut app = App::new();
-        app.current_conversation_mut().messages.push(("system".into(), "You are helpful.".into()));
+        app.current_conversation_mut()
+            .messages
+            .push(("system".into(), "You are helpful.".into()));
         edit_last_message(&mut app);
         // No user message to edit — should show status message
         assert!(app.input.is_empty()); // Input not changed
@@ -5228,9 +5333,16 @@ mod tests {
         let mut app = App::new();
         if let Some(ws) = crate::workspace::detect_workspace() {
             let prompt = ws.to_system_prompt();
-            app.current_conversation_mut().messages.push(("system".into(), prompt));
+            app.current_conversation_mut()
+                .messages
+                .push(("system".into(), prompt));
             // Verify the system message was added
-            assert!(app.current_conversation().messages.iter().any(|(r, _)| r == "system"));
+            assert!(
+                app.current_conversation()
+                    .messages
+                    .iter()
+                    .any(|(r, _)| r == "system")
+            );
         }
     }
 
@@ -5238,16 +5350,15 @@ mod tests {
     fn file_context_added_to_conversation() {
         let mut app = App::new();
         // Read Cargo.toml (we know it exists)
-        match crate::files::read_file_context("Cargo.toml") {
-            Ok(fc) => {
-                let formatted = crate::files::format_file_for_context(&fc);
-                app.current_conversation_mut().messages.push(("system".into(), formatted));
-                assert!(!app.current_conversation().messages.is_empty());
-                // Verify the content mentions "nerve"
-                let sys_msg = &app.current_conversation().messages[0].1;
-                assert!(sys_msg.contains("nerve") || sys_msg.contains("Nerve"));
-            }
-            Err(_) => {} // OK if Cargo.toml not found in test env
+        if let Ok(fc) = crate::files::read_file_context("Cargo.toml") {
+            let formatted = crate::files::format_file_for_context(&fc);
+            app.current_conversation_mut()
+                .messages
+                .push(("system".into(), formatted));
+            assert!(!app.current_conversation().messages.is_empty());
+            // Verify the content mentions "nerve"
+            let sys_msg = &app.current_conversation().messages[0].1;
+            assert!(sys_msg.contains("nerve") || sys_msg.contains("Nerve"));
         }
     }
 
@@ -5256,7 +5367,10 @@ mod tests {
         let mut app = App::new();
         // Simulate a long conversation
         for i in 0..50 {
-            app.add_user_message(format!("Question {} about Rust programming and how to handle async errors properly", i));
+            app.add_user_message(format!(
+                "Question {} about Rust programming and how to handle async errors properly",
+                i
+            ));
             app.add_assistant_message(format!("Answer {} explaining async error handling with detailed code examples and best practices for production use", i));
         }
 
@@ -5269,7 +5383,11 @@ mod tests {
         // But should still have recent messages
         assert!(compacted.len() >= 4);
         // Should have a summary system message
-        assert!(compacted.iter().any(|(r, c)| r == "system" && c.contains("summary")));
+        assert!(
+            compacted
+                .iter()
+                .any(|(r, c)| r == "system" && c.contains("summary"))
+        );
     }
 
     #[test]
@@ -5313,8 +5431,12 @@ mod tests {
             for file in &template.files {
                 let is_init_py = file.path.ends_with("__init__.py");
                 if !is_init_py {
-                    assert!(!file.content.is_empty(),
-                        "Template '{}' has empty file: {}", template.name, file.path);
+                    assert!(
+                        !file.content.is_empty(),
+                        "Template '{}' has empty file: {}",
+                        template.name,
+                        file.path
+                    );
                 }
             }
             // Verify placeholder substitution works
@@ -5322,8 +5444,12 @@ mod tests {
             for file in &mut t.files {
                 file.content = file.content.replace("{{name}}", "testproject");
                 file.content = file.content.replace("{{description}}", "A test project");
-                assert!(!file.content.contains("{{name}}"),
-                    "Template '{}' file '{}' still has {{{{name}}}} after substitution", t.name, file.path);
+                assert!(
+                    !file.content.contains("{{name}}"),
+                    "Template '{}' file '{}' still has {{{{name}}}} after substitution",
+                    t.name,
+                    file.path
+                );
             }
         }
     }
@@ -5334,8 +5460,13 @@ mod tests {
             assert!(!auto.name.is_empty());
             assert!(!auto.steps.is_empty());
             for step in &auto.steps {
-                assert!(step.prompt_template.contains("{{input}}") || step.prompt_template.contains("{{prev_output}}"),
-                    "Automation '{}' step '{}' has no placeholder", auto.name, step.name);
+                assert!(
+                    step.prompt_template.contains("{{input}}")
+                        || step.prompt_template.contains("{{prev_output}}"),
+                    "Automation '{}' step '{}' has no placeholder",
+                    auto.name,
+                    step.name
+                );
             }
         }
     }
@@ -5399,10 +5530,28 @@ mod tests {
     #[test]
     fn generate_title_handles_all_slash_commands() {
         // Every slash command should produce a non-empty, non-panicking title
-        let commands = ["/help", "/clear", "/new", "/test", "/build", "/diff",
-            "/agent on", "/code on", "/url https://example.com", "/file src/main.rs",
-            "/kb status", "/auto list", "/template list", "/scaffold a web app",
-            "/providers", "/models", "/export", "/status", "/tokens", "/compact"];
+        let commands = [
+            "/help",
+            "/clear",
+            "/new",
+            "/test",
+            "/build",
+            "/diff",
+            "/agent on",
+            "/code on",
+            "/url https://example.com",
+            "/file src/main.rs",
+            "/kb status",
+            "/auto list",
+            "/template list",
+            "/scaffold a web app",
+            "/providers",
+            "/models",
+            "/export",
+            "/status",
+            "/tokens",
+            "/compact",
+        ];
 
         for cmd in commands {
             let title = generate_title(cmd);
@@ -5412,7 +5561,14 @@ mod tests {
 
     #[test]
     fn provider_help_all_providers() {
-        let providers = ["openai", "ollama", "claude_code", "openrouter", "copilot", "unknown"];
+        let providers = [
+            "openai",
+            "ollama",
+            "claude_code",
+            "openrouter",
+            "copilot",
+            "unknown",
+        ];
         for p in providers {
             let msg = provider_help_message(p);
             assert!(!msg.is_empty(), "Empty help for provider: {p}");
@@ -5447,7 +5603,10 @@ mod tests {
         // Access the lazy cache — first or subsequent (another test may have
         // triggered init already since LazyLock is process-global).
         let first_count = crate::prompts::BUILTIN_CACHE.len();
-        assert!(first_count >= 130, "expected >= 130 builtins, got {first_count}");
+        assert!(
+            first_count >= 130,
+            "expected >= 130 builtins, got {first_count}"
+        );
 
         // 1000 cached accesses should complete well under 10ms.
         let start = std::time::Instant::now();

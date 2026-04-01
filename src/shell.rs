@@ -1,5 +1,5 @@
-use std::process::Command;
 use anyhow::Context;
+use std::process::Command;
 
 /// Maximum number of output lines before truncation.
 const MAX_OUTPUT_LINES: usize = 5000;
@@ -35,14 +35,8 @@ pub fn run_command(cmd: &str) -> anyhow::Result<CommandResult> {
         .output()
         .with_context(|| format!("Failed to execute: {cmd}"))?;
 
-    let stdout = truncate_output(
-        &String::from_utf8_lossy(&output.stdout),
-        MAX_OUTPUT_LINES,
-    );
-    let stderr = truncate_output(
-        &String::from_utf8_lossy(&output.stderr),
-        MAX_OUTPUT_LINES,
-    );
+    let stdout = truncate_output(&String::from_utf8_lossy(&output.stdout), MAX_OUTPUT_LINES);
+    let stderr = truncate_output(&String::from_utf8_lossy(&output.stderr), MAX_OUTPUT_LINES);
 
     Ok(CommandResult {
         command: cmd.to_string(),
@@ -111,7 +105,7 @@ const BLOCKED_PATTERNS: &[&str] = &[
     "> /dev/sd",
     "> /dev/nvm",
     "chmod -r 777 /",
-    ":(){ :|:& };:",   // fork bomb
+    ":(){ :|:& };:", // fork bomb
     "eval $(",
     "eval `",
     "> /etc/",
@@ -161,20 +155,28 @@ pub fn is_dangerous_command(cmd: &str) -> bool {
 pub fn is_protected_path(path: &str) -> bool {
     let normalized = path.replace("\\", "/");
     let protected = [
-        "/etc/", "/usr/", "/bin/", "/sbin/", "/boot/",
-        "/dev/", "/proc/", "/sys/", "/var/",
+        "/etc/", "/usr/", "/bin/", "/sbin/", "/boot/", "/dev/", "/proc/", "/sys/", "/var/",
     ];
     // Check both the raw path and common prefixes
-    protected.iter().any(|p| normalized.starts_with(p) || normalized == p.trim_end_matches('/'))
+    protected
+        .iter()
+        .any(|p| normalized.starts_with(p) || normalized == p.trim_end_matches('/'))
 }
 
 /// Files that may contain secrets and should not be read by the agent.
 pub fn is_sensitive_file(path: &str) -> bool {
     let sensitive = [
-        ".env", ".env.local", ".env.production",
-        "id_rsa", "id_ed25519", "id_ecdsa",
-        ".ssh/", ".gnupg/", ".aws/credentials",
-        ".netrc", ".pgpass",
+        ".env",
+        ".env.local",
+        ".env.production",
+        "id_rsa",
+        "id_ed25519",
+        "id_ecdsa",
+        ".ssh/",
+        ".gnupg/",
+        ".aws/credentials",
+        ".netrc",
+        ".pgpass",
     ];
     sensitive.iter().any(|s| path.contains(s))
 }
@@ -185,7 +187,7 @@ pub fn mask_api_key(key: &str) -> String {
         return "****".into();
     }
     let prefix = &key[..4];
-    let suffix = &key[key.len()-4..];
+    let suffix = &key[key.len() - 4..];
     format!("{prefix}...{suffix}")
 }
 

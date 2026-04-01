@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,8 +130,20 @@ mod tests {
             word_count: 100,
         };
         let chunks = vec![
-            Chunk { id: "c1".into(), document_id: "doc1".into(), content: "hello world".into(), index: 0, word_count: 2 },
-            Chunk { id: "c2".into(), document_id: "doc1".into(), content: "foo bar baz".into(), index: 1, word_count: 3 },
+            Chunk {
+                id: "c1".into(),
+                document_id: "doc1".into(),
+                content: "hello world".into(),
+                index: 0,
+                word_count: 2,
+            },
+            Chunk {
+                id: "c2".into(),
+                document_id: "doc1".into(),
+                content: "foo bar baz".into(),
+                index: 1,
+                word_count: 3,
+            },
         ];
         kb.add_document(doc, chunks);
         kb
@@ -209,9 +221,13 @@ mod tests {
             ingested_at: chrono::Utc::now(),
             word_count: 50,
         };
-        let chunks2 = vec![
-            Chunk { id: "c3".into(), document_id: "doc2".into(), content: "alpha beta".into(), index: 0, word_count: 2 },
-        ];
+        let chunks2 = vec![Chunk {
+            id: "c3".into(),
+            document_id: "doc2".into(),
+            content: "alpha beta".into(),
+            index: 0,
+            word_count: 2,
+        }];
         kb.add_document(doc2, chunks2);
         assert_eq!(kb.total_chunks(), 3);
     }

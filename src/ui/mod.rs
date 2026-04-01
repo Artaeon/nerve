@@ -74,8 +74,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),            // top bar
-            Constraint::Min(1),              // chat area
+            Constraint::Length(3),             // top bar
+            Constraint::Min(1),                // chat area
             Constraint::Length(bottom_height), // input + status (DYNAMIC)
         ])
         .split(area);
@@ -114,10 +114,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let conv_count = app.conversations.len();
     let conv_num = app.active_conversation + 1;
     let conv_indicator = if conv_count > 1 {
-        format!(
-            "\u{25c4} {}/{} \u{25ba} ",
-            conv_num, conv_count
-        )
+        format!("\u{25c4} {}/{} \u{25ba} ", conv_num, conv_count)
     } else {
         String::new()
     };
@@ -127,13 +124,19 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     if app.agent_mode {
         badge_spans.push(Span::styled(
             " AGENT ",
-            Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     if app.code_mode {
         badge_spans.push(Span::styled(
             " CODE ",
-            Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         ));
     }
     let badge_width: u16 = badge_spans.iter().map(|s| s.width() as u16).sum();
@@ -141,9 +144,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     let right_display = format!(
         "{} \u{203a} {} \u{2502} {} msgs ",
-        provider_label,
-        app.selected_model,
-        msg_count
+        provider_label, app.selected_model, msg_count
     );
     let right_len = right_display.len() as u16;
 
@@ -151,9 +152,9 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Length(brand_width), // branding + version + badges
-            Constraint::Length(3),          // separator
-            Constraint::Min(1),            // conversation indicator + title
-            Constraint::Length(right_len), // provider/model + msg count
+            Constraint::Length(3),           // separator
+            Constraint::Min(1),              // conversation indicator + title
+            Constraint::Length(right_len),   // provider/model + msg count
         ])
         .split(inner);
 
@@ -166,10 +167,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .bg(ACCENT)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            " v0.1",
-            Style::default().fg(DIM_TEXT),
-        ),
+        Span::styled(" v0.1", Style::default().fg(DIM_TEXT)),
     ];
     if !badge_spans.is_empty() {
         brand_spans.push(Span::raw(" "));
@@ -195,10 +193,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
     let mut title_spans = Vec::new();
     if !conv_indicator.is_empty() {
-        title_spans.push(Span::styled(
-            conv_indicator,
-            Style::default().fg(DIM_TEXT),
-        ));
+        title_spans.push(Span::styled(conv_indicator, Style::default().fg(DIM_TEXT)));
     }
     title_spans.push(Span::styled(
         display_title,
@@ -215,24 +210,15 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             format!("{} ", provider_label),
             Style::default().fg(Color::Magenta),
         ),
-        Span::styled(
-            "\u{203a} ",
-            Style::default().fg(SEPARATOR),
-        ),
+        Span::styled("\u{203a} ", Style::default().fg(SEPARATOR)),
         Span::styled(
             app.selected_model.to_string(),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            " \u{2502} ",
-            Style::default().fg(SEPARATOR),
-        ),
-        Span::styled(
-            format!("{} msgs ", msg_count),
-            Style::default().fg(ACCENT),
-        ),
+        Span::styled(" \u{2502} ", Style::default().fg(SEPARATOR)),
+        Span::styled(format!("{} msgs ", msg_count), Style::default().fg(ACCENT)),
     ]))
     .alignment(Alignment::Right);
     frame.render_widget(model_badge, chunks[3]);
@@ -309,7 +295,10 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         let pos = app.cursor_position.min(app.input.len());
         // Walk back to find a valid char boundary if needed.
-        let pos = (0..=pos).rev().find(|&i| app.input.is_char_boundary(i)).unwrap_or(0);
+        let pos = (0..=pos)
+            .rev()
+            .find(|&i| app.input.is_char_boundary(i))
+            .unwrap_or(0);
         let before_cursor = &app.input[..pos];
         let after_cursor = &app.input[pos..];
         let cursor_char = if app.input_mode == InputMode::Insert {
@@ -397,7 +386,10 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     // We want to keep the cursor line visible.
     let visible_input_height = area.height.saturating_sub(2); // subtract borders
     let scroll_pos = app.cursor_position.min(app.input.len());
-    let scroll_pos = (0..=scroll_pos).rev().find(|&i| app.input.is_char_boundary(i)).unwrap_or(0);
+    let scroll_pos = (0..=scroll_pos)
+        .rev()
+        .find(|&i| app.input.is_char_boundary(i))
+        .unwrap_or(0);
     let cursor_line = app.input[..scroll_pos]
         .chars()
         .filter(|c| *c == '\n')
@@ -433,12 +425,10 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(DIM_TEXT),
         ),
     ]);
-    let bottom_line = Line::from(vec![
-        Span::styled(
-            format!(" {} ", hint),
-            Style::default().fg(DIM_TEXT),
-        ),
-    ]);
+    let bottom_line = Line::from(vec![Span::styled(
+        format!(" {} ", hint),
+        Style::default().fg(DIM_TEXT),
+    )]);
 
     let input_block = Block::default()
         .title_top(title_line)
@@ -499,7 +489,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         if app.agent_mode && app.agent_iterations > 0 {
             spans.push(Span::styled(
                 format!(" AGENT {}/10 ", app.agent_iterations),
-                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(sep.clone());
         }
@@ -514,10 +507,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                progress,
-                Style::default().fg(Color::Green),
-            ),
+            Span::styled(progress, Style::default().fg(Color::Green)),
             sep.clone(),
             Span::styled(
                 format!("~{} tokens", approx_tokens),
@@ -560,9 +550,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         // Normal status bar with conversation stats
         // Color-code status messages: red for errors/warnings, green for success, yellow for info.
         let left_status = if let Some(ref msg) = app.status_message {
-            let msg_style = if msg.starts_with("Error") || msg.starts_with("Blocked") || msg.starts_with("Failed") {
+            let msg_style = if msg.starts_with("Error")
+                || msg.starts_with("Blocked")
+                || msg.starts_with("Failed")
+            {
                 Style::default().fg(Color::Red)
-            } else if msg.starts_with("Saved") || msg.starts_with("Copied") || msg.starts_with("Exported") || msg.contains("success") {
+            } else if msg.starts_with("Saved")
+                || msg.starts_with("Copied")
+                || msg.starts_with("Exported")
+                || msg.contains("success")
+            {
                 Style::default().fg(Color::Green)
             } else {
                 Style::default().fg(Color::Yellow)
@@ -610,10 +607,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             app.active_conversation + 1,
             app.conversations.len(),
         );
-        let right_span = Span::styled(
-            right_text.clone(),
-            Style::default().fg(Color::DarkGray),
-        );
+        let right_span = Span::styled(right_text.clone(), Style::default().fg(Color::DarkGray));
         let right_width = right_text.len() as u16;
 
         let chunks = Layout::default()
@@ -628,7 +622,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
                 format!(" AGENT {}/10 ", app.agent_iterations),
-                Style::default().fg(Color::Black).bg(Color::Magenta).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
 
@@ -639,10 +636,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 format!(" \u{2191} {} lines above ", app.scroll_offset),
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
             ));
-            left_spans.push(Span::styled(
-                "j/k",
-                Style::default().fg(DIM_TEXT),
-            ));
+            left_spans.push(Span::styled("j/k", Style::default().fg(DIM_TEXT)));
         }
 
         left_spans.push(sep.clone());
@@ -741,12 +735,11 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
     let mut _model_line_map: Vec<usize> = Vec::new();
 
     // Collect "other" models not in any predefined group.
-    let known: std::collections::HashSet<&str> = [
-        "opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini", "llama3",
-    ]
-    .iter()
-    .copied()
-    .collect();
+    let known: std::collections::HashSet<&str> =
+        ["opus", "sonnet", "haiku", "gpt-4o", "gpt-4o-mini", "llama3"]
+            .iter()
+            .copied()
+            .collect();
     let other_models: Vec<&str> = app
         .available_models
         .iter()
@@ -866,9 +859,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
         0
     };
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((scroll, 0));
+    let paragraph = Paragraph::new(lines).block(block).scroll((scroll, 0));
 
     frame.render_widget(paragraph, popup_area);
 }
@@ -901,7 +892,8 @@ fn render_provider_selector(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     let popup_width = 50u16.min(area.width.saturating_sub(4));
-    let popup_height = (app.available_providers.len() as u16 + 4).min(area.height.saturating_sub(4));
+    let popup_height =
+        (app.available_providers.len() as u16 + 4).min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -958,14 +950,12 @@ fn render_provider_selector(frame: &mut Frame, app: &App) {
         })
         .collect();
 
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
 
     let mut state = ListState::default();
     state.select(Some(app.provider_select_index));
@@ -992,22 +982,32 @@ mod tests {
     #[test]
     fn provider_descriptions() {
         let desc = provider_description("openai");
-        assert!(desc.contains("API key"), "OpenAI desc should mention API key, got: {desc}");
+        assert!(
+            desc.contains("API key"),
+            "OpenAI desc should mention API key, got: {desc}"
+        );
 
         let desc = provider_description("ollama");
-        assert!(desc.contains("local") || desc.contains("no API"),
-            "Ollama desc should mention local, got: {desc}");
+        assert!(
+            desc.contains("local") || desc.contains("no API"),
+            "Ollama desc should mention local, got: {desc}"
+        );
 
         let desc = provider_description("claude_code");
-        assert!(desc.contains("subscription"),
-            "Claude Code desc should mention subscription, got: {desc}");
+        assert!(
+            desc.contains("subscription"),
+            "Claude Code desc should mention subscription, got: {desc}"
+        );
     }
 
     #[test]
     fn model_info_known_models() {
         let (name, group, ctx) = model_info("opus");
         assert!(name.contains("Opus"), "expected Opus in name, got: {name}");
-        assert!(group.contains("Claude"), "expected Claude in group, got: {group}");
+        assert!(
+            group.contains("Claude"),
+            "expected Claude in group, got: {group}"
+        );
         assert!(!ctx.is_empty(), "context should not be empty");
 
         let (name, group, _ctx) = model_info("gpt-4o");
@@ -1023,4 +1023,3 @@ mod tests {
         assert!(ctx.is_empty());
     }
 }
-

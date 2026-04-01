@@ -145,8 +145,7 @@ mod tests {
     fn conversation_record_serialization_roundtrip() {
         let record = sample_record("test-ser-1", "Serialization Test");
         let json = serde_json::to_string_pretty(&record).expect("serialize");
-        let deserialized: ConversationRecord =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: ConversationRecord = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.id, record.id);
         assert_eq!(deserialized.title, record.title);
         assert_eq!(deserialized.messages.len(), 2);
@@ -161,8 +160,7 @@ mod tests {
             timestamp: Utc::now(),
         };
         let json = serde_json::to_string(&msg).expect("serialize");
-        let deserialized: MessageRecord =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: MessageRecord = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.role, msg.role);
         assert_eq!(deserialized.content, msg.content);
     }
@@ -220,10 +218,7 @@ mod tests {
         let pos2 = all.iter().position(|r| r.id == id2);
 
         if let (Some(p1), Some(p2)) = (pos1, pos2) {
-            assert!(
-                p2 < p1,
-                "Newer conversation should appear before older one"
-            );
+            assert!(p2 < p1, "Newer conversation should appear before older one");
         }
 
         // Cleanup
@@ -246,13 +241,19 @@ mod tests {
     #[test]
     fn load_missing_conversation_returns_error() {
         let result = load_conversation("nonexistent-id-that-does-not-exist");
-        assert!(result.is_err(), "Loading a missing conversation should error");
+        assert!(
+            result.is_err(),
+            "Loading a missing conversation should error"
+        );
     }
 
     #[test]
     fn delete_missing_conversation_is_ok() {
         let result = delete_conversation("nonexistent-id-that-does-not-exist");
-        assert!(result.is_ok(), "Deleting a missing conversation should be Ok");
+        assert!(
+            result.is_ok(),
+            "Deleting a missing conversation should be Ok"
+        );
     }
 
     #[test]
@@ -294,11 +295,13 @@ mod tests {
 
     #[test]
     fn conversation_record_with_many_messages() {
-        let messages: Vec<MessageRecord> = (0..100).map(|i| MessageRecord {
-            role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
-            content: format!("Message number {i}"),
-            timestamp: chrono::Utc::now(),
-        }).collect();
+        let messages: Vec<MessageRecord> = (0..100)
+            .map(|i| MessageRecord {
+                role: if i % 2 == 0 { "user" } else { "assistant" }.into(),
+                content: format!("Message number {i}"),
+                timestamp: chrono::Utc::now(),
+            })
+            .collect();
 
         let id = format!("test_large_{}", uuid::Uuid::new_v4());
         let record = ConversationRecord {

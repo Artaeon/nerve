@@ -69,10 +69,7 @@ fn visit_dir(dir: &Path, kb: &mut KnowledgeBase, count: &mut usize) -> anyhow::R
 /// the file was skipped (unsupported extension, too large, etc.).
 pub fn ingest_file(path: &Path, kb: &mut KnowledgeBase) -> anyhow::Result<usize> {
     // Check extension.
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if !SUPPORTED_EXTENSIONS.contains(&ext) {
         return Ok(0);
     }
@@ -224,7 +221,10 @@ mod tests {
 
     #[test]
     fn supported_extension_accepted() {
-        let tmp = tempfile::Builder::new().suffix(".md").tempfile().expect("create tmp");
+        let tmp = tempfile::Builder::new()
+            .suffix(".md")
+            .tempfile()
+            .expect("create tmp");
         std::fs::write(tmp.path(), "Hello world test content").expect("write");
         let mut kb = KnowledgeBase::new("test".into());
         let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
@@ -235,7 +235,10 @@ mod tests {
 
     #[test]
     fn unsupported_extension_skipped() {
-        let tmp = tempfile::Builder::new().suffix(".exe").tempfile().expect("create tmp");
+        let tmp = tempfile::Builder::new()
+            .suffix(".exe")
+            .tempfile()
+            .expect("create tmp");
         std::fs::write(tmp.path(), "some binary content").expect("write");
         let mut kb = KnowledgeBase::new("test".into());
         let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
@@ -245,7 +248,10 @@ mod tests {
 
     #[test]
     fn empty_file_skipped() {
-        let tmp = tempfile::Builder::new().suffix(".txt").tempfile().expect("create tmp");
+        let tmp = tempfile::Builder::new()
+            .suffix(".txt")
+            .tempfile()
+            .expect("create tmp");
         std::fs::write(tmp.path(), "").expect("write");
         let mut kb = KnowledgeBase::new("test".into());
         let result = ingest_file(tmp.path(), &mut kb).expect("ingest");
@@ -254,7 +260,10 @@ mod tests {
 
     #[test]
     fn ingest_file_word_count_matches() {
-        let tmp = tempfile::Builder::new().suffix(".txt").tempfile().expect("create tmp");
+        let tmp = tempfile::Builder::new()
+            .suffix(".txt")
+            .tempfile()
+            .expect("create tmp");
         std::fs::write(tmp.path(), "alpha beta gamma delta epsilon").expect("write");
         let mut kb = KnowledgeBase::new("test".into());
         ingest_file(tmp.path(), &mut kb).expect("ingest");
@@ -274,8 +283,10 @@ mod tests {
         let chunks = chunk_text(text, 5, 2);
         // All words should appear in at least one chunk
         for word in text.split_whitespace() {
-            assert!(chunks.iter().any(|c| c.contains(word)),
-                "Word '{word}' missing from chunks");
+            assert!(
+                chunks.iter().any(|c| c.contains(word)),
+                "Word '{word}' missing from chunks"
+            );
         }
     }
 

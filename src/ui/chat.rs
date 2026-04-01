@@ -52,148 +52,147 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         let key_style = Style::default().fg(Color::Yellow);
         let desc_style = Style::default().fg(Color::White);
 
-      if area.width < 60 {
-        // Compact welcome for narrow terminals
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " Nerve — AI for your terminal",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            " Type a message or press Ctrl+K for prompts",
-            Style::default().fg(Color::DarkGray),
-        )));
-        lines.push(Line::from(""));
-      } else {
-        // Full welcome screen with ASCII art
-        let box_fg = Style::default().fg(Color::DarkGray);
-        let art_style = Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD);
-        let tagline_style = Style::default().fg(Color::DarkGray);
+        if area.width < 60 {
+            // Compact welcome for narrow terminals
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                " Nerve — AI for your terminal",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                " Type a message or press Ctrl+K for prompts",
+                Style::default().fg(Color::DarkGray),
+            )));
+            lines.push(Line::from(""));
+        } else {
+            // Full welcome screen with ASCII art
+            let box_fg = Style::default().fg(Color::DarkGray);
+            let art_style = Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD);
+            let tagline_style = Style::default().fg(Color::DarkGray);
 
-        lines.push(Line::from(""));
+            lines.push(Line::from(""));
 
-        // Box top
-        lines.push(Line::from(Span::styled(
+            // Box top
+            lines.push(Line::from(Span::styled(
             "   \u{256d}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256e}",
             box_fg,
         )));
-        lines.push(Line::from(Span::styled(
-            "   \u{2502}                                                      \u{2502}",
-            box_fg,
-        )));
+            lines.push(Line::from(Span::styled(
+                "   \u{2502}                                                      \u{2502}",
+                box_fg,
+            )));
 
-        // ASCII art lines inside box — each line has box borders
-        let ascii_art = [
-            "      \u{2588}\u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
-            "      \u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}",
-            "      \u{2588}\u{2588}\u{2554}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  ",
-            "      \u{2588}\u{2588}\u{2551}\u{255a}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255d}  \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{255a}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255d}  ",
-            "      \u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
-            "      \u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}",
-        ];
+            // ASCII art lines inside box — each line has box borders
+            let ascii_art = [
+                "      \u{2588}\u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2557}   \u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+                "      \u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}",
+                "      \u{2588}\u{2588}\u{2554}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2551}   \u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}  ",
+                "      \u{2588}\u{2588}\u{2551}\u{255a}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255d}  \u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{2588}\u{2588}\u{2557}\u{255a}\u{2588}\u{2588}\u{2557} \u{2588}\u{2588}\u{2554}\u{255d}\u{2588}\u{2588}\u{2554}\u{2550}\u{2550}\u{255d}  ",
+                "      \u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2551}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}\u{2588}\u{2588}\u{2551}  \u{2588}\u{2588}\u{2551} \u{255a}\u{2588}\u{2588}\u{2588}\u{2588}\u{2554}\u{255d} \u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2557}",
+                "      \u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}\u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{255d}  \u{255a}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{2550}\u{255d}",
+            ];
 
-        for art_line in &ascii_art {
+            for art_line in &ascii_art {
+                lines.push(Line::from(vec![
+                    Span::styled("   \u{2502}", box_fg),
+                    Span::styled(art_line.to_string(), art_style),
+                    Span::styled("  \u{2502}", box_fg),
+                ]));
+            }
+
+            lines.push(Line::from(Span::styled(
+                "   \u{2502}                                                      \u{2502}",
+                box_fg,
+            )));
+            // Tagline
             lines.push(Line::from(vec![
                 Span::styled("   \u{2502}", box_fg),
-                Span::styled(art_line.to_string(), art_style),
-                Span::styled("  \u{2502}", box_fg),
+                Span::styled(
+                    "          Raw AI power in your terminal           ",
+                    tagline_style,
+                ),
+                Span::styled("\u{2502}", box_fg),
             ]));
-        }
-
-        lines.push(Line::from(Span::styled(
-            "   \u{2502}                                                      \u{2502}",
-            box_fg,
-        )));
-        // Tagline
-        lines.push(Line::from(vec![
-            Span::styled("   \u{2502}", box_fg),
-            Span::styled("          Raw AI power in your terminal           ", tagline_style),
-            Span::styled("\u{2502}", box_fg),
-        ]));
-        lines.push(Line::from(Span::styled(
-            "   \u{2502}                                                      \u{2502}",
-            box_fg,
-        )));
-        // Box bottom
-        lines.push(Line::from(Span::styled(
+            lines.push(Line::from(Span::styled(
+                "   \u{2502}                                                      \u{2502}",
+                box_fg,
+            )));
+            // Box bottom
+            lines.push(Line::from(Span::styled(
             "   \u{256e}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}",
             box_fg,
         )));
 
-        lines.push(Line::from(""));
+            lines.push(Line::from(""));
 
-        // Quick Start section
-        lines.push(Line::from(Span::styled(
-            "   Quick Start",
-            section_style,
-        )));
-        lines.push(Line::from(Span::styled(
+            // Quick Start section
+            lines.push(Line::from(Span::styled("   Quick Start", section_style)));
+            lines.push(Line::from(Span::styled(
             "   \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
             box_fg,
         )));
-        lines.push(Line::from(Span::styled(
-            "   Type a message and press Enter to chat",
-            desc_style,
-        )));
-        lines.push(Line::from(""));
-
-        // Keyboard shortcuts
-        let shortcuts = [
-            ("Ctrl+K", "Nerve Bar (command palette)"),
-            ("Ctrl+T", "Switch provider"),
-            ("Ctrl+M", "Switch model"),
-            ("Ctrl+P", "Browse prompts"),
-            ("Ctrl+O", "History browser"),
-            ("Ctrl+B", "Clipboard manager"),
-            ("Ctrl+F", "Search in conversation"),
-            ("Ctrl+H", "Help & keybindings"),
-            ("1-9", "Copy message to clipboard"),
-        ];
-        for (key, desc) in &shortcuts {
-            lines.push(Line::from(vec![
-                Span::styled(format!("   {:<10}", key), key_style),
-                Span::styled(desc.to_string(), desc_style),
-            ]));
-        }
-
-        lines.push(Line::from(""));
-
-        // Slash commands
-        let commands = [
-            ("/help", "Show all slash commands"),
-            ("/agent on", "Enable coding agent"),
-            ("/usage", "Show API cost & token usage"),
-            ("/branch save", "Save conversation branch"),
-            ("/url", "Scrape a webpage for context"),
-            ("/kb", "Manage knowledge base"),
-            ("/auto", "Run automations"),
-        ];
-        for (cmd, desc) in &commands {
-            lines.push(Line::from(vec![
-                Span::styled(format!("   {:<15}", cmd), key_style),
-                Span::styled(desc.to_string(), desc_style),
-            ]));
-        }
-
-        if let Some(ref ws) = app.detected_workspace {
-            lines.push(Line::from(Span::styled("   Project", section_style)));
             lines.push(Line::from(Span::styled(
-                format!("   {ws}"),
-                Style::default().fg(Color::White),
+                "   Type a message and press Enter to chat",
+                desc_style,
             )));
-        }
+            lines.push(Line::from(""));
 
-        lines.push(Line::from(""));
-      } // end else (full welcome)
+            // Keyboard shortcuts
+            let shortcuts = [
+                ("Ctrl+K", "Nerve Bar (command palette)"),
+                ("Ctrl+T", "Switch provider"),
+                ("Ctrl+M", "Switch model"),
+                ("Ctrl+P", "Browse prompts"),
+                ("Ctrl+O", "History browser"),
+                ("Ctrl+B", "Clipboard manager"),
+                ("Ctrl+F", "Search in conversation"),
+                ("Ctrl+H", "Help & keybindings"),
+                ("1-9", "Copy message to clipboard"),
+            ];
+            for (key, desc) in &shortcuts {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("   {:<10}", key), key_style),
+                    Span::styled(desc.to_string(), desc_style),
+                ]));
+            }
+
+            lines.push(Line::from(""));
+
+            // Slash commands
+            let commands = [
+                ("/help", "Show all slash commands"),
+                ("/agent on", "Enable coding agent"),
+                ("/usage", "Show API cost & token usage"),
+                ("/branch save", "Save conversation branch"),
+                ("/url", "Scrape a webpage for context"),
+                ("/kb", "Manage knowledge base"),
+                ("/auto", "Run automations"),
+            ];
+            for (cmd, desc) in &commands {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("   {:<15}", cmd), key_style),
+                    Span::styled(desc.to_string(), desc_style),
+                ]));
+            }
+
+            if let Some(ref ws) = app.detected_workspace {
+                lines.push(Line::from(Span::styled("   Project", section_style)));
+                lines.push(Line::from(Span::styled(
+                    format!("   {ws}"),
+                    Style::default().fg(Color::White),
+                )));
+            }
+
+            lines.push(Line::from(""));
+        } // end else (full welcome)
     }
 
-    let gutter = Span::styled(
-        " \u{2502} ",
-        Style::default().fg(Color::Rgb(50, 50, 60)),
-    );
+    let gutter = Span::styled(" \u{2502} ", Style::default().fg(Color::Rgb(50, 50, 60)));
     // Thin dim separator that spans the usable chat width (minus block borders
     // and horizontal padding = 4 columns).
     let sep_width = area.width.saturating_sub(4) as usize;
@@ -207,7 +206,9 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     // Indented separator reused for user messages and streaming header.
     let user_separator_line = Line::from(Span::styled(
         format!("   {separator_str}"),
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
     ));
 
     let msg_count = conversation.messages.len();
@@ -254,13 +255,13 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 }
                 header_spans.push(Span::styled(
                     " You ",
-                    Style::default().fg(Color::White).bg(Color::Blue).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 header_spans.push(Span::raw("  "));
-                header_spans.push(Span::styled(
-                    time_ago,
-                    Style::default().fg(Color::DarkGray),
-                ));
+                header_spans.push(Span::styled(time_ago, Style::default().fg(Color::DarkGray)));
                 lines.push(Line::from(header_spans));
 
                 // Content with accent bar
@@ -284,10 +285,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::raw("  "),
-                    Span::styled(
-                        time_ago,
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(time_ago, Style::default().fg(Color::DarkGray)),
                 ]));
                 // Body — with markdown + syntax highlighting, guttered
                 let content_lines = parse_assistant_content(content);
@@ -303,7 +301,9 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                     Span::styled("   \u{2014} ", Style::default().fg(Color::Rgb(100, 90, 50))),
                     Span::styled(
                         content.chars().take(100).collect::<String>(),
-                        Style::default().fg(Color::Rgb(100, 90, 50)).add_modifier(Modifier::DIM | Modifier::ITALIC),
+                        Style::default()
+                            .fg(Color::Rgb(100, 90, 50))
+                            .add_modifier(Modifier::DIM | Modifier::ITALIC),
                     ),
                     if content.len() > 100 {
                         Span::styled("...", Style::default().fg(Color::Rgb(80, 70, 40)))
@@ -333,10 +333,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 
         lines.push(Line::from(vec![
             gutter.clone(),
-            Span::styled(
-                format!("  {spinner} "),
-                Style::default().fg(Color::Green),
-            ),
+            Span::styled(format!("  {spinner} "), Style::default().fg(Color::Green)),
             Span::styled(
                 " AI ",
                 Style::default()
@@ -346,7 +343,9 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Span::styled(
                 format!("  streaming... ({word_count} words)"),
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
             ),
         ]));
 
@@ -359,7 +358,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             // Append a pulsing cursor to the very last line of content.
             if si == stream_line_count - 1 {
                 // Pulse the cursor colour between bright green and dim green
-                let cursor_color = if (app.thinking_frame / 6) % 2 == 0 {
+                let cursor_color = if (app.thinking_frame / 6).is_multiple_of(2) {
                     Color::Green
                 } else {
                     Color::Rgb(0, 160, 0)
@@ -407,11 +406,16 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             gutter.clone(),
             Span::styled(
                 format!("  {spinner} "),
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 " AI ",
-                Style::default().fg(Color::White).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
         ]));
 
@@ -487,10 +491,7 @@ pub(crate) fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
                 in_code_block = false;
             } else {
                 // ── Start of code block ──────────────────────────────
-                code_lang = text_line
-                    .trim_start_matches('`')
-                    .trim()
-                    .to_string();
+                code_lang = text_line.trim_start_matches('`').trim().to_string();
                 in_code_block = true;
                 lines.push(code_header_line(&code_lang));
             }
@@ -529,7 +530,10 @@ fn code_header_line(lang: &str) -> Line<'static> {
         ),
         Span::styled(
             lang_badge,
-            Style::default().fg(Color::Cyan).bg(Color::Rgb(40, 40, 56)).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .bg(Color::Rgb(40, 40, 56))
+                .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "\u{2500}".repeat(remaining),
@@ -590,18 +594,9 @@ pub(crate) fn highlight_code(
         let mut spans: Vec<Span<'static>> = Vec::new();
 
         // Prefix: `   │ 1 │ ` — chrome + line number + pipe
-        spans.push(Span::styled(
-            "   \u{2502}",
-            pipe_style,
-        ));
-        spans.push(Span::styled(
-            format!("{:>4}", line_idx + 1),
-            line_num_style,
-        ));
-        spans.push(Span::styled(
-            " \u{2502} ",
-            pipe_style,
-        ));
+        spans.push(Span::styled("   \u{2502}", pipe_style));
+        spans.push(Span::styled(format!("{:>4}", line_idx + 1), line_num_style));
+        spans.push(Span::styled(" \u{2502} ", pipe_style));
 
         if line_idx < MAX_HIGHLIGHT_LINES {
             for (style, text) in ranges {
@@ -680,9 +675,7 @@ pub(crate) fn format_markdown_line(text_line: &str) -> Line<'static> {
     }
 
     // ── Horizontal rules: `---`, `***`, `___` ──────────────────────
-    if (trimmed == "---" || trimmed == "***" || trimmed == "___")
-        && trimmed.len() >= 3
-    {
+    if (trimmed == "---" || trimmed == "***" || trimmed == "___") && trimmed.len() >= 3 {
         return Line::from(Span::styled(
             format!("   {}", "\u{2500}".repeat(40)),
             Style::default()
@@ -692,7 +685,10 @@ pub(crate) fn format_markdown_line(text_line: &str) -> Line<'static> {
     }
 
     // ── Unordered list items: `- item` or `* item` ──────────────────
-    if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+    if let Some(rest) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    {
         let mut spans = vec![Span::styled(
             "   • ".to_string(),
             Style::default().fg(Color::DarkGray),
@@ -1082,10 +1078,20 @@ mod tests {
     #[test]
     fn parse_inline_spans_bold() {
         let spans = parse_inline_spans("before **bold** after");
-        assert!(spans.len() >= 3, "expected at least 3 spans, got {}", spans.len());
+        assert!(
+            spans.len() >= 3,
+            "expected at least 3 spans, got {}",
+            spans.len()
+        );
         let bold_span = spans.iter().find(|s| s.content.as_ref() == "bold");
         assert!(bold_span.is_some(), "should have a 'bold' span");
-        assert!(bold_span.unwrap().style.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            bold_span
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -1093,7 +1099,13 @@ mod tests {
         let spans = parse_inline_spans("before *italic* after");
         let italic_span = spans.iter().find(|s| s.content.as_ref() == "italic");
         assert!(italic_span.is_some(), "should have an 'italic' span");
-        assert!(italic_span.unwrap().style.add_modifier.contains(Modifier::ITALIC));
+        assert!(
+            italic_span
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::ITALIC)
+        );
     }
 
     #[test]
@@ -1109,7 +1121,13 @@ mod tests {
         let spans = parse_inline_spans("see [docs](https://example.com) here");
         let link_span = spans.iter().find(|s| s.content.as_ref() == "docs");
         assert!(link_span.is_some(), "should find the link text");
-        assert!(link_span.unwrap().style.add_modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            link_span
+                .unwrap()
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED)
+        );
     }
 
     #[test]
@@ -1170,7 +1188,10 @@ mod tests {
         let now = Utc::now();
         let created = now - Duration::hours(2);
         let result = format_time_ago(now, created, 0, 5);
-        assert!(result.contains("h ago"), "first message should show hours ago, got: {result}");
+        assert!(
+            result.contains("h ago"),
+            "first message should show hours ago, got: {result}"
+        );
     }
 
     #[test]

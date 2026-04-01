@@ -1,13 +1,7 @@
 use super::SmartPrompt;
 
 /// Helper to reduce boilerplate when defining built-in prompts.
-fn p(
-    name: &str,
-    description: &str,
-    template: &str,
-    category: &str,
-    tags: &[&str],
-) -> SmartPrompt {
+fn p(name: &str, description: &str, template: &str, category: &str, tags: &[&str]) -> SmartPrompt {
     SmartPrompt {
         name: name.into(),
         description: description.into(),
@@ -105,7 +99,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Writing",
             &["tone", "rewrite", "style"],
         ),
-
         // ── Coding (12) ────────────────────────────────────────────────────
         p(
             "Explain Code",
@@ -191,7 +184,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Coding",
             &["regex", "pattern", "match"],
         ),
-
         // ── Translation (8) ────────────────────────────────────────────────
         p(
             "Translate to English",
@@ -249,7 +241,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Translation",
             &["portuguese", "translate"],
         ),
-
         // ── Analysis (10) ───────────────────────────────────────────────────
         p(
             "Analyze Sentiment",
@@ -321,7 +312,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Analysis",
             &["pros", "cons", "advantages", "disadvantages"],
         ),
-
         // ── Creative (9) ────────────────────────────────────────────────────
         p(
             "Brainstorm Ideas",
@@ -386,7 +376,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Creative",
             &["creative writing", "style", "flair"],
         ),
-
         // ── Productivity (10) ──────────────────────────────────────────────
         p(
             "Create Action Items",
@@ -458,7 +447,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Productivity",
             &["eli5", "simple", "explain"],
         ),
-
         // ── Engineering (15) ───────────────────────────────────────────────
         p(
             "Architecture Review",
@@ -486,7 +474,12 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design a system from requirements",
             "Design a system for the following requirements. Consider scalability, reliability, availability, and performance. Include components, data flow, and trade-offs.\n\n{{input}}",
             "Engineering",
-            &["system design", "architecture", "scalability", "distributed"],
+            &[
+                "system design",
+                "architecture",
+                "scalability",
+                "distributed",
+            ],
         ),
         p(
             "Security Audit",
@@ -507,7 +500,12 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Review and improve error handling patterns",
             "Review and improve the error handling in the following code. Ensure proper error propagation, user-friendly messages, logging, retry logic, and graceful degradation.\n\n{{input}}",
             "Engineering",
-            &["error handling", "resilience", "retry", "graceful degradation"],
+            &[
+                "error handling",
+                "resilience",
+                "retry",
+                "graceful degradation",
+            ],
         ),
         p(
             "Test Strategy",
@@ -521,7 +519,12 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Plan a codebase migration strategy",
             "Plan a migration strategy for the following codebase change. Consider backward compatibility, feature flags, rollback plan, data migration, and deployment strategy.\n\n{{input}}",
             "Engineering",
-            &["migration", "backward compatibility", "rollback", "deployment"],
+            &[
+                "migration",
+                "backward compatibility",
+                "rollback",
+                "deployment",
+            ],
         ),
         p(
             "Dependency Audit",
@@ -563,9 +566,13 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design a microservice with clear boundaries",
             "Design a microservice for the following requirements. Define boundaries, API contracts, data ownership, inter-service communication patterns, and failure handling.\n\n{{input}}",
             "Engineering",
-            &["microservice", "api contract", "service boundary", "distributed"],
+            &[
+                "microservice",
+                "api contract",
+                "service boundary",
+                "distributed",
+            ],
         ),
-
         // ── Design (10) ────────────────────────────────────────────────────
         p(
             "UX Review",
@@ -637,7 +644,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design",
             &["icons", "iconography", "visual design", "consistency"],
         ),
-
         // ── Best Practices (10) ────────────────────────────────────────────
         p(
             "Code Standards",
@@ -709,7 +715,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Best Practices",
             &["onboarding", "developer guide", "setup", "documentation"],
         ),
-
         // ── Git (8) ────────────────────────────────────────────────────────
         p(
             "Git Init & Commit",
@@ -767,28 +772,45 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Git",
             &["gitignore", "ignore", "template", "project setup"],
         ),
-
         // ── Engineering — SmartPrompts ─────────────────────────────────────
         p(
             "Full Code Review",
             "Perform a thorough, senior-level code review with severity ratings",
             "You are a senior software engineer performing a thorough code review. Analyze the following code with extreme attention to detail.\n\nReview checklist:\n1. CORRECTNESS: Logic errors, off-by-one, null/undefined handling, race conditions\n2. SECURITY: Injection risks, auth issues, data exposure, OWASP Top 10\n3. PERFORMANCE: Time/space complexity, unnecessary allocations, N+1 queries, missing indexes\n4. READABILITY: Naming, structure, comments where non-obvious, dead code\n5. MAINTAINABILITY: SOLID principles, coupling, cohesion, testability\n6. ERROR HANDLING: Edge cases, graceful degradation, error messages\n7. TESTING: Missing test cases, edge cases not covered\n\nFor each issue found, provide:\n- Severity: CRITICAL / WARNING / SUGGESTION\n- Line reference or code snippet\n- What's wrong and why\n- Concrete fix with code example\n\nEnd with a summary: overall quality score (1-10), top 3 priorities to fix, and what's done well.\n\n{{input}}",
             "Engineering",
-            &["code review", "quality", "security", "best practices", "audit"],
+            &[
+                "code review",
+                "quality",
+                "security",
+                "best practices",
+                "audit",
+            ],
         ),
         p(
             "Architect Solution",
             "Design a production-ready architecture from requirements",
             "You are a principal software architect. Design a production-ready solution for the following requirements.\n\nYour design MUST include:\n\n1. SYSTEM OVERVIEW\n   - High-level architecture diagram (describe in text/ASCII)\n   - Component inventory with responsibilities\n   - Technology choices with justification\n\n2. DATA MODEL\n   - Entity definitions with fields and types\n   - Relationships and cardinality\n   - Indexing strategy\n   - Migration considerations\n\n3. API DESIGN\n   - Endpoint inventory (method, path, request/response)\n   - Authentication and authorization scheme\n   - Rate limiting and pagination strategy\n   - Versioning approach\n\n4. SCALABILITY\n   - Expected load and growth projections\n   - Horizontal vs vertical scaling strategy\n   - Caching layers (what, where, TTL)\n   - Database scaling (read replicas, sharding)\n\n5. RELIABILITY\n   - Failure modes and mitigation\n   - Circuit breakers and retry policies\n   - Monitoring and alerting\n   - Disaster recovery and backup strategy\n\n6. TRADE-OFFS\n   - Key decisions and alternatives considered\n   - What was sacrificed and why\n   - Technical debt accepted and payoff plan\n\n{{input}}",
             "Engineering",
-            &["architecture", "system design", "scalability", "production", "trade-offs"],
+            &[
+                "architecture",
+                "system design",
+                "scalability",
+                "production",
+                "trade-offs",
+            ],
         ),
         p(
             "Debug Detective",
             "Systematically diagnose and fix issues like a senior debugger",
             "You are a senior debugging specialist. Help me systematically diagnose and fix this issue.\n\nFollow this structured debugging process:\n\nSTEP 1 - UNDERSTAND THE SYMPTOM\n- What exactly is happening vs what should happen?\n- When did it start? What changed recently?\n- Is it reproducible? Under what conditions?\n\nSTEP 2 - FORM HYPOTHESES (rank by likelihood)\n- List 5-7 possible root causes, most likely first\n- For each: what evidence would confirm or eliminate it?\n\nSTEP 3 - DIAGNOSTIC PLAN\n- Exact commands, queries, or code changes to run\n- What to look for in logs, metrics, or output\n- Binary search strategy to narrow down the cause\n\nSTEP 4 - ROOT CAUSE ANALYSIS\n- Based on evidence, identify the most likely cause\n- Explain the causal chain (A caused B which caused C)\n- Why existing tests/monitoring didn't catch this\n\nSTEP 5 - FIX\n- Minimal, targeted fix with code\n- Regression test to prevent recurrence\n- Related areas to check for the same class of bug\n\nSTEP 6 - PREVENTION\n- What process/tooling change prevents this category of bug?\n- Monitoring/alerting to catch it earlier next time\n\nHere's the issue:\n\n{{input}}",
             "Engineering",
-            &["debug", "diagnose", "root cause", "troubleshoot", "systematic"],
+            &[
+                "debug",
+                "diagnose",
+                "root cause",
+                "troubleshoot",
+                "systematic",
+            ],
         ),
         p(
             "Write Production Code",
@@ -802,16 +824,27 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Deep performance analysis and optimization with prioritized improvements",
             "You are a performance engineering specialist. Analyze and optimize the following code or system for maximum performance.\n\nYour analysis must cover:\n\n1. PROFILING ANALYSIS\n   - Identify the hot paths and bottlenecks\n   - Time complexity of critical operations\n   - Memory allocation patterns and pressure\n   - I/O wait and blocking operations\n\n2. QUICK WINS (< 1 hour to implement)\n   - Algorithm improvements\n   - Caching opportunities\n   - Unnecessary work elimination\n   - Better data structures\n\n3. MEDIUM EFFORT (1 day to implement)\n   - Architectural changes\n   - Concurrency/parallelism opportunities\n   - Batch processing optimizations\n   - Connection pooling, lazy loading\n\n4. STRATEGIC IMPROVEMENTS (1 week+)\n   - Redesign proposals\n   - Infrastructure changes\n   - Pre-computation and denormalization\n\nFor each optimization, provide:\n- Expected improvement (2x, 10x, etc.)\n- Implementation complexity\n- Risk of regression\n- Code example\n\n{{input}}",
             "Engineering",
-            &["performance", "optimization", "profiling", "bottleneck", "scalability"],
+            &[
+                "performance",
+                "optimization",
+                "profiling",
+                "bottleneck",
+                "scalability",
+            ],
         ),
-
         // ── Engineering — Scaffold & Feature Prompts ──────────────────────
         p(
             "Scaffold Project",
             "Generate a complete, production-ready project from requirements",
             "You are a senior software architect creating a production-ready project from scratch.\n\nCreate a complete, well-structured project for the following requirements. Your project MUST include:\n\nPROJECT STRUCTURE:\n- Logical directory organization following language conventions\n- Separation of concerns (routes, handlers, models, config, utils)\n- Environment-based configuration (.env.example, not .env)\n\nCODE QUALITY:\n- Proper error handling throughout (no unwrap/panic in Rust, no unhandled promises in JS)\n- Input validation on all external boundaries\n- Consistent naming conventions\n- Type safety where the language supports it\n\nCONFIGURATION:\n- Build/package file with all dependencies pinned to specific versions\n- Development and production configurations\n- Environment variable support for secrets\n\nTESTING:\n- Unit tests for core logic\n- Integration test for the main flow\n- Test configuration (test runner, fixtures)\n\nDOCUMENTATION:\n- README.md with: description, prerequisites, installation, usage, API reference, development guide\n- Inline comments for non-obvious logic\n- API documentation if applicable\n\nDEVOPS:\n- .gitignore appropriate for the language and framework\n- Dockerfile (multi-stage build, non-root user)\n- Basic CI config (.github/workflows/ci.yml)\n\nDo NOT use placeholder comments like '// TODO' or '// implement later'. Every file must contain real, working code.\n\nRequirements:\n\n{{input}}",
             "Engineering",
-            &["scaffold", "project", "generate", "boilerplate", "new project"],
+            &[
+                "scaffold",
+                "project",
+                "generate",
+                "boilerplate",
+                "new project",
+            ],
         ),
         p(
             "Add Feature",
@@ -832,32 +865,54 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Write thorough, maintainable tests covering all edge cases",
             "You are a testing expert. Write thorough, maintainable tests for the following code.\n\nTest categories to cover:\n1. HAPPY PATH: Normal usage with valid inputs\n2. EDGE CASES: Empty inputs, boundary values, maximum lengths\n3. ERROR CASES: Invalid inputs, missing data, network failures\n4. SECURITY: Injection attempts, unauthorized access, malformed data\n5. CONCURRENCY: Race conditions, deadlocks (if applicable)\n6. REGRESSION: Specific bugs that were fixed (if mentioned)\n\nFor each test:\n- Descriptive name that explains what's being tested\n- Arrange-Act-Assert pattern\n- One assertion per test (prefer many focused tests over few large ones)\n- Independent (no test depends on another test's state)\n\nInclude:\n- Test fixtures/helpers if patterns repeat\n- Mock/stub setup for external dependencies\n- Comments explaining non-obvious test logic\n\nCode to test:\n\n{{input}}",
             "Engineering",
-            &["tests", "testing", "coverage", "edge cases", "quality assurance"],
+            &[
+                "tests",
+                "testing",
+                "coverage",
+                "edge cases",
+                "quality assurance",
+            ],
         ),
-
         // ── Writing — SmartPrompts ─────────────────────────────────────────
         p(
             "Technical Blog Post",
             "Write an engaging, educational technical blog post",
             "You are a technical writer creating an engaging, educational blog post. Write a complete blog post on the following topic.\n\nStructure:\n1. HOOK \u{2014} Opening paragraph that grabs attention with a relatable problem or surprising fact\n2. CONTEXT \u{2014} Why this matters, who it's for, what they'll learn\n3. MAIN CONTENT \u{2014} Clear, logical progression with:\n   - Code examples that actually work (not pseudocode)\n   - Diagrams described in text where helpful\n   - Common pitfalls and how to avoid them\n   - Real-world use cases\n4. PRACTICAL TAKEAWAY \u{2014} Actionable next steps the reader can do today\n5. CONCLUSION \u{2014} Key points summarized, call to action\n\nWriting guidelines:\n- Write for a developer audience (intermediate level)\n- Use short paragraphs (3-4 sentences max)\n- Include section headers for scanability\n- Code examples should be complete and runnable\n- Avoid jargon without explanation\n- Aim for 1500-2500 words\n\nTopic:\n\n{{input}}",
             "Writing",
-            &["blog", "technical writing", "tutorial", "educational", "content"],
+            &[
+                "blog",
+                "technical writing",
+                "tutorial",
+                "educational",
+                "content",
+            ],
         ),
         p(
             "Professional Email",
             "Draft a concise, action-oriented professional email",
             "You are an executive communications specialist. Draft a professional email that achieves its objective clearly and efficiently.\n\nBefore writing, analyze:\n- Who is the recipient and what's their context?\n- What is the ONE key action or takeaway?\n- What's the appropriate tone (formal, warm-professional, direct)?\n\nEmail structure:\n1. SUBJECT LINE \u{2014} Specific, action-oriented, under 60 characters\n2. OPENING \u{2014} Context in 1-2 sentences (why you're writing)\n3. BODY \u{2014} Key information, organized with bullets if 3+ points\n4. ASK \u{2014} Clear, specific call to action with timeline\n5. CLOSE \u{2014} Professional, appropriate warmth\n\nRules:\n- Keep under 200 words (executives skim)\n- One email = one topic\n- Bold or bullet the key ask if buried in context\n- Include any necessary context the recipient needs to act\n- Suggest specific times/dates rather than 'soon' or 'when convenient'\n\nContext for the email:\n\n{{input}}",
             "Writing",
-            &["email", "professional", "business", "communication", "executive"],
+            &[
+                "email",
+                "professional",
+                "business",
+                "communication",
+                "executive",
+            ],
         ),
         p(
             "Long-Form Article",
             "Write a comprehensive, authoritative long-form article",
             "You are an expert writer creating a comprehensive, well-researched article. Write a thorough, authoritative piece on the following topic.\n\nYour article must:\n- Open with a compelling hook that establishes why this matters NOW\n- Build a clear narrative arc (problem \u{2192} context \u{2192} analysis \u{2192} solution \u{2192} future)\n- Support every claim with specific evidence, data, or examples\n- Include expert-level insights that go beyond surface-level treatment\n- Address counterarguments and nuance\n- Use analogies and concrete examples to explain complex concepts\n- End with actionable insights and a forward-looking perspective\n\nFormatting:\n- Use clear section headers (H2, H3) for structure\n- Short paragraphs (3-5 sentences)\n- Pull quotes or callout boxes for key insights\n- Transition sentences between sections\n- 2000-4000 words\n\nTone: Authoritative but accessible. Write like a respected industry expert explaining to smart colleagues.\n\nTopic:\n\n{{input}}",
             "Writing",
-            &["article", "long-form", "authoritative", "in-depth", "research"],
+            &[
+                "article",
+                "long-form",
+                "authoritative",
+                "in-depth",
+                "research",
+            ],
         ),
-
         // ── Data (NEW category) ────────────────────────────────────────────
         p(
             "SQL Query Builder",
@@ -871,25 +926,41 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design a robust, production-grade data pipeline",
             "You are a data engineering specialist. Design a robust data pipeline for the following requirements.\n\nYour design must cover:\n\n1. SOURCE ANALYSIS\n   - Data sources, formats, and volumes\n   - Schema detection and validation\n   - Change data capture strategy\n\n2. INGESTION LAYER\n   - Batch vs streaming decision with justification\n   - Extraction method and scheduling\n   - Error handling and dead letter queues\n   - Idempotency guarantees\n\n3. TRANSFORMATION LAYER\n   - Data quality checks and validation rules\n   - Transformation logic (cleaning, enrichment, aggregation)\n   - Schema evolution strategy\n   - Testing approach for transformations\n\n4. STORAGE LAYER\n   - Storage format selection (Parquet, Delta, Iceberg)\n   - Partitioning and clustering strategy\n   - Retention and archival policies\n   - Query patterns and optimization\n\n5. ORCHESTRATION\n   - DAG design and dependencies\n   - Retry and failure handling\n   - Monitoring, alerting, and SLAs\n   - Backfill and replay capabilities\n\n6. OPERATIONAL CONCERNS\n   - Cost estimation\n   - Security and access control\n   - Documentation and runbook\n\n{{input}}",
             "Data",
-            &["data pipeline", "etl", "data engineering", "ingestion", "orchestration"],
+            &[
+                "data pipeline",
+                "etl",
+                "data engineering",
+                "ingestion",
+                "orchestration",
+            ],
         ),
-
         // ── Business (NEW category) ────────────────────────────────────────
         p(
             "Business Case",
             "Build a compelling, structured business case with financial analysis",
             "You are a management consultant. Build a compelling business case for the following proposal.\n\nStructure your business case as follows:\n\n1. EXECUTIVE SUMMARY (2-3 paragraphs)\n   - What we're proposing and why now\n   - Expected outcome and ROI\n   - Investment required\n\n2. PROBLEM STATEMENT\n   - Current state and pain points (quantified)\n   - Cost of inaction (financial, operational, strategic)\n   - Root cause analysis\n\n3. PROPOSED SOLUTION\n   - What we'll do (specific, actionable)\n   - Timeline and milestones\n   - Resource requirements (people, budget, tools)\n\n4. FINANCIAL ANALYSIS\n   - Total cost of ownership (3-year view)\n   - Expected benefits (quantified where possible)\n   - ROI calculation and payback period\n   - Sensitivity analysis (best/expected/worst case)\n\n5. RISK ASSESSMENT\n   - Top 5 risks with probability and impact\n   - Mitigation strategies for each\n   - Go/no-go criteria\n\n6. RECOMMENDATION\n   - Clear decision request\n   - Next steps with owners and dates\n\n{{input}}",
             "Business",
-            &["business case", "roi", "proposal", "financial analysis", "strategy"],
+            &[
+                "business case",
+                "roi",
+                "proposal",
+                "financial analysis",
+                "strategy",
+            ],
         ),
         p(
             "Meeting Notes to Actions",
             "Transform raw meeting notes into structured, actionable summaries",
             "You are an executive assistant processing meeting notes. Transform the following raw meeting notes into a structured, actionable summary.\n\nOutput format:\n\nMEETING SUMMARY\n- Date: [extract or note 'not specified']\n- Attendees: [extract names mentioned]\n- Purpose: [1 sentence]\n\nKEY DECISIONS\n1. [Decision] \u{2014} [context/rationale]\n\nACTION ITEMS\n| # | Action | Owner | Due Date | Priority |\n|---|--------|-------|----------|----------|\n| 1 | ...    | ...   | ...      | High/Med/Low |\n\nOPEN QUESTIONS\n- [Questions raised but not resolved]\n\nPARKING LOT\n- [Topics deferred for future discussion]\n\nFOLLOW-UP\n- Next meeting: [date/topic if mentioned]\n- Dependencies: [what's blocking progress]\n\nRaw meeting notes:\n\n{{input}}",
             "Business",
-            &["meeting", "notes", "action items", "summary", "productivity"],
+            &[
+                "meeting",
+                "notes",
+                "action items",
+                "summary",
+                "productivity",
+            ],
         ),
-
         // ── DevOps (NEW category) ──────────────────────────────────────────
         p(
             "Incident Postmortem",
@@ -905,7 +976,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "DevOps",
             &["infrastructure", "terraform", "iac", "cloud", "devops"],
         ),
-
         // ── Communication (NEW category) ───────────────────────────────────
         p(
             "Explain Like I'm 5",
@@ -919,9 +989,14 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Create a compelling, slide-by-slide presentation outline with speaker notes",
             "You are a presentation coach who has helped hundreds of speakers create compelling talks. Create a presentation outline for the following topic.\n\nPRESENTATION STRUCTURE:\n\nTITLE: [Compelling title \u{2014} benefit-focused, not topic-focused]\nDURATION: [Estimate based on content]\nAUDIENCE: [Who they are, what they know, what they need]\n\nSLIDE-BY-SLIDE OUTLINE:\n\nSlide 1 \u{2014} OPENING HOOK\n- [Surprising stat, provocative question, or relatable story]\n- Goal: grab attention in 30 seconds\n\nSlides 2-3 \u{2014} PROBLEM\n- [Establish the pain point the audience feels]\n- [Show the cost of the status quo]\n\nSlides 4-7 \u{2014} SOLUTION\n- [Your main argument/framework in 3-4 key points]\n- [Each point: claim \u{2192} evidence \u{2192} example]\n\nSlide 8 \u{2014} OBJECTION HANDLING\n- [Anticipate and address the top objection]\n\nSlide 9 \u{2014} CALL TO ACTION\n- [One specific thing the audience should do Monday morning]\n\nSlide 10 \u{2014} Q&A / CLOSE\n- [Memorable closing line that ties back to the opening]\n\nSPEAKER NOTES:\n- Key transitions between sections\n- Stories or examples to include\n- Questions to ask the audience\n- Timing markers\n\nTopic:\n\n{{input}}",
             "Communication",
-            &["presentation", "slides", "public speaking", "outline", "talk"],
+            &[
+                "presentation",
+                "slides",
+                "public speaking",
+                "outline",
+                "talk",
+            ],
         ),
-
         // ── Learning (2) ──────────────────────────────────────────────────
         p(
             "Teach Me",
@@ -937,7 +1012,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Learning",
             &["study", "exam", "guide", "review", "education"],
         ),
-
         // ── Marketing (2) ─────────────────────────────────────────────────
         p(
             "Landing Page Copy",
@@ -953,7 +1027,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Marketing",
             &["content", "calendar", "social media", "strategy"],
         ),
-
         // ── Legal (1) ─────────────────────────────────────────────────────
         p(
             "Contract Review",
@@ -962,7 +1035,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Legal",
             &["contract", "legal", "review", "negotiation"],
         ),
-
         // ── Product (2) ───────────────────────────────────────────────────
         p(
             "PRD (Product Requirements)",
@@ -978,7 +1050,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Product",
             &["user research", "interview", "ux", "discovery"],
         ),
-
         // ── Rust (2) ──────────────────────────────────────────────────────
         p(
             "Rust Code Review",
@@ -994,7 +1065,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Rust",
             &["rust", "implement", "idiomatic", "production"],
         ),
-
         // ── Personal (1) ──────────────────────────────────────────────────
         p(
             "Decision Framework",
@@ -1003,7 +1073,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Personal",
             &["decision", "framework", "strategy", "analysis"],
         ),
-
         // ── UI/UX (8) ─────────────────────────────────────────────────────
         p(
             "Apple Design System",
@@ -1052,16 +1121,27 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Create a comprehensive design token system for a project",
             "You are a design systems engineer. Create a comprehensive design token system for the following project.\n\nDesign tokens are the atomic design decisions that form the foundation of a design system. Define all tokens for this project.\n\nTOKEN CATEGORIES:\n\n1. COLOR\n   - Primitives: Full color scales (50-950 for each hue)\n   - Semantic: primary, secondary, tertiary, error, warning, success, info\n   - Surface: background, surface, on-surface, outline, divider\n   - Interactive: hover, pressed, focused, disabled states\n   - Dark mode: All tokens must have dark mode variants\n   - Format: CSS custom properties AND JSON for tooling\n\n2. TYPOGRAPHY\n   - Font families: primary (sans), secondary (serif if needed), mono\n   - Size scale: xs(12), sm(14), base(16), lg(18), xl(20), 2xl(24), 3xl(30), 4xl(36), 5xl(48)\n   - Weight scale: light(300), regular(400), medium(500), semibold(600), bold(700)\n   - Line height: tight(1.25), normal(1.5), relaxed(1.75)\n   - Letter spacing: tight(-0.025em), normal(0), wide(0.025em)\n\n3. SPACING\n   - Scale: 0, 1(4px), 2(8px), 3(12px), 4(16px), 5(20px), 6(24px), 8(32px), 10(40px), 12(48px), 16(64px), 20(80px), 24(96px)\n   - Named: page-margin, section-gap, card-padding, input-padding, button-padding\n\n4. SIZING\n   - Icon sizes: sm(16), md(20), lg(24), xl(32)\n   - Avatar sizes: xs(24), sm(32), md(40), lg(48), xl(64)\n   - Touch targets: minimum 44px\n\n5. BORDER\n   - Width: thin(1px), medium(2px), thick(4px)\n   - Radius: none(0), sm(4px), md(8px), lg(12px), xl(16px), full(9999px)\n\n6. ELEVATION / SHADOW\n   - Level 1: 0 1px 2px rgba(0,0,0,0.05)\n   - Level 2: 0 4px 6px rgba(0,0,0,0.07)\n   - Level 3: 0 10px 15px rgba(0,0,0,0.1)\n\n7. MOTION\n   - Duration: fast(100ms), normal(200ms), slow(300ms), deliberate(500ms)\n   - Easing: ease-out, ease-in-out, spring\n   - Transitions: fade, slide, scale, collapse\n\nOutput format: Provide tokens in both CSS custom properties and JSON format.\n\n{{input}}",
             "UI/UX",
-            &["design tokens", "design system", "css", "theming", "variables"],
+            &[
+                "design tokens",
+                "design system",
+                "css",
+                "theming",
+                "variables",
+            ],
         ),
         p(
             "Figma Component Spec",
             "Write a detailed component specification for design-to-development handoff",
             "You are a design engineer who bridges design and development. Write a detailed component specification that a developer can implement exactly from your description.\n\nCOMPONENT SPECIFICATION:\n\n1. OVERVIEW\n   - Component name and purpose\n   - When to use (and when NOT to use)\n   - Related components\n\n2. ANATOMY\n   - Visual breakdown of all sub-elements\n   - Required vs optional elements\n   - Slot/content areas\n\n3. VARIANTS\n   - Size: sm, md, lg (with exact dimensions)\n   - State: default, hover, active, focused, disabled, loading, error\n   - Style: filled, outlined, ghost/text\n   - For each variant: exact colors, spacing, typography, border\n\n4. LAYOUT & SPACING\n   - Internal padding (per size variant)\n   - Gap between sub-elements\n   - Minimum/maximum width constraints\n   - Alignment rules\n\n5. INTERACTION\n   - Click/tap behavior\n   - Hover state transition (duration, easing)\n   - Focus ring style (for keyboard navigation)\n   - Loading state behavior\n   - Error state behavior\n\n6. RESPONSIVE BEHAVIOR\n   - How the component adapts at different breakpoints\n   - Touch vs pointer adaptations\n   - Minimum touch target size (44px)\n\n7. ACCESSIBILITY\n   - ARIA role and attributes\n   - Keyboard interaction pattern\n   - Screen reader announcement\n   - Focus management\n   - Color contrast requirements (4.5:1 for text)\n\n8. CODE REFERENCE\n   - Props/API surface\n   - Usage examples (3 common patterns)\n   - Edge cases to handle\n\n{{input}}",
             "UI/UX",
-            &["component", "specification", "figma", "handoff", "design engineering"],
+            &[
+                "component",
+                "specification",
+                "figma",
+                "handoff",
+                "design engineering",
+            ],
         ),
-
         // ── Testing (NEW category) ────────────────────────────────────────
         p(
             "Unit Test Suite",
@@ -1075,7 +1155,13 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design a comprehensive integration test plan for a system or feature",
             "You are a QA architect. Design a comprehensive integration test plan for the following system or feature.\n\nTEST PLAN STRUCTURE:\n\n1. SCOPE\n   - What is being tested (components, interfaces, data flows)\n   - What is NOT being tested (out of scope)\n   - Dependencies and prerequisites\n\n2. TEST ENVIRONMENT\n   - Required services and their versions\n   - Database setup (schema, seed data)\n   - External service mocks/stubs\n   - Configuration requirements\n\n3. TEST SCENARIOS (for each integration point)\n   | ID | Scenario | Input | Expected Output | Priority |\n   |---|---------|-------|----------------|----------|\n   \n   Cover:\n   - Happy path end-to-end flows\n   - Error propagation across services\n   - Timeout and retry behavior\n   - Concurrent access patterns\n   - Data consistency across services\n   - Authentication and authorization flows\n   - Rate limiting behavior\n\n4. DATA REQUIREMENTS\n   - Test fixtures (specific data needed)\n   - Data setup and teardown procedures\n   - Shared vs isolated test data\n\n5. AUTOMATION STRATEGY\n   - Which tests to automate first (ROI-based)\n   - Framework and tool recommendations\n   - CI/CD integration approach\n   - Reporting and alerting\n\n6. RISK ASSESSMENT\n   - Most likely failure points\n   - Hardest-to-test scenarios\n   - Monitoring gaps\n\n{{input}}",
             "Testing",
-            &["integration test", "test plan", "qa", "automation", "scenarios"],
+            &[
+                "integration test",
+                "test plan",
+                "qa",
+                "automation",
+                "scenarios",
+            ],
         ),
         p(
             "E2E Test Script",
@@ -1089,23 +1175,39 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Design a load testing strategy for a system",
             "You are a performance engineer. Design a load testing strategy for the following system.\n\nLOAD TEST PLAN:\n\n1. OBJECTIVES\n   - Performance targets (response time P50, P95, P99)\n   - Throughput targets (requests/second)\n   - Concurrent user capacity\n   - Resource utilization limits (CPU, memory, connections)\n\n2. TEST TYPES\n   - Smoke test: 1-5 users, verify baseline (5 min)\n   - Load test: Expected load, sustained (30 min)\n   - Stress test: 150-200% of expected load (15 min)\n   - Spike test: Sudden burst (10x normal for 2 min)\n   - Soak test: Normal load for extended period (4-8 hours)\n\n3. SCENARIOS\n   For each critical user flow:\n   - Virtual user script (step by step)\n   - Think time between actions (realistic)\n   - Data parameterization\n   - Assertion thresholds\n\n4. INFRASTRUCTURE\n   - Load generator sizing and location\n   - Monitoring setup (APM, metrics, logs)\n   - Alerting thresholds during test\n\n5. ANALYSIS\n   - Key metrics to watch\n   - Bottleneck identification approach\n   - How to determine pass/fail\n   - Report template\n\n{{input}}",
             "Testing",
-            &["load test", "performance", "stress test", "benchmarking", "capacity"],
+            &[
+                "load test",
+                "performance",
+                "stress test",
+                "benchmarking",
+                "capacity",
+            ],
         ),
-
         // ── Business (additional) ─────────────────────────────────────────
         p(
             "Strategic Plan",
             "Develop a strategic plan for a business challenge",
             "You are a management consultant at a top-tier firm. Develop a strategic plan for the following business challenge.\n\nSTRATEGIC PLAN:\n\n1. SITUATION ANALYSIS\n   - Current state assessment\n   - Market landscape (competitors, trends, disruptions)\n   - SWOT analysis (Strengths, Weaknesses, Opportunities, Threats)\n   - Key stakeholder map\n\n2. STRATEGIC VISION\n   - 3-year vision statement\n   - Strategic objectives (3-5, SMART format)\n   - Key results for each objective (OKRs)\n\n3. STRATEGIC OPTIONS\n   - Option A: [Description] \u{2014} Risk/Reward analysis\n   - Option B: [Description] \u{2014} Risk/Reward analysis\n   - Option C: [Description] \u{2014} Risk/Reward analysis\n   - Recommended option with justification\n\n4. EXECUTION PLAN\n   - Phase 1 (0-6 months): Quick wins and foundation\n   - Phase 2 (6-12 months): Core initiatives\n   - Phase 3 (12-36 months): Scale and optimize\n   - Resource requirements per phase\n\n5. FINANCIAL MODEL\n   - Investment required (headcount, technology, marketing)\n   - Revenue projections (conservative, base, optimistic)\n   - Break-even analysis\n   - Key financial assumptions\n\n6. RISK MITIGATION\n   - Top 5 execution risks\n   - Mitigation strategy for each\n   - Decision gates and pivot criteria\n\n7. GOVERNANCE\n   - Steering committee structure\n   - Review cadence (monthly, quarterly)\n   - Success metrics and reporting\n\n{{input}}",
             "Business",
-            &["strategy", "strategic plan", "consulting", "vision", "execution"],
+            &[
+                "strategy",
+                "strategic plan",
+                "consulting",
+                "vision",
+                "execution",
+            ],
         ),
         p(
             "Competitive Analysis",
             "Conduct a thorough competitive analysis for a product or market",
             "You are a market analyst. Conduct a thorough competitive analysis for the following product or market.\n\nCOMPETITIVE ANALYSIS:\n\n1. MARKET OVERVIEW\n   - Market size and growth rate\n   - Key market segments\n   - Industry trends and disruptions\n   - Regulatory considerations\n\n2. COMPETITOR PROFILES (for each major competitor)\n   | Dimension | Competitor A | Competitor B | You |\n   |-----------|-------------|-------------|-----|\n   | Positioning | | | |\n   | Target market | | | |\n   | Key features | | | |\n   | Pricing | | | |\n   | Revenue (est.) | | | |\n   | Team size (est.) | | | |\n   | Funding | | | |\n   | Strengths | | | |\n   | Weaknesses | | | |\n\n3. FEATURE COMPARISON MATRIX\n   | Feature | Us | Comp A | Comp B | Comp C |\n   (Rate: Yes/No/Partial, or 1-5 scale)\n\n4. DIFFERENTIATION ANALYSIS\n   - Our unique advantages\n   - Their unique advantages\n   - Parity features (table stakes)\n   - Gap analysis (what we're missing)\n\n5. STRATEGIC POSITIONING\n   - Positioning map (2x2 or perceptual map description)\n   - Recommended positioning statement\n   - Messaging differentiation\n\n6. OPPORTUNITIES\n   - Underserved segments\n   - Feature gaps to exploit\n   - Pricing opportunities\n   - Partnership possibilities\n\n{{input}}",
             "Business",
-            &["competitive analysis", "market research", "competitors", "positioning"],
+            &[
+                "competitive analysis",
+                "market research",
+                "competitors",
+                "positioning",
+            ],
         ),
         p(
             "OKR Framework",
@@ -1114,25 +1216,34 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Business",
             &["okr", "goals", "objectives", "key results", "planning"],
         ),
-
         // ── DevOps (additional) ───────────────────────────────────────────
         p(
             "Kubernetes Deployment",
             "Design a production-ready Kubernetes deployment for an application",
             "You are a Kubernetes platform engineer. Design a production-ready Kubernetes deployment for the following application.\n\nDEPLOYMENT SPECIFICATION:\n\n1. ARCHITECTURE\n   - Namespace strategy\n   - Service mesh requirements (if any)\n   - Ingress/load balancer configuration\n   - Network policies\n\n2. WORKLOAD DEFINITIONS\n   - Deployment manifests (replicas, strategy, pod spec)\n   - Resource requests and limits (CPU, memory)\n   - Liveness and readiness probes\n   - Pod disruption budgets\n   - Horizontal pod autoscaler configuration\n\n3. CONFIGURATION\n   - ConfigMaps for non-sensitive config\n   - Secrets management (sealed secrets, external secrets, vault)\n   - Environment variable mapping\n\n4. STORAGE\n   - PersistentVolumeClaims (if needed)\n   - Storage class selection\n   - Backup strategy\n\n5. OBSERVABILITY\n   - Prometheus metrics and ServiceMonitor\n   - Grafana dashboard specifications\n   - Log aggregation (format, labels)\n   - Alerting rules (SLOs, error rates)\n\n6. SECURITY\n   - RBAC policies\n   - Pod security standards\n   - Network policies\n   - Image scanning and admission control\n   - Secret rotation\n\n7. CI/CD INTEGRATION\n   - Helm chart or Kustomize structure\n   - ArgoCD/Flux application manifest\n   - Rollout strategy (blue-green, canary)\n   - Rollback procedure\n\nProvide complete YAML manifests for all resources.\n\n{{input}}",
             "DevOps",
-            &["kubernetes", "k8s", "deployment", "containers", "orchestration"],
+            &[
+                "kubernetes",
+                "k8s",
+                "deployment",
+                "containers",
+                "orchestration",
+            ],
         ),
-
         // ── Writing (additional) ──────────────────────────────────────────
         p(
             "Technical RFC",
             "Write a technical RFC to propose a significant technical change",
             "You are a senior engineer writing a technical RFC (Request for Comments) to propose a significant technical change.\n\nRFC TEMPLATE:\n\n# RFC: [Title]\n\n**Author:** [Name]\n**Status:** Draft\n**Created:** [Date]\n\n## Summary\nOne paragraph explaining the proposal.\n\n## Motivation\n- What problem does this solve?\n- Why is it important now?\n- What happens if we don't do this?\n\n## Detailed Design\n- Technical approach (architecture, components, data flow)\n- API changes (if any, with before/after examples)\n- Data model changes (migration plan)\n- Code examples showing the new pattern\n\n## Alternatives Considered\nFor each alternative:\n- Description\n- Pros and cons\n- Why it was not chosen\n\n## Migration Plan\n- Phased rollout steps\n- Backward compatibility approach\n- Rollback plan\n- Timeline estimate\n\n## Risks and Mitigations\n| Risk | Probability | Impact | Mitigation |\n\n## Open Questions\n- Decisions that need input from others\n\n## References\n- Related RFCs, design docs, or external resources\n\nWrite the complete RFC:\n\n{{input}}",
             "Writing",
-            &["rfc", "technical writing", "proposal", "design doc", "architecture"],
+            &[
+                "rfc",
+                "technical writing",
+                "proposal",
+                "design doc",
+                "architecture",
+            ],
         ),
-
         // ── Rust (additional) ─────────────────────────────────────────────
         p(
             "Rust Error Handling",
@@ -1155,7 +1266,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Rust",
             &["rust", "cli", "clap", "terminal", "command-line"],
         ),
-
         // ── Python (NEW category) ─────────────────────────────────────────
         p(
             "Python Best Practices",
@@ -1171,7 +1281,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Python",
             &["python", "fastapi", "api", "pydantic", "async"],
         ),
-
         // ── TypeScript (NEW category) ─────────────────────────────────────
         p(
             "TypeScript Best Practices",
@@ -1187,7 +1296,6 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "TypeScript",
             &["react", "typescript", "component", "hooks", "jsx"],
         ),
-
         // ── Go (NEW category) ─────────────────────────────────────────────
         p(
             "Go Best Practices",
@@ -1196,14 +1304,18 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Go",
             &["go", "golang", "idiomatic", "concurrency", "goroutines"],
         ),
-
         // ── Cloud (2) ─────────────────────────────────────────────────────
         p(
             "AWS Architecture",
             "Design a production-ready AWS architecture for given requirements",
             "You are an AWS Solutions Architect. Design a production-ready AWS architecture for the following requirements.\n\nInclude these AWS components as needed:\n\nCOMPUTE: Lambda, ECS/Fargate, EC2, App Runner\nSTORAGE: S3, EBS, EFS, DynamoDB, RDS, ElastiCache\nNETWORKING: VPC, subnets, security groups, ALB/NLB, CloudFront, Route 53\nSECURITY: IAM roles/policies, Secrets Manager, KMS, WAF, GuardDuty\nOBSERVABILITY: CloudWatch (logs, metrics, alarms), X-Ray, CloudTrail\nMESSAGING: SQS, SNS, EventBridge, Kinesis\nCI/CD: CodePipeline, CodeBuild, or GitHub Actions with OIDC\n\nFor the design, provide:\n1. Architecture diagram description (components and data flow)\n2. Infrastructure as Code (CDK or Terraform) for key resources\n3. Cost estimate (monthly, at expected scale)\n4. Security considerations (least privilege, encryption, network isolation)\n5. Scalability approach (auto-scaling, caching, read replicas)\n6. Disaster recovery (backup, multi-AZ, RTO/RPO)\n7. Monitoring and alerting strategy\n\n{{input}}",
             "Cloud",
-            &["aws", "cloud architecture", "infrastructure", "solutions architect"],
+            &[
+                "aws",
+                "cloud architecture",
+                "infrastructure",
+                "solutions architect",
+            ],
         ),
         p(
             "Terraform Module",
@@ -1212,23 +1324,32 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Cloud",
             &["terraform", "infrastructure as code", "iac", "modules"],
         ),
-
         // ── Security (2) ──────────────────────────────────────────────────
         p(
             "Security Review",
             "Perform a thorough security review of code or a system",
             "You are a senior application security engineer. Perform a thorough security review of the following code or system.\n\nREVIEW METHODOLOGY:\n\n1. AUTHENTICATION & AUTHORIZATION\n   - Auth mechanism (JWT, sessions, OAuth2, API keys)\n   - Token storage and transmission security\n   - Session management (expiry, rotation, invalidation)\n   - Role-based access control (RBAC) implementation\n   - Privilege escalation vectors\n\n2. INPUT VALIDATION\n   - All user inputs validated and sanitized\n   - SQL injection (parameterized queries, ORMs)\n   - XSS (output encoding, CSP headers)\n   - Command injection (no shell execution of user input)\n   - Path traversal (canonicalize paths, allowlist directories)\n   - SSRF (allowlist URLs, no user-controlled redirects)\n\n3. DATA PROTECTION\n   - Sensitive data encrypted at rest (AES-256, KMS)\n   - TLS for all data in transit\n   - PII handling (minimization, pseudonymization)\n   - Secrets management (not in code, env vars, or logs)\n   - Password hashing (bcrypt/argon2, not MD5/SHA)\n\n4. API SECURITY\n   - Rate limiting and throttling\n   - Request size limits\n   - CORS configuration (not wildcard *)\n   - API versioning and deprecation\n   - Error messages don't leak internals\n\n5. DEPENDENCY SECURITY\n   - Known vulnerabilities in dependencies\n   - Dependency pinning and lock files\n   - Supply chain risks\n\nFor each finding, provide:\n- Severity: CRITICAL / HIGH / MEDIUM / LOW\n- Location (file, line, function)\n- Description of the vulnerability\n- Proof of concept (how to exploit)\n- Recommended fix with code\n\n{{input}}",
             "Security",
-            &["security review", "appsec", "vulnerability", "audit", "code review"],
+            &[
+                "security review",
+                "appsec",
+                "vulnerability",
+                "audit",
+                "code review",
+            ],
         ),
         p(
             "Threat Model",
             "Create a STRIDE threat model for a system",
             "You are a threat modeling expert using the STRIDE methodology. Create a threat model for the following system.\n\nTHREAT MODEL:\n\n1. SYSTEM DESCRIPTION\n   - Architecture overview\n   - Trust boundaries (where data crosses security domains)\n   - Data flows (what data moves where)\n   - Entry points (APIs, UIs, file uploads, message queues)\n   - Assets (what we're protecting: user data, credentials, business logic)\n\n2. STRIDE ANALYSIS\n   For each component/data flow:\n\n   | Threat | Category | Description | Likelihood | Impact | Mitigation |\n   \n   STRIDE categories:\n   - Spoofing: Can someone pretend to be another user/system?\n   - Tampering: Can someone modify data in transit or at rest?\n   - Repudiation: Can someone deny performing an action?\n   - Information Disclosure: Can someone access data they shouldn't?\n   - Denial of Service: Can someone prevent legitimate access?\n   - Elevation of Privilege: Can someone gain unauthorized permissions?\n\n3. RISK ASSESSMENT\n   | Risk | Probability (1-5) | Impact (1-5) | Risk Score | Priority |\n   \n4. MITIGATION PLAN\n   For each high-priority risk:\n   - Control type (preventive, detective, corrective)\n   - Implementation approach\n   - Residual risk after mitigation\n\n5. SECURITY REQUIREMENTS\n   - Authentication requirements\n   - Authorization requirements\n   - Encryption requirements\n   - Logging and monitoring requirements\n   - Incident response considerations\n\n{{input}}",
             "Security",
-            &["threat model", "stride", "risk assessment", "security architecture"],
+            &[
+                "threat model",
+                "stride",
+                "risk assessment",
+                "security architecture",
+            ],
         ),
-
         // ── API (2) ───────────────────────────────────────────────────────
         p(
             "REST API Design",
@@ -1244,14 +1365,19 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "API",
             &["graphql", "schema", "resolvers", "api"],
         ),
-
         // ── Database (1) ──────────────────────────────────────────────────
         p(
             "Database Design",
             "Design a database schema for given requirements",
             "You are a database architect. Design a database schema for the following requirements.\n\nDATABASE DESIGN:\n\n1. ENTITY-RELATIONSHIP MODEL\n   - Entities with all attributes and types\n   - Relationships with cardinality (1:1, 1:N, M:N)\n   - Primary keys (prefer UUID or ULID over auto-increment for distributed systems)\n   - Foreign keys with referential integrity\n\n2. SCHEMA (SQL DDL)\n   - CREATE TABLE statements with proper types\n   - Constraints: NOT NULL, UNIQUE, CHECK, DEFAULT\n   - Indexes for query patterns (B-tree for equality/range, GIN for arrays/JSONB)\n   - Partial indexes where appropriate\n\n3. NORMALIZATION\n   - At least 3NF for transactional data\n   - Controlled denormalization for read-heavy patterns\n   - Materialized views for complex aggregations\n\n4. PERFORMANCE\n   - Index strategy based on expected query patterns\n   - Partition strategy for large tables (by date, tenant, etc.)\n   - Connection pooling recommendations\n   - Query optimization notes\n\n5. MIGRATION\n   - Migration scripts (up and down)\n   - Seed data for development\n   - Zero-downtime migration strategy\n\n6. SECURITY\n   - Row-level security for multi-tenant\n   - Column encryption for sensitive data\n   - Audit trail (created_at, updated_at, created_by)\n\n{{input}}",
             "Database",
-            &["database", "schema design", "sql", "data modeling", "migration"],
+            &[
+                "database",
+                "schema design",
+                "sql",
+                "data modeling",
+                "migration",
+            ],
         ),
     ]
 }
@@ -1353,8 +1479,7 @@ mod tests {
     #[test]
     fn each_category_has_minimum_prompts() {
         let prompts = builtin_prompts();
-        let mut counts: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
         for p in &prompts {
             *counts.entry(p.category.as_str()).or_default() += 1;
         }

@@ -100,10 +100,6 @@ mod tests {
     fn categories_has_no_duplicates() {
         let cats = categories();
         let set: HashSet<&str> = cats.iter().map(|s| s.as_str()).collect();
-        assert_eq!(
-            cats.len(),
-            set.len(),
-            "categories() returned duplicates"
-        );
+        assert_eq!(cats.len(), set.len(), "categories() returned duplicates");
     }
 }

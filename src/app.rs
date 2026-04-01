@@ -188,8 +188,8 @@ pub struct App {
 
     // -- input history --
     pub input_history: Vec<String>,
-    pub input_history_index: Option<usize>,  // None = current input, Some(n) = nth previous
-    pub input_saved: String,  // Saves current input when browsing history
+    pub input_history_index: Option<usize>, // None = current input, Some(n) = nth previous
+    pub input_saved: String,                // Saves current input when browsing history
 
     // -- aliases --
     pub aliases: HashMap<String, String>,
@@ -317,7 +317,9 @@ impl App {
     /// Clamps `active_conversation` to a valid index so we never panic even if
     /// conversations were deleted without updating the index.
     pub fn current_conversation(&self) -> &Conversation {
-        let idx = self.active_conversation.min(self.conversations.len().saturating_sub(1));
+        let idx = self
+            .active_conversation
+            .min(self.conversations.len().saturating_sub(1));
         &self.conversations[idx]
     }
 
@@ -326,7 +328,9 @@ impl App {
     /// Clamps `active_conversation` to a valid index so we never panic even if
     /// conversations were deleted without updating the index.
     pub fn current_conversation_mut(&mut self) -> &mut Conversation {
-        let idx = self.active_conversation.min(self.conversations.len().saturating_sub(1));
+        let idx = self
+            .active_conversation
+            .min(self.conversations.len().saturating_sub(1));
         &mut self.conversations[idx]
     }
 
@@ -641,10 +645,7 @@ mod tests {
         assert_eq!(app.scroll_offset, 0);
         assert!(app.streaming_response.is_empty());
         assert!(!app.is_streaming);
-        assert_eq!(
-            app.status_message,
-            Some("New conversation started".into())
-        );
+        assert_eq!(app.status_message, Some("New conversation started".into()));
     }
 
     // ── add_user_message() ──────────────────────────────────────────────

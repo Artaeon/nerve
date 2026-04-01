@@ -40,7 +40,7 @@ pub fn render_settings(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(1), // tab bar
             Constraint::Length(1), // separator
-            Constraint::Min(1),   // content
+            Constraint::Min(1),    // content
             Constraint::Length(1), // separator
             Constraint::Length(1), // footer hints
         ])
@@ -218,10 +218,7 @@ fn render_general_tab(frame: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 /// Returns the item count for the General tab (used for clamping).
@@ -330,18 +327,12 @@ fn render_providers_tab(frame: &mut Frame, app: &App, area: Rect) {
                 },
             ),
             Span::styled(format!("{:<14}", name), label_style),
-            Span::styled(
-                format!("{:<10}", status),
-                Style::default().fg(status_color),
-            ),
+            Span::styled(format!("{:<10}", status), Style::default().fg(status_color)),
             Span::styled(detail.clone(), Style::default().fg(Color::DarkGray)),
         ]));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 /// Returns the item count for the Providers tab.
@@ -375,30 +366,22 @@ fn render_theme_tab(frame: &mut Frame, app: &App, area: Rect) {
         ("Theme Preset", theme_name.to_string(), None),
         (
             "User Color",
-            theme
-                .map(|t| t.user_color.clone())
-                .unwrap_or_default(),
+            theme.map(|t| t.user_color.clone()).unwrap_or_default(),
             theme.map(|t| hex_to_color(&t.user_color)),
         ),
         (
             "Assistant Color",
-            theme
-                .map(|t| t.assistant_color.clone())
-                .unwrap_or_default(),
+            theme.map(|t| t.assistant_color.clone()).unwrap_or_default(),
             theme.map(|t| hex_to_color(&t.assistant_color)),
         ),
         (
             "Border Color",
-            theme
-                .map(|t| t.border_color.clone())
-                .unwrap_or_default(),
+            theme.map(|t| t.border_color.clone()).unwrap_or_default(),
             theme.map(|t| hex_to_color(&t.border_color)),
         ),
         (
             "Accent Color",
-            theme
-                .map(|t| t.accent_color.clone())
-                .unwrap_or_default(),
+            theme.map(|t| t.accent_color.clone()).unwrap_or_default(),
             theme.map(|t| hex_to_color(&t.accent_color)),
         ),
     ];
@@ -483,16 +466,10 @@ fn render_theme_tab(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        lines.push(Line::from(Span::styled(
-            format!("  {marker}{name}"),
-            style,
-        )));
+        lines.push(Line::from(Span::styled(format!("  {marker}{name}"), style)));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 /// Returns the item count for the Theme tab.
@@ -587,10 +564,7 @@ fn render_keybinds_tab(frame: &mut Frame, app: &App, area: Rect) {
         ]));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 /// Returns the item count for the Keybinds tab.

@@ -1,8 +1,8 @@
-pub mod store;
 pub mod ingest;
 pub mod search;
+pub mod store;
 
-#[allow(unused_imports)]
-pub use store::{KnowledgeBase, Document, Chunk};
 pub use ingest::ingest_directory;
 pub use search::search_knowledge;
+#[allow(unused_imports)]
+pub use store::{Chunk, Document, KnowledgeBase};

@@ -194,7 +194,6 @@ impl ContextManager {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,7 +346,10 @@ mod tests {
     #[test]
     fn is_over_budget_true_when_over() {
         let cm = ContextManager::new(1);
-        let messages = vec![("user".into(), "this is definitely more than one token".into())];
+        let messages = vec![(
+            "user".into(),
+            "this is definitely more than one token".into(),
+        )];
         assert!(cm.is_over_budget(&messages));
     }
 
@@ -381,7 +383,11 @@ mod tests {
         }
         let compacted = cm.compact_tool_results(&messages);
         // The old tool result should be compacted
-        assert!(compacted[0].1.contains("[Previous tool execution: 2 tool(s)"));
+        assert!(
+            compacted[0]
+                .1
+                .contains("[Previous tool execution: 2 tool(s)")
+        );
     }
 
     #[test]
@@ -478,7 +484,11 @@ mod tests {
         }
 
         let compacted = cm.compact_messages(&messages);
-        assert!(compacted.len() < 50, "Should be heavily compacted, got {} messages", compacted.len());
+        assert!(
+            compacted.len() < 50,
+            "Should be heavily compacted, got {} messages",
+            compacted.len()
+        );
     }
 
     #[test]
@@ -493,11 +503,18 @@ mod tests {
         let compacted = cm.compact_tool_results(&messages);
         // Old tool results should be compacted (brief summaries)
         let old_result = &compacted[0].1;
-        assert!(old_result.len() < 200, "Old tool result should be compacted, got {} chars", old_result.len());
+        assert!(
+            old_result.len() < 200,
+            "Old tool result should be compacted, got {} chars",
+            old_result.len()
+        );
 
         // Recent ones should be preserved
         let last = &compacted[compacted.len() - 2].1;
-        assert!(last.contains("tool_result") || last.len() > 200, "Recent tool result should be preserved");
+        assert!(
+            last.contains("tool_result") || last.len() > 200,
+            "Recent tool result should be preserved"
+        );
     }
 
     #[test]

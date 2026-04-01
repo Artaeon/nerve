@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -80,7 +80,10 @@ fn highlight_search_matches_styled<'a>(
     while let Some(pos) = text_lower[cursor..].find(&query_lower) {
         let abs_pos = cursor + pos;
         if abs_pos > cursor {
-            spans.push(Span::styled(text[cursor..abs_pos].to_string(), normal_style));
+            spans.push(Span::styled(
+                text[cursor..abs_pos].to_string(),
+                normal_style,
+            ));
         }
         spans.push(Span::styled(
             text[abs_pos..abs_pos + query_lower.len()].to_string(),
@@ -177,7 +180,10 @@ fn build_left_panel_items<'a>(
                 &title_display,
                 search_query,
                 style,
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             );
             spans.extend(title_line.spans);
             Line::from(spans)
@@ -189,10 +195,7 @@ fn build_left_panel_items<'a>(
         };
         let detail_line = Line::from(vec![
             Span::styled("      ", meta_style),
-            Span::styled(
-                format!("{} msgs", msg_count),
-                meta_style,
-            ),
+            Span::styled(format!("{} msgs", msg_count), meta_style),
             Span::styled(" | ", meta_style),
             Span::styled(&record.model, meta_style),
             Span::styled(" | ", meta_style),
@@ -219,14 +222,12 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
 
     // ── Outer block ──────────────────────────────────────────────────
     let outer = Block::default()
-        .title(Line::from(vec![
-            Span::styled(
-                " History ",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]))
+        .title(Line::from(vec![Span::styled(
+            " History ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -238,7 +239,7 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // search
-            Constraint::Min(1),   // main content
+            Constraint::Min(1),    // main content
             Constraint::Length(1), // help bar
         ])
         .split(inner);
@@ -263,10 +264,7 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::SLOW_BLINK),
         ),
         if app.history_search.is_empty() {
-            Span::styled(
-                "search filter...",
-                Style::default().fg(Color::DarkGray),
-            )
+            Span::styled("search filter...", Style::default().fg(Color::DarkGray))
         } else {
             Span::raw("")
         },
@@ -277,12 +275,10 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
     // ── Handle empty history ────────────────────────────────────────
     if filtered.is_empty() {
         let empty_lines = if app.history_entries.is_empty() {
-            vec![
-                Line::from(Span::styled(
-                    "No conversations yet",
-                    Style::default().fg(Color::DarkGray),
-                )),
-            ]
+            vec![Line::from(Span::styled(
+                "No conversations yet",
+                Style::default().fg(Color::DarkGray),
+            ))]
         } else {
             vec![
                 Line::from(Span::styled(
@@ -323,7 +319,8 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
         .split(vert[1]);
 
     // ── Left panel: conversation list grouped by date ───────────────
-    let (left_items, index_map) = build_left_panel_items(&filtered, app.history_select_index, &app.history_search);
+    let (left_items, index_map) =
+        build_left_panel_items(&filtered, app.history_select_index, &app.history_search);
 
     // Find the ListState index that corresponds to the selected entry.
     let list_state_index = index_map
@@ -356,8 +353,13 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
             lines.push(highlight_search_matches_styled(
                 &record.title,
                 &app.history_search,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             ));
         } else {
             lines.push(Line::from(Span::styled(
@@ -390,18 +392,12 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
 
             lines.push(Line::from(Span::styled(
                 format!("{} >", role_label),
-                Style::default()
-                    .fg(role_color)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(role_color).add_modifier(Modifier::BOLD),
             )));
 
             // Show first few lines of content, truncated
-            let content_preview: String = msg
-                .content
-                .lines()
-                .take(4)
-                .collect::<Vec<_>>()
-                .join("\n");
+            let content_preview: String =
+                msg.content.lines().take(4).collect::<Vec<_>>().join("\n");
             let truncated: String = content_preview.chars().take(300).collect();
             for content_line in truncated.lines() {
                 let line_text = format!("  {}", content_line);
@@ -552,14 +548,20 @@ mod tests {
     fn format_relative_time_minutes() {
         let five_min_ago = Utc::now() - Duration::minutes(5);
         let result = format_relative_time(&five_min_ago);
-        assert!(result.contains("m ago"), "expected minutes ago, got: {result}");
+        assert!(
+            result.contains("m ago"),
+            "expected minutes ago, got: {result}"
+        );
     }
 
     #[test]
     fn format_relative_time_hours() {
         let three_hours_ago = Utc::now() - Duration::hours(3);
         let result = format_relative_time(&three_hours_ago);
-        assert!(result.contains("h ago"), "expected hours ago, got: {result}");
+        assert!(
+            result.contains("h ago"),
+            "expected hours ago, got: {result}"
+        );
     }
 
     #[test]
@@ -573,7 +575,10 @@ mod tests {
     fn format_relative_time_months() {
         let ninety_days_ago = Utc::now() - Duration::days(90);
         let result = format_relative_time(&ninety_days_ago);
-        assert!(result.contains("mo ago"), "expected months ago, got: {result}");
+        assert!(
+            result.contains("mo ago"),
+            "expected months ago, got: {result}"
+        );
     }
 
     #[test]

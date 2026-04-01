@@ -450,12 +450,7 @@ fn detect_cpp(dir: &Path) -> WorkspaceInfo {
     let tech_stack = vec!["C/C++".to_string()];
     let mut key_files = Vec::new();
 
-    for f in [
-        "CMakeLists.txt",
-        "Makefile",
-        "README.md",
-        "Dockerfile",
-    ] {
+    for f in ["CMakeLists.txt", "Makefile", "README.md", "Dockerfile"] {
         if dir.join(f).exists() {
             key_files.push(f.to_string());
         }
@@ -481,7 +476,7 @@ pub fn generate_project_map(root: &std::path::Path, max_depth: usize) -> String 
 
     // File tree
     map.push_str("File structure:\n");
-    build_tree(root, root, &mut map, 0, max_depth);
+    build_tree(root, &mut map, 0, max_depth);
 
     // Key symbols (functions, structs, etc.) from important files
     map.push_str("\nKey definitions:\n");
@@ -491,7 +486,6 @@ pub fn generate_project_map(root: &std::path::Path, max_depth: usize) -> String 
 }
 
 pub(crate) fn build_tree(
-    root: &std::path::Path,
     dir: &std::path::Path,
     output: &mut String,
     depth: usize,
@@ -528,7 +522,7 @@ pub(crate) fn build_tree(
 
         if is_dir {
             output.push_str(&format!("{indent}{name}/\n"));
-            build_tree(root, &entry.path(), output, depth + 1, max_depth);
+            build_tree(&entry.path(), output, depth + 1, max_depth);
         } else {
             // Show file with size
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
@@ -595,10 +589,10 @@ fn collect_source_files(
             let path = entry.path();
             if path.is_dir() {
                 collect_source_files(&path, files, extensions, depth + 1, max_depth);
-            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if extensions.contains(&ext) {
-                    files.push(path);
-                }
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && extensions.contains(&ext)
+            {
+                files.push(path);
             }
         }
     }
@@ -612,33 +606,28 @@ pub(crate) fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<Stri
 
         match ext {
             "rs" => {
-                if trimmed.starts_with("pub fn ")
-                    || trimmed.starts_with("pub async fn ")
-                {
+                if trimmed.starts_with("pub fn ") || trimmed.starts_with("pub async fn ") {
                     if let Some(sig) = trimmed.split('{').next() {
                         symbols.push(sig.trim().to_string());
                     }
-                } else if trimmed.starts_with("pub struct ")
+                } else if (trimmed.starts_with("pub struct ")
                     || trimmed.starts_with("pub enum ")
-                    || trimmed.starts_with("pub trait ")
-                {
-                    if let Some(sig) = trimmed
+                    || trimmed.starts_with("pub trait "))
+                    && let Some(sig) = trimmed
                         .split('{')
                         .next()
                         .or_else(|| trimmed.split(';').next())
-                    {
-                        symbols.push(sig.trim().to_string());
-                    }
+                {
+                    symbols.push(sig.trim().to_string());
                 }
             }
             "py" => {
-                if trimmed.starts_with("def ")
+                if (trimmed.starts_with("def ")
                     || trimmed.starts_with("class ")
-                    || trimmed.starts_with("async def ")
+                    || trimmed.starts_with("async def "))
+                    && let Some(sig) = trimmed.split(':').next()
                 {
-                    if let Some(sig) = trimmed.split(':').next() {
-                        symbols.push(sig.trim().to_string());
-                    }
+                    symbols.push(sig.trim().to_string());
                 }
             }
             "js" | "ts" | "jsx" | "tsx" => {
@@ -652,10 +641,10 @@ pub(crate) fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<Stri
                 }
             }
             "go" => {
-                if trimmed.starts_with("func ") || trimmed.starts_with("type ") {
-                    if let Some(sig) = trimmed.split('{').next() {
-                        symbols.push(sig.trim().to_string());
-                    }
+                if (trimmed.starts_with("func ") || trimmed.starts_with("type "))
+                    && let Some(sig) = trimmed.split('{').next()
+                {
+                    symbols.push(sig.trim().to_string());
                 }
             }
             _ => {}
@@ -693,9 +682,8 @@ impl WorkspaceInfo {
             prompt.push_str(&format!("Key files: {}\n", self.key_files.join(", ")));
         }
 
-        prompt.push_str(
-            "\nWhen writing code, follow the conventions and patterns of this project. ",
-        );
+        prompt
+            .push_str("\nWhen writing code, follow the conventions and patterns of this project. ");
         prompt.push_str("Use the project's existing dependencies and style.\n");
 
         prompt
@@ -748,11 +736,7 @@ mod tests {
     fn detect_python_project() {
         let dir = std::env::temp_dir().join("nerve_test_python");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(
-            dir.join("pyproject.toml"),
-            "[project]\nname = \"mypyapp\"",
-        )
-        .unwrap();
+        fs::write(dir.join("pyproject.toml"), "[project]\nname = \"mypyapp\"").unwrap();
 
         let ws = detect_workspace_at(&dir).unwrap();
         assert_eq!(ws.project_type, ProjectType::Python);
@@ -765,7 +749,11 @@ mod tests {
     fn detect_go_project() {
         let dir = std::env::temp_dir().join("nerve_test_go");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("go.mod"), "module github.com/user/mygoapp\n\ngo 1.21\n").unwrap();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/user/mygoapp\n\ngo 1.21\n",
+        )
+        .unwrap();
 
         let ws = detect_workspace_at(&dir).unwrap();
         assert_eq!(ws.project_type, ProjectType::Go);
@@ -906,7 +894,11 @@ mod tests {
         let dir = std::env::temp_dir().join("nerve_test_go_module");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("go.mod"), "module github.com/user/myapp\n\ngo 1.21\n").unwrap();
+        fs::write(
+            dir.join("go.mod"),
+            "module github.com/user/myapp\n\ngo 1.21\n",
+        )
+        .unwrap();
         let ws = detect_workspace_at(&dir).unwrap();
         assert_eq!(ws.project_type, ProjectType::Go);
         assert_eq!(ws.name, "github.com/user/myapp");
@@ -1051,7 +1043,7 @@ pub enum Mode {
     fn build_tree_excludes_hidden() {
         let root = std::env::current_dir().unwrap();
         let mut output = String::new();
-        build_tree(&root, &root, &mut output, 0, 1);
+        build_tree(&root, &mut output, 0, 1);
         assert!(!output.contains(".git"));
         assert!(!output.contains("target/"));
     }
@@ -1079,7 +1071,9 @@ pub enum Mode {
         let root = std::env::current_dir().unwrap();
         let map = generate_project_map(&root, 2);
         // Should include some Rust symbols from our own codebase
-        assert!(map.contains("pub fn") || map.contains("pub struct") || map.contains("Key definitions"));
+        assert!(
+            map.contains("pub fn") || map.contains("pub struct") || map.contains("Key definitions")
+        );
     }
 
     #[test]

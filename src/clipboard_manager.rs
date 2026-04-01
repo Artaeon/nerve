@@ -1,7 +1,7 @@
 use anyhow::Context;
 use chrono::{DateTime, Utc};
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
+use fuzzy_matcher::skim::SkimMatcherV2;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,8 +114,7 @@ impl ClipboardManager {
     pub fn save(&self) -> anyhow::Result<()> {
         let path = data_file_path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .context("failed to create clipboard data directory")?;
+            std::fs::create_dir_all(parent).context("failed to create clipboard data directory")?;
         }
         let json =
             serde_json::to_string_pretty(&self.entries).context("failed to serialize clipboard")?;
@@ -148,8 +147,7 @@ fn make_preview(content: &str) -> String {
 
 /// Return the path to `~/.local/share/nerve/clipboard.json`.
 fn data_file_path() -> anyhow::Result<std::path::PathBuf> {
-    let data_dir =
-        dirs::data_dir().context("could not determine XDG data directory")?;
+    let data_dir = dirs::data_dir().context("could not determine XDG data directory")?;
     Ok(data_dir.join("nerve").join("clipboard.json"))
 }
 
@@ -226,9 +224,15 @@ mod tests {
     #[test]
     fn search_finds_matching_entries() {
         let mut cm = ClipboardManager::new(10);
-        cm.add("rust programming language".to_string(), ClipboardSource::AiResponse);
+        cm.add(
+            "rust programming language".to_string(),
+            ClipboardSource::AiResponse,
+        );
         cm.add("python scripting".to_string(), ClipboardSource::UserCopy);
-        cm.add("rust cargo build".to_string(), ClipboardSource::PromptTemplate);
+        cm.add(
+            "rust cargo build".to_string(),
+            ClipboardSource::PromptTemplate,
+        );
 
         let results = cm.search("rust");
         assert!(
@@ -250,7 +254,10 @@ mod tests {
         cm.add("hello world".to_string(), ClipboardSource::AiResponse);
 
         let results = cm.search("zzzznotfound");
-        assert!(results.is_empty(), "Should find no matches for nonsense query");
+        assert!(
+            results.is_empty(),
+            "Should find no matches for nonsense query"
+        );
     }
 
     #[test]
@@ -337,8 +344,7 @@ mod tests {
             preview: "test content".to_string(),
         };
         let json = serde_json::to_string(&entry).expect("serialize");
-        let deserialized: ClipboardEntry =
-            serde_json::from_str(&json).expect("deserialize");
+        let deserialized: ClipboardEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(deserialized.content, entry.content);
         assert_eq!(deserialized.preview, entry.preview);
     }
@@ -346,7 +352,10 @@ mod tests {
     #[test]
     fn add_generates_correct_preview() {
         let mut cm = ClipboardManager::new(10);
-        cm.add("This is a test message\nwith multiple lines\nand content".into(), ClipboardSource::AiResponse);
+        cm.add(
+            "This is a test message\nwith multiple lines\nand content".into(),
+            ClipboardSource::AiResponse,
+        );
         let entry = &cm.entries()[0];
         // Preview should replace newlines with spaces
         assert!(!entry.preview.contains('\n'));
@@ -356,9 +365,18 @@ mod tests {
     #[test]
     fn search_with_fuzzy_match() {
         let mut cm = ClipboardManager::new(10);
-        cm.add("Rust programming language".into(), ClipboardSource::AiResponse);
-        cm.add("Python scripting language".into(), ClipboardSource::AiResponse);
-        cm.add("JavaScript web language".into(), ClipboardSource::AiResponse);
+        cm.add(
+            "Rust programming language".into(),
+            ClipboardSource::AiResponse,
+        );
+        cm.add(
+            "Python scripting language".into(),
+            ClipboardSource::AiResponse,
+        );
+        cm.add(
+            "JavaScript web language".into(),
+            ClipboardSource::AiResponse,
+        );
 
         let results = cm.search("rust");
         assert!(!results.is_empty());

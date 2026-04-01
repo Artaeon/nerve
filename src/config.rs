@@ -520,8 +520,7 @@ mod tests {
     fn config_toml_roundtrip() {
         let original = Config::default();
         let toml_str = toml::to_string(&original).expect("serialize failed");
-        let deserialized: Config =
-            toml::from_str(&toml_str).expect("deserialize failed");
+        let deserialized: Config = toml::from_str(&toml_str).expect("deserialize failed");
 
         assert_eq!(deserialized.default_model, original.default_model);
         assert_eq!(deserialized.default_provider, original.default_provider);
@@ -532,7 +531,10 @@ mod tests {
         );
         assert_eq!(deserialized.theme.border_color, original.theme.border_color);
         assert_eq!(deserialized.theme.accent_color, original.theme.accent_color);
-        assert_eq!(deserialized.keybinds.command_bar, original.keybinds.command_bar);
+        assert_eq!(
+            deserialized.keybinds.command_bar,
+            original.keybinds.command_bar
+        );
         assert_eq!(deserialized.keybinds.quit, original.keybinds.quit);
         assert_eq!(deserialized.keybinds.help, original.keybinds.help);
     }
@@ -561,9 +563,11 @@ mod tests {
 
     #[test]
     fn config_roundtrip_with_custom_values() {
-        let mut cfg = Config::default();
-        cfg.default_model = "gpt-4o".into();
-        cfg.default_provider = "openai".into();
+        let mut cfg = Config {
+            default_model: "gpt-4o".into(),
+            default_provider: "openai".into(),
+            ..Config::default()
+        };
         cfg.theme.user_color = "#ff0000".into();
         cfg.keybinds.quit = "ctrl+w".into();
 
@@ -797,9 +801,21 @@ default_provider = "openai"
     #[test]
     fn theme_presets_colors_are_hex() {
         for (name, theme) in theme_presets() {
-            for color in [&theme.user_color, &theme.assistant_color, &theme.border_color, &theme.accent_color] {
-                assert!(color.starts_with('#'), "Theme '{name}' has non-hex color: {color}");
-                assert_eq!(color.len(), 7, "Theme '{name}' has wrong color length: {color}");
+            for color in [
+                &theme.user_color,
+                &theme.assistant_color,
+                &theme.border_color,
+                &theme.accent_color,
+            ] {
+                assert!(
+                    color.starts_with('#'),
+                    "Theme '{name}' has non-hex color: {color}"
+                );
+                assert_eq!(
+                    color.len(),
+                    7,
+                    "Theme '{name}' has wrong color length: {color}"
+                );
             }
         }
     }
@@ -825,23 +841,31 @@ default_provider = "openai"
         let commented = config.to_commented_toml();
 
         // Strip comment lines
-        let stripped: String = commented.lines()
+        let stripped: String = commented
+            .lines()
             .filter(|l| !l.starts_with('#') && !l.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
 
         // Should still be valid TOML
         let result = toml::from_str::<Config>(&stripped);
-        assert!(result.is_ok(), "Stripped TOML should be parseable: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Stripped TOML should be parseable: {:?}",
+            result.err()
+        );
     }
 
     #[test]
     fn theme_presets_all_different() {
         let presets = theme_presets();
         for i in 0..presets.len() {
-            for j in (i+1)..presets.len() {
-                assert_ne!(presets[i].1.user_color, presets[j].1.user_color,
-                    "Themes '{}' and '{}' have identical user_color", presets[i].0, presets[j].0);
+            for j in (i + 1)..presets.len() {
+                assert_ne!(
+                    presets[i].1.user_color, presets[j].1.user_color,
+                    "Themes '{}' and '{}' have identical user_color",
+                    presets[i].0, presets[j].0
+                );
             }
         }
     }

@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
@@ -17,7 +17,9 @@ pub struct CopilotProvider {
 
 impl CopilotProvider {
     pub fn new() -> Self {
-        Self { gh_binary: "gh".into() }
+        Self {
+            gh_binary: "gh".into(),
+        }
     }
 
     pub fn is_available() -> bool {
@@ -36,15 +38,21 @@ impl CopilotProvider {
         for msg in messages {
             match msg.role.as_str() {
                 "system" => {
-                    if !prompt.is_empty() { prompt.push_str("\n\n"); }
+                    if !prompt.is_empty() {
+                        prompt.push_str("\n\n");
+                    }
                     prompt.push_str(&format!("Context: {}", msg.content));
                 }
                 "user" => {
-                    if !prompt.is_empty() { prompt.push_str("\n\n"); }
+                    if !prompt.is_empty() {
+                        prompt.push_str("\n\n");
+                    }
                     prompt.push_str(&msg.content);
                 }
                 "assistant" => {
-                    if !prompt.is_empty() { prompt.push_str("\n\n"); }
+                    if !prompt.is_empty() {
+                        prompt.push_str("\n\n");
+                    }
                     prompt.push_str(&format!("[Previous response: {}]", msg.content));
                 }
                 _ => {}
@@ -75,9 +83,13 @@ impl AiProvider for CopilotProvider {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
-                .context("Failed to spawn gh copilot — is GitHub CLI installed with Copilot extension?")?;
+                .context(
+                    "Failed to spawn gh copilot — is GitHub CLI installed with Copilot extension?",
+                )?;
 
-            let stdout = child.stdout.take()
+            let stdout = child
+                .stdout
+                .take()
                 .ok_or_else(|| anyhow!("Failed to capture gh copilot stdout"))?;
 
             let mut reader = tokio::io::BufReader::with_capacity(32, stdout);
@@ -130,7 +142,9 @@ impl AiProvider for CopilotProvider {
         })
     }
 
-    fn list_models(&self) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+    fn list_models(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
         Box::pin(async move {
             Ok(vec![ModelInfo {
                 id: "copilot".into(),
@@ -202,7 +216,10 @@ mod tests {
     #[test]
     fn build_prompt_ignores_unknown_roles() {
         let messages = vec![
-            ChatMessage { role: "tool".into(), content: "data".into() },
+            ChatMessage {
+                role: "tool".into(),
+                content: "data".into(),
+            },
             ChatMessage::user("question"),
         ];
         let prompt = CopilotProvider::build_prompt(&messages);

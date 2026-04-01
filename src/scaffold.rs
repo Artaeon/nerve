@@ -1206,7 +1206,8 @@ dependencies = []
             },
             TemplateFile {
                 path: "src/__init__.py".into(),
-                content: "\"\"\"{{name}} - {{description}}\"\"\"\n\n__version__ = \"0.1.0\"\n".into(),
+                content: "\"\"\"{{name}} - {{description}}\"\"\"\n\n__version__ = \"0.1.0\"\n"
+                    .into(),
             },
             TemplateFile {
                 path: "src/cli.py".into(),
@@ -2233,11 +2234,7 @@ mod tests {
                     || f.path == "pyproject.toml"
                     || f.path == "go.mod"
             });
-            assert!(
-                has_project_file,
-                "Template {} missing project file",
-                t.name
-            );
+            assert!(has_project_file, "Template {} missing project file", t.name);
         }
     }
 
@@ -2288,35 +2285,54 @@ mod tests {
     fn rust_cli_template_has_clap() {
         let t = get_template("rust-cli").unwrap();
         let main = t.files.iter().find(|f| f.path == "src/main.rs").unwrap();
-        assert!(main.content.contains("clap"), "rust-cli template should use clap");
-        assert!(main.content.contains("Parser"), "rust-cli template should derive Parser");
+        assert!(
+            main.content.contains("clap"),
+            "rust-cli template should use clap"
+        );
+        assert!(
+            main.content.contains("Parser"),
+            "rust-cli template should derive Parser"
+        );
     }
 
     #[test]
     fn rust_web_template_has_axum() {
         let t = get_template("rust-web").unwrap();
         let cargo = t.files.iter().find(|f| f.path == "Cargo.toml").unwrap();
-        assert!(cargo.content.contains("axum"), "rust-web template should use axum");
+        assert!(
+            cargo.content.contains("axum"),
+            "rust-web template should use axum"
+        );
     }
 
     #[test]
     fn node_api_template_has_express() {
         let t = get_template("node-api").unwrap();
         let pkg = t.files.iter().find(|f| f.path == "package.json").unwrap();
-        assert!(pkg.content.contains("express"), "node-api template should use express");
+        assert!(
+            pkg.content.contains("express"),
+            "node-api template should use express"
+        );
     }
 
     #[test]
     fn python_api_template_has_fastapi() {
         let t = get_template("python-api").unwrap();
-        let has_fastapi = t.files.iter().any(|f| f.content.contains("fastapi") || f.content.contains("FastAPI"));
+        let has_fastapi = t
+            .files
+            .iter()
+            .any(|f| f.content.contains("fastapi") || f.content.contains("FastAPI"));
         assert!(has_fastapi, "python-api template should use FastAPI");
     }
 
     #[test]
     fn all_templates_have_readme() {
         for t in builtin_templates() {
-            assert!(t.files.iter().any(|f| f.path == "README.md"), "Template {} missing README", t.name);
+            assert!(
+                t.files.iter().any(|f| f.path == "README.md"),
+                "Template {} missing README",
+                t.name
+            );
         }
     }
 
@@ -2324,7 +2340,11 @@ mod tests {
     fn templates_have_placeholder() {
         for t in builtin_templates() {
             let has_placeholder = t.files.iter().any(|f| f.content.contains("{{name}}"));
-            assert!(has_placeholder, "Template {} has no {{{{name}}}} placeholder", t.name);
+            assert!(
+                has_placeholder,
+                "Template {} has no {{{{name}}}} placeholder",
+                t.name
+            );
         }
     }
 

@@ -9,9 +9,9 @@ pub fn cost_per_million_tokens(provider: &str, model: &str) -> f64 {
         // Claude via Claude Code — included in subscription, no per-token cost
         ("claude_code" | "claude", _) => 0.0,
         // OpenAI pricing (approximate averages of input+output)
-        ("openai", "gpt-4o") => 7.50,      // ~$2.50 in + $10 out averaged
-        ("openai", "gpt-4o-mini") => 0.30,  // ~$0.15 in + $0.60 out averaged
-        ("openai", _) => 5.00,              // Default estimate
+        ("openai", "gpt-4o") => 7.50, // ~$2.50 in + $10 out averaged
+        ("openai", "gpt-4o-mini") => 0.30, // ~$0.15 in + $0.60 out averaged
+        ("openai", _) => 5.00,        // Default estimate
         // OpenRouter — varies wildly, use conservative estimate
         ("openrouter", m) if m.contains("claude") => 6.00,
         ("openrouter", m) if m.contains("gpt-4o") => 7.50,
@@ -56,8 +56,7 @@ impl UsageStats {
         self.total_requests += 1;
 
         let total_tokens = tokens_sent + tokens_received;
-        let cost =
-            cost_per_million_tokens(provider, model) * total_tokens as f64 / 1_000_000.0;
+        let cost = cost_per_million_tokens(provider, model) * total_tokens as f64 / 1_000_000.0;
         self.estimated_cost_usd += cost;
     }
 
@@ -107,8 +106,8 @@ impl SpendingLimit {
         }
 
         // Cost check
-        let new_cost = cost_per_million_tokens(provider, model) * estimated_new_tokens as f64
-            / 1_000_000.0;
+        let new_cost =
+            cost_per_million_tokens(provider, model) * estimated_new_tokens as f64 / 1_000_000.0;
         if stats.estimated_cost_usd + new_cost > self.max_cost_usd {
             return Some(format!(
                 "Spending limit reached: ${:.2} / ${:.2}. Use /limit set <amount> or /limit off",
@@ -169,9 +168,11 @@ mod tests {
     fn spending_limit_disabled_allows_all() {
         let limit = SpendingLimit::default(); // disabled
         let stats = UsageStats::new();
-        assert!(limit
-            .would_exceed(&stats, 1_000_000, "openai", "gpt-4o")
-            .is_none());
+        assert!(
+            limit
+                .would_exceed(&stats, 1_000_000, "openai", "gpt-4o")
+                .is_none()
+        );
     }
 
     #[test]
@@ -183,9 +184,11 @@ mod tests {
         };
         let mut stats = UsageStats::new();
         stats.record_request(100_000, 50_000, "openai", "gpt-4o");
-        assert!(limit
-            .would_exceed(&stats, 100_000, "openai", "gpt-4o")
-            .is_some());
+        assert!(
+            limit
+                .would_exceed(&stats, 100_000, "openai", "gpt-4o")
+                .is_some()
+        );
     }
 
     #[test]
@@ -230,7 +233,11 @@ mod tests {
         for _ in 0..5 {
             stats.record_request(100, 50, "ollama", "llama3");
         }
-        assert!(limit.would_exceed(&stats, 100, "ollama", "llama3").is_some());
+        assert!(
+            limit
+                .would_exceed(&stats, 100, "ollama", "llama3")
+                .is_some()
+        );
     }
 
     #[test]
@@ -243,7 +250,11 @@ mod tests {
         };
         let mut stats = UsageStats::new();
         stats.record_request(600, 500, "ollama", "llama3");
-        assert!(limit.would_exceed(&stats, 100, "ollama", "llama3").is_some());
+        assert!(
+            limit
+                .would_exceed(&stats, 100, "ollama", "llama3")
+                .is_some()
+        );
     }
 
     #[test]
@@ -261,7 +272,10 @@ mod tests {
 
     #[test]
     fn cost_unknown_provider_is_zero() {
-        assert_eq!(cost_per_million_tokens("some_random_provider", "model"), 0.0);
+        assert_eq!(
+            cost_per_million_tokens("some_random_provider", "model"),
+            0.0
+        );
     }
 
     #[test]

@@ -26,10 +26,7 @@ pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
         .with_context(|| format!("failed to fetch {url}"))?;
 
     if !response.status().is_success() {
-        anyhow::bail!(
-            "HTTP {} when fetching {url}",
-            response.status()
-        );
+        anyhow::bail!("HTTP {} when fetching {url}", response.status());
     }
 
     let html = response
@@ -339,7 +336,7 @@ mod tests {
     #[test]
     fn test_very_long_input() {
         let segment = "<p>word </p>";
-        let html: String = std::iter::repeat(segment).take(5000).collect();
+        let html: String = std::iter::repeat_n(segment, 5000).collect();
         let text = strip_html(&html);
         let collapsed = collapse_whitespace(&text);
         // Should not panic and should contain the word
