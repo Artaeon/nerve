@@ -12,7 +12,7 @@ pub fn render_help(frame: &mut Frame) {
 
     // ── Popup dimensions ─────────────────────────────────────────────
     let popup_width = 64u16.min(area.width.saturating_sub(4));
-    let popup_height = 54u16.min(area.height.saturating_sub(4));
+    let popup_height = 58u16.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
     let y = (area.height.saturating_sub(popup_height)) / 2;
     let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -56,16 +56,18 @@ pub fn render_help(frame: &mut Frame) {
         ("", ""),
         // -- Navigation --
         ("", "Navigation"),
-        ("Tab", "Switch conversations"),
+        ("Tab / Shift+Tab", "Switch conversations fwd / back"),
         ("j / Down", "Scroll down / next item"),
         ("k / Up", "Scroll up / previous item"),
-        ("g", "Scroll to top"),
-        ("G", "Scroll to bottom"),
         ("", ""),
         // -- Overlays --
         ("", "Overlays"),
         ("Ctrl+P", "Prompt picker"),
         ("Ctrl+M", "Model selector"),
+        ("Ctrl+T", "Provider selector"),
+        ("Ctrl+O", "History browser"),
+        ("Ctrl+B", "Clipboard manager"),
+        ("Ctrl+F", "Search in conversation"),
         ("Ctrl+,", "Settings"),
         ("Ctrl+H", "Help (this screen)"),
         ("", ""),
@@ -74,7 +76,10 @@ pub fn render_help(frame: &mut Frame) {
         ("i", "Enter insert mode"),
         ("Esc", "Return to normal mode"),
         ("Enter", "Send message"),
+        ("Shift+Enter", "New line in input"),
         ("Ctrl+W", "Delete word before cursor"),
+        ("Ctrl+V", "Paste from clipboard"),
+        ("q (Normal mode)", "Quit"),
         ("", ""),
         // -- Clipboard & Copy --
         ("", "Clipboard"),
