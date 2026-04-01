@@ -159,6 +159,8 @@ pub struct App {
     // -- smart mode --
     /// Active behavioural mode (standard, efficient, thorough, agent, learning).
     pub active_mode: NerveMode,
+    /// Display name of the current mode (for badge rendering).
+    pub mode_name: String,
 
     // -- agent mode --
     /// When `true`, the AI can use tools (read/write files, run commands, etc.)
@@ -290,6 +292,7 @@ impl App {
             working_dir: None,
 
             active_mode: NerveMode::Standard,
+            mode_name: "standard".into(),
 
             agent_mode: false,
             agent_iterations: 0,
