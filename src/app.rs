@@ -158,6 +158,10 @@ pub struct App {
     // -- plugins --
     pub plugins: Vec<crate::plugins::Plugin>,
 
+    // -- usage tracking --
+    pub usage_stats: crate::usage::UsageStats,
+    pub spending_limit: crate::usage::SpendingLimit,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -245,6 +249,9 @@ impl App {
             total_tokens_used: 0,
 
             plugins: Vec::new(),
+
+            usage_stats: crate::usage::UsageStats::new(),
+            spending_limit: crate::usage::SpendingLimit::default(),
 
             status_message: None,
             status_time: None,
