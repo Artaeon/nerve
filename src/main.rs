@@ -1023,13 +1023,14 @@ async fn handle_normal_mode(
                     }
                     KeyCode::Char('w') => {
                         // Delete word before cursor.
-                        let before = &app.input[..app.cursor_position];
+                        let pos = app.cursor_position.min(app.input.len());
+                        let before = &app.input[..pos];
                         let trimmed = before.trim_end();
                         let new_pos = trimmed
                             .rfind(|c: char| c.is_whitespace())
                             .map(|i| i + 1)
                             .unwrap_or(0);
-                        app.input.drain(new_pos..app.cursor_position);
+                        app.input.drain(new_pos..pos);
                         app.cursor_position = new_pos;
                     }
                     _ => {}
@@ -1117,19 +1118,22 @@ async fn handle_normal_mode(
                     } else if app.input.contains('@') {
                         // Complete @file references
                         if let Some(at_pos) = app.input.rfind('@') {
-                            let partial = &app.input[at_pos + 1..app.cursor_position];
-                            if partial.contains('.') || partial.contains('/') {
-                                if let Some(completed) = complete_file_path(partial) {
-                                    let before = app.input[..at_pos + 1].to_string();
-                                    let after = app.input[app.cursor_position..].to_string();
-                                    app.input = format!("{}{}{}", before, completed, after);
-                                    app.cursor_position = at_pos + 1 + completed.len();
-                                } else {
-                                    let file_matches = list_file_matches(partial);
-                                    if file_matches.len() > 1 {
-                                        let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
-                                        let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
-                                        app.set_status(format!("{}{}", display.join("  "), suffix));
+                            let pos = app.cursor_position.min(app.input.len());
+                            if at_pos + 1 <= pos {
+                                let partial = &app.input[at_pos + 1..pos];
+                                if partial.contains('.') || partial.contains('/') {
+                                    if let Some(completed) = complete_file_path(partial) {
+                                        let before = app.input[..at_pos + 1].to_string();
+                                        let after = app.input[pos..].to_string();
+                                        app.input = format!("{}{}{}", before, completed, after);
+                                        app.cursor_position = at_pos + 1 + completed.len();
+                                    } else {
+                                        let file_matches = list_file_matches(partial);
+                                        if file_matches.len() > 1 {
+                                            let display: Vec<String> = file_matches.iter().take(10).cloned().collect();
+                                            let suffix = if file_matches.len() > 10 { format!(" (+{})", file_matches.len() - 10) } else { String::new() };
+                                            app.set_status(format!("{}{}", display.join("  "), suffix));
+                                        }
                                     }
                                 }
                             }
@@ -5175,5 +5179,28 @@ mod tests {
         stats.record_request(10000, 5000, "openai", "gpt-4o");
         assert!(stats.estimated_cost_usd > 0.0);
         assert!(stats.format_cost().starts_with('$'));
+    }
+
+    #[test]
+    fn generate_title_handles_all_slash_commands() {
+        // Every slash command should produce a non-empty, non-panicking title
+        let commands = ["/help", "/clear", "/new", "/test", "/build", "/diff",
+            "/agent on", "/code on", "/url https://example.com", "/file src/main.rs",
+            "/kb status", "/auto list", "/template list", "/scaffold a web app",
+            "/providers", "/models", "/export", "/status", "/tokens", "/compact"];
+
+        for cmd in commands {
+            let title = generate_title(cmd);
+            assert!(!title.is_empty(), "Empty title for command: {cmd}");
+        }
+    }
+
+    #[test]
+    fn provider_help_all_providers() {
+        let providers = ["openai", "ollama", "claude_code", "openrouter", "copilot", "unknown"];
+        for p in providers {
+            let msg = provider_help_message(p);
+            assert!(!msg.is_empty(), "Empty help for provider: {p}");
+        }
     }
 }

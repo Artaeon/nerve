@@ -355,43 +355,57 @@ impl App {
     // ── Cursor / editing ────────────────────────────────────────────────
 
     pub fn move_cursor_left(&mut self) {
-        if self.cursor_position > 0 {
+        // Clamp to valid range before indexing to prevent panics.
+        let pos = self.cursor_position.min(self.input.len());
+        if pos > 0 {
             // Respect grapheme boundaries by finding the previous char boundary.
-            let new_pos = self.input[..self.cursor_position]
+            let new_pos = self.input[..pos]
                 .char_indices()
                 .next_back()
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
             self.cursor_position = new_pos;
+        } else {
+            // cursor_position was beyond input length or at 0; clamp it.
+            self.cursor_position = pos;
         }
     }
 
     pub fn move_cursor_right(&mut self) {
-        if self.cursor_position < self.input.len() {
-            let new_pos = self.input[self.cursor_position..]
+        // Clamp to valid range before indexing to prevent panics.
+        let pos = self.cursor_position.min(self.input.len());
+        if pos < self.input.len() {
+            let new_pos = self.input[pos..]
                 .char_indices()
                 .nth(1)
-                .map(|(idx, _)| self.cursor_position + idx)
+                .map(|(idx, _)| pos + idx)
                 .unwrap_or(self.input.len());
             self.cursor_position = new_pos;
+        } else {
+            // cursor_position was beyond input length; clamp it.
+            self.cursor_position = pos;
         }
     }
 
     /// Insert a character at the current cursor position.
     pub fn insert_char(&mut self, c: char) {
-        self.input.insert(self.cursor_position, c);
-        self.cursor_position += c.len_utf8();
+        // Clamp to valid range before indexing to prevent panics.
+        let pos = self.cursor_position.min(self.input.len());
+        self.input.insert(pos, c);
+        self.cursor_position = pos + c.len_utf8();
     }
 
     /// Delete the character before the cursor (backspace).
     pub fn delete_char(&mut self) {
-        if self.cursor_position > 0 {
-            let prev = self.input[..self.cursor_position]
+        // Clamp to valid range before indexing to prevent panics.
+        let pos = self.cursor_position.min(self.input.len());
+        if pos > 0 {
+            let prev = self.input[..pos]
                 .char_indices()
                 .next_back()
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
-            self.input.drain(prev..self.cursor_position);
+            self.input.drain(prev..pos);
             self.cursor_position = prev;
         }
     }
@@ -1561,5 +1575,62 @@ mod tests {
             app.delete_branch(0);
         }
         assert!(app.branches.is_empty());
+    }
+
+    // ── Cursor out-of-bounds clamping ──────────────────────────────────
+
+    #[test]
+    fn cursor_out_of_bounds_clamped() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 999;
+
+        app.insert_char('!');
+        assert_eq!(app.input, "hello!");
+
+        app.cursor_position = 999;
+        app.delete_char();
+        assert_eq!(app.input, "hello");
+
+        app.cursor_position = 999;
+        app.move_cursor_left();
+        assert!(app.cursor_position <= app.input.len());
+
+        app.cursor_position = 999;
+        app.move_cursor_right();
+        assert!(app.cursor_position <= app.input.len());
+    }
+
+    #[test]
+    fn submit_input_clears_cursor() {
+        let mut app = App::new();
+        app.input = "test".into();
+        app.cursor_position = 4;
+        app.submit_input();
+        assert_eq!(app.cursor_position, 0);
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn cursor_position_never_exceeds_input_len() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 100; // Way out of bounds
+        // These should not panic
+        app.move_cursor_left();
+        app.move_cursor_right();
+        app.delete_char();
+        assert!(app.cursor_position <= app.input.len());
+    }
+
+    #[test]
+    fn insert_char_with_invalid_cursor() {
+        let mut app = App::new();
+        app.input = "hello".into();
+        app.cursor_position = 100;
+        // Should clamp to end and insert there
+        app.insert_char('!');
+        assert_eq!(app.input, "hello!");
+        assert_eq!(app.cursor_position, 6);
     }
 }

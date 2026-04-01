@@ -56,9 +56,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         lines.max(1)
     };
-    // Clamp: minimum 3 (1 line + borders), maximum 40% of screen height
+    // Clamp: minimum 3 (1 line + borders), maximum leaves room for top bar + chat
+    let max_input = area.height.saturating_sub(8).max(3); // leave room for top bar + chat area
     let input_height = (input_lines as u16 + 2) // +2 for borders
-        .clamp(3, area.height * 40 / 100);
+        .clamp(3, max_input);
     let bottom_height = input_height + 1; // +1 for status bar
 
     let main_chunks = Layout::default()
@@ -297,8 +298,11 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             ),
         ])]
     } else {
-        let before_cursor = &app.input[..app.cursor_position];
-        let after_cursor = &app.input[app.cursor_position..];
+        let pos = app.cursor_position.min(app.input.len());
+        // Walk back to find a valid char boundary if needed.
+        let pos = (0..=pos).rev().find(|&i| app.input.is_char_boundary(i)).unwrap_or(0);
+        let before_cursor = &app.input[..pos];
+        let after_cursor = &app.input[pos..];
         let cursor_char = if app.input_mode == InputMode::Insert {
             "\u{258c}" // ▌
         } else {
@@ -383,7 +387,9 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     // Calculate scroll offset for the input widget when text exceeds visible area.
     // We want to keep the cursor line visible.
     let visible_input_height = area.height.saturating_sub(2); // subtract borders
-    let cursor_line = app.input[..app.cursor_position]
+    let scroll_pos = app.cursor_position.min(app.input.len());
+    let scroll_pos = (0..=scroll_pos).rev().find(|&i| app.input.is_char_boundary(i)).unwrap_or(0);
+    let cursor_line = app.input[..scroll_pos]
         .chars()
         .filter(|c| *c == '\n')
         .count() as u16;
