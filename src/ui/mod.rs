@@ -175,8 +175,14 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     )));
     frame.render_widget(sep, chunks[1]);
 
-    // Conversation indicator + title
+    // Conversation indicator + title (truncated if too long for available space)
     let title = &app.current_conversation().title;
+    let max_title_len = chunks[2].width.saturating_sub(conv_indicator.len() as u16) as usize;
+    let display_title = if title.len() > max_title_len {
+        format!("{}...", &title[..max_title_len.saturating_sub(3)])
+    } else {
+        title.to_string()
+    };
     let mut title_spans = Vec::new();
     if !conv_indicator.is_empty() {
         title_spans.push(Span::styled(
@@ -185,7 +191,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         ));
     }
     title_spans.push(Span::styled(
-        title.to_string(),
+        display_title,
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::BOLD),
@@ -523,8 +529,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     } else {
         // Normal status bar with conversation stats
+        // Color-code status messages: red for errors/warnings, green for success, yellow for info.
         let left_status = if let Some(ref msg) = app.status_message {
-            Span::styled(format!(" {msg}"), Style::default().fg(Color::Yellow))
+            let msg_style = if msg.starts_with("Error") || msg.starts_with("Blocked") || msg.starts_with("Failed") {
+                Style::default().fg(Color::Red)
+            } else if msg.starts_with("Saved") || msg.starts_with("Copied") || msg.starts_with("Exported") || msg.contains("success") {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
+            Span::styled(format!(" {msg}"), msg_style)
         } else {
             Span::styled(
                 " Ready",
