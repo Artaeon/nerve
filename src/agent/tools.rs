@@ -66,38 +66,65 @@ pub fn available_tools() -> Vec<Tool> {
             description: "Create a directory (including parents)".into(),
             parameters: "path: string".into(),
         },
+        Tool {
+            name: "find_files".into(),
+            description: "Find files matching a glob pattern (recursive)".into(),
+            parameters: "pattern: string (e.g. '*.rs', 'src/**/*.ts'), path: string (optional, defaults to .)".into(),
+        },
+        Tool {
+            name: "read_lines".into(),
+            description: "Read specific line range from a file".into(),
+            parameters: "path: string, start: number (1-indexed), end: number".into(),
+        },
     ]
 }
 
 /// Generate the tools description for the system prompt
 pub fn tools_system_prompt() -> String {
     let mut prompt = String::from(
-        "You have access to the following tools. To use a tool, respond with a tool call in this EXACT format:\n\n\
-         <tool_call>\n\
-         tool: tool_name\n\
-         arg_name: arg_value\n\
-         arg_name2: arg_value2\n\
-         </tool_call>\n\n\
-         You can use multiple tools in a single response. After each tool call, you will receive the result.\n\
-         Continue using tools until the task is complete, then provide your final response.\n\n\
-         Available tools:\n\n",
-    );
+"You are Nerve, an AI coding assistant with direct access to the user's filesystem and terminal. You can read files, write code, edit existing files, run commands, and search the codebase.
+
+TOOL FORMAT — You MUST use this exact format to call tools:
+
+<tool_call>
+tool: tool_name
+arg_name: value
+</tool_call>
+
+You may use multiple tools per response. After tool execution, you will receive results in <tool_result> tags. Continue using tools until the task is fully complete.
+
+AVAILABLE TOOLS:
+
+");
 
     for tool in available_tools() {
         prompt.push_str(&format!(
-            "- **{}**: {}\n  Parameters: {}\n\n",
+            "### {}\n{}\nParameters: {}\n\n",
             tool.name, tool.description, tool.parameters
         ));
     }
 
     prompt.push_str(
-        "Guidelines:\n\
-         - Read files before editing them to understand the context\n\
-         - After writing/editing files, verify with read_file if needed\n\
-         - Run tests after making code changes\n\
-         - Keep changes minimal and focused\n\
-         - Explain your reasoning before and after tool use\n",
-    );
+"WORKFLOW — Follow this process for every task:
+
+1. UNDERSTAND: Read relevant files first. Never edit a file you haven't read.
+2. PLAN: Explain what you will change and why before making changes.
+3. IMPLEMENT: Make changes using write_file or edit_file.
+4. VERIFY: Read the changed file to confirm correctness.
+5. TEST: Run tests if applicable (e.g., `cargo test`, `npm test`).
+
+RULES:
+- Always read a file before editing it.
+- Use edit_file for small changes (replacing specific text). Use write_file for new files or complete rewrites.
+- For edit_file, the old_text must match EXACTLY (including whitespace and indentation).
+- Run commands to verify your changes work.
+- If a command fails, read the error output and fix the issue.
+- Keep changes minimal — don't refactor code that isn't related to the task.
+- When creating new files, include proper error handling and follow the project's existing patterns.
+- Explain what you did after completing the task.
+
+IMPORTANT: When you are done with all changes and verification, respond with your final summary WITHOUT any tool calls. This signals that the task is complete.
+");
 
     prompt
 }
@@ -180,7 +207,7 @@ fn is_multiline_arg(key: &str) -> bool {
 fn is_known_arg(key: &str) -> bool {
     matches!(
         key,
-        "tool" | "path" | "content" | "old_text" | "new_text" | "command" | "pattern"
+        "tool" | "path" | "content" | "old_text" | "new_text" | "command" | "pattern" | "start" | "end"
     )
 }
 
@@ -211,6 +238,8 @@ pub fn execute_tool(call: &ToolCall) -> ToolResult {
         "list_files" => execute_list_files(call),
         "search_code" => execute_search_code(call),
         "create_directory" => execute_create_dir(call),
+        "find_files" => execute_find_files(call),
+        "read_lines" => execute_read_lines(call),
         _ => ToolResult {
             tool: call.tool.clone(),
             success: false,
@@ -453,6 +482,81 @@ fn execute_create_dir(call: &ToolCall) -> ToolResult {
     }
 }
 
+fn execute_find_files(call: &ToolCall) -> ToolResult {
+    let pattern = call.args.get("pattern").map(|s| s.as_str()).unwrap_or("*");
+    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
+
+    let cmd = format!(
+        "find {} -name '{}' -type f | head -100",
+        path.replace('\'', ""),
+        pattern.replace('\'', "")
+    );
+    match crate::shell::run_command(&cmd) {
+        Ok(result) => ToolResult {
+            tool: "find_files".into(),
+            success: true,
+            output: if result.stdout.is_empty() {
+                "No files found".into()
+            } else {
+                result.stdout
+            },
+        },
+        Err(e) => ToolResult {
+            tool: "find_files".into(),
+            success: false,
+            output: format!("Error: {e}"),
+        },
+    }
+}
+
+fn execute_read_lines(call: &ToolCall) -> ToolResult {
+    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+    let start: usize = call
+        .args
+        .get("start")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let end: usize = call
+        .args
+        .get("end")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(start + 50);
+
+    if crate::shell::is_sensitive_file(path) {
+        return ToolResult {
+            tool: "read_lines".into(),
+            success: false,
+            output: "Blocked: file may contain secrets".into(),
+        };
+    }
+
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let total = lines.len();
+            let s = start.saturating_sub(1).min(total);
+            let e = end.min(total);
+
+            let mut output = String::new();
+            for (i, line) in lines[s..e].iter().enumerate() {
+                output.push_str(&format!("{:>4} | {}\n", s + i + 1, line));
+            }
+            output.push_str(&format!("\n[Lines {}-{} of {} total]", s + 1, e, total));
+
+            ToolResult {
+                tool: "read_lines".into(),
+                success: true,
+                output,
+            }
+        }
+        Err(e) => ToolResult {
+            tool: "read_lines".into(),
+            success: false,
+            output: format!("Error: {e}"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,7 +597,7 @@ mod tests {
 
     #[test]
     fn available_tools_not_empty() {
-        assert!(available_tools().len() >= 7);
+        assert!(available_tools().len() >= 9);
     }
 
     #[test]
@@ -1180,5 +1284,69 @@ new_text: fn new() {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].tool, "list_files");
         assert!(calls[0].args.is_empty());
+    }
+
+    // ── New tool and prompt tests ──────────────────────────────────────
+
+    #[test]
+    fn tools_system_prompt_is_detailed() {
+        let prompt = tools_system_prompt();
+        assert!(prompt.contains("WORKFLOW"));
+        assert!(prompt.contains("RULES"));
+        assert!(prompt.contains("read_file"));
+        assert!(prompt.contains("write_file"));
+        assert!(prompt.contains("find_files"));
+        assert!(prompt.contains("read_lines"));
+        assert!(prompt.len() > 1000); // Should be substantial
+    }
+
+    #[test]
+    fn execute_find_files_in_src() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "find_files".into(),
+            args: [
+                ("pattern".into(), "*.rs".into()),
+                ("path".into(), "src".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+        assert!(result.output.contains("main.rs"));
+    }
+
+    #[test]
+    fn execute_read_lines_range() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_lines".into(),
+            args: [
+                ("path".into(), "Cargo.toml".into()),
+                ("start".into(), "1".into()),
+                ("end".into(), "5".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(result.success);
+        assert!(result.output.contains("[package]"));
+        assert!(result.output.contains("1 |"));
+    }
+
+    #[test]
+    fn execute_read_lines_sensitive_blocked() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_lines".into(),
+            args: [
+                ("path".into(), ".env".into()),
+                ("start".into(), "1".into()),
+                ("end".into(), "10".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call);
+        assert!(!result.success);
     }
 }
