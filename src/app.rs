@@ -167,6 +167,10 @@ pub struct App {
     pub settings_select: usize,
     pub theme_index: usize,
 
+    // -- workspace --
+    /// Human-readable summary of the detected project workspace.
+    pub detected_workspace: Option<String>,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -262,6 +266,8 @@ impl App {
             settings_select: 0,
             theme_index: 0,
 
+            detected_workspace: None,
+
             status_message: None,
             status_time: None,
             should_quit: false,
@@ -296,7 +302,8 @@ impl App {
         self.scroll_offset = 0;
         self.streaming_response.clear();
         self.is_streaming = false;
-        self.set_status("New conversation started");
+        self.agent_iterations = 0; // Reset agent iterations
+        self.status_message = Some("New conversation started".into());
     }
 
     // ── Status ──────────────────────────────────────────────────────────

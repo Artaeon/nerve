@@ -177,6 +177,14 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             ]));
         }
 
+        if let Some(ref ws) = app.detected_workspace {
+            lines.push(Line::from(Span::styled("   Project", section_style)));
+            lines.push(Line::from(Span::styled(
+                format!("   {ws}"),
+                Style::default().fg(Color::White),
+            )));
+        }
+
         lines.push(Line::from(""));
       } // end else (full welcome)
     }
