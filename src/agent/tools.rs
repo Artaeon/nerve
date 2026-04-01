@@ -129,8 +129,41 @@ IMPORTANT: When you are done with all changes and verification, respond with you
     prompt
 }
 
-/// Parse tool calls from AI response text
+/// Parse tool calls from AI response text.
+/// Handles variations in formatting that AI models commonly produce:
+/// - Standard `<tool_call>...</tool_call>` tags
+/// - `<tool>...</tool>` variant tags
+/// - Missing closing tags
+/// - Markdown code fences wrapping tool calls
+/// - JSON-style `{"tool": "name", ...}` format
+/// - Extra whitespace and indentation
 pub fn parse_tool_calls(text: &str) -> Vec<ToolCall> {
+    // Strip markdown code fences that might wrap tool calls
+    let cleaned = text
+        .replace("```xml\n", "")
+        .replace("```json\n", "")
+        .replace("```\n", "")
+        .replace("\n```", "");
+
+    let mut calls = Vec::new();
+
+    // Strategy 1: Standard <tool_call>...</tool_call> format
+    calls.extend(parse_standard_tool_calls(&cleaned));
+
+    // Strategy 2: If no standard calls found, try <tool>...</tool> variant
+    if calls.is_empty() {
+        calls.extend(parse_variant_tool_calls(&cleaned, "<tool>", "</tool>"));
+    }
+
+    // Strategy 3: If still none, try to detect JSON-style tool calls
+    if calls.is_empty() {
+        calls.extend(parse_json_tool_calls(&cleaned));
+    }
+
+    calls
+}
+
+fn parse_standard_tool_calls(text: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
     let mut remaining = text;
 
@@ -142,7 +175,91 @@ pub fn parse_tool_calls(text: &str) -> Vec<ToolCall> {
             }
             remaining = &remaining[start + end + 12..];
         } else {
+            // No closing tag -- try to parse until next <tool_call> or end of text
+            let block = &remaining[start + 11..];
+            // Look for either another opening tag or a triple-newline separator
+            let end = block
+                .find("<tool_call>")
+                .or_else(|| block.find("\n\n\n"))
+                .unwrap_or(block.len());
+            if let Some(call) = parse_single_tool_call(&block[..end]) {
+                calls.push(call);
+            }
+            remaining = &remaining[start + 11 + end..];
+        }
+    }
+
+    calls
+}
+
+fn parse_variant_tool_calls(text: &str, open: &str, close: &str) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+    let mut remaining = text;
+
+    while let Some(start) = remaining.find(open) {
+        if let Some(end) = remaining[start..].find(close) {
+            let block = &remaining[start + open.len()..start + end];
+            if let Some(call) = parse_single_tool_call(block) {
+                calls.push(call);
+            }
+            remaining = &remaining[start + end + close.len()..];
+        } else {
             break;
+        }
+    }
+
+    calls
+}
+
+fn parse_json_tool_calls(text: &str) -> Vec<ToolCall> {
+    let mut calls = Vec::new();
+
+    let mut i = 0;
+    let bytes = text.as_bytes();
+
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // Try to find matching closing brace
+            let mut depth = 1;
+            let mut j = i + 1;
+            while j < bytes.len() && depth > 0 {
+                if bytes[j] == b'{' {
+                    depth += 1;
+                }
+                if bytes[j] == b'}' {
+                    depth -= 1;
+                }
+                j += 1;
+            }
+
+            if depth == 0 {
+                let json_str = &text[i..j];
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    if let Some(tool) = value.get("tool").and_then(|v| v.as_str()) {
+                        let mut args = std::collections::HashMap::new();
+                        if let Some(obj) = value.as_object() {
+                            for (k, v) in obj {
+                                if k != "tool" {
+                                    args.insert(
+                                        k.clone(),
+                                        v.as_str()
+                                            .unwrap_or(&v.to_string())
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        calls.push(ToolCall {
+                            tool: tool.to_string(),
+                            args,
+                        });
+                    }
+                }
+            }
+
+            i = j;
+        } else {
+            i += 1;
         }
     }
 
@@ -286,6 +403,51 @@ fn execute_read_file(call: &ToolCall) -> ToolResult {
     }
 }
 
+/// Best-effort syntax verification for common file types.
+/// Returns `Some(error_message)` if a syntax issue is detected, `None` otherwise.
+fn verify_file_syntax(path: &str) -> Option<String> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str());
+
+    let check_cmd = match ext {
+        Some("rs") => Some(format!("rustfmt --check {} 2>&1 | head -5", path)),
+        Some("py") => Some(format!(
+            "python3 -c \"import ast; ast.parse(open('{}').read())\" 2>&1",
+            path
+        )),
+        Some("js" | "ts" | "jsx" | "tsx") => {
+            Some(format!("node --check {} 2>&1 | head -5", path))
+        }
+        Some("json") => Some(format!(
+            "python3 -c \"import json; json.load(open('{}'))\" 2>&1",
+            path
+        )),
+        Some("yaml" | "yml") => Some(format!(
+            "python3 -c \"import yaml; yaml.safe_load(open('{}'))\" 2>&1",
+            path
+        )),
+        Some("toml") => Some(format!(
+            "python3 -c \"import tomllib; tomllib.load(open('{}', 'rb'))\" 2>&1",
+            path
+        )),
+        _ => None,
+    };
+
+    if let Some(cmd) = check_cmd {
+        if let Ok(result) = crate::shell::run_command(&cmd) {
+            if !result.success {
+                return Some(format!(
+                    "Syntax check failed:\n{}{}",
+                    result.stdout, result.stderr
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 fn execute_write_file(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
     let content = call.args.get("content").map(|s| s.as_str()).unwrap_or("");
@@ -305,11 +467,24 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
     }
 
     match std::fs::write(path, content) {
-        Ok(()) => ToolResult {
-            tool: "write_file".into(),
-            success: true,
-            output: format!("Written {} bytes to {path}", content.len()),
-        },
+        Ok(()) => {
+            // Auto-verify syntax
+            if let Some(error) = verify_file_syntax(path) {
+                return ToolResult {
+                    tool: "write_file".into(),
+                    success: true,
+                    output: format!(
+                        "Written {} bytes to {path}\n\nWARNING: {error}",
+                        content.len()
+                    ),
+                };
+            }
+            ToolResult {
+                tool: "write_file".into(),
+                success: true,
+                output: format!("Written {} bytes to {path}", content.len()),
+            }
+        }
         Err(e) => ToolResult {
             tool: "write_file".into(),
             success: false,
@@ -343,11 +518,21 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
             }
             let new_content = content.replacen(old_text, new_text, 1);
             match std::fs::write(path, &new_content) {
-                Ok(()) => ToolResult {
-                    tool: "edit_file".into(),
-                    success: true,
-                    output: format!("Edited {path}"),
-                },
+                Ok(()) => {
+                    // Auto-verify syntax
+                    if let Some(error) = verify_file_syntax(path) {
+                        return ToolResult {
+                            tool: "edit_file".into(),
+                            success: true,
+                            output: format!("Edited {path}\n\nWARNING: {error}"),
+                        };
+                    }
+                    ToolResult {
+                        tool: "edit_file".into(),
+                        success: true,
+                        output: format!("Edited {path}"),
+                    }
+                }
                 Err(e) => ToolResult {
                     tool: "edit_file".into(),
                     success: false,
@@ -1262,10 +1447,12 @@ new_text: fn new() {
 
     #[test]
     fn tool_call_parse_incomplete_block() {
-        // Missing closing tag
+        // Missing closing tag -- the robust parser now recovers these
         let text = "<tool_call>\ntool: read_file\npath: test.rs\n";
         let calls = parse_tool_calls(text);
-        assert!(calls.is_empty()); // Should not parse incomplete blocks
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+        assert_eq!(calls[0].args.get("path").unwrap(), "test.rs");
     }
 
     #[test]
@@ -1348,5 +1535,138 @@ new_text: fn new() {
         };
         let result = execute_tool(&call);
         assert!(!result.success);
+    }
+
+    // ── Robust parsing tests ─────────────────────────────────────────
+
+    #[test]
+    fn parse_standard_format() {
+        let text = "<tool_call>\ntool: read_file\npath: src/main.rs\n</tool_call>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+    }
+
+    #[test]
+    fn parse_missing_closing_tag() {
+        let text =
+            "Let me read that.\n\n<tool_call>\ntool: read_file\npath: src/main.rs\n\nThen I'll check it.";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+    }
+
+    #[test]
+    fn parse_tool_variant_tag() {
+        let text = "<tool>\ntool: read_file\npath: test.rs\n</tool>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+    }
+
+    #[test]
+    fn parse_json_format() {
+        let text = r#"I'll read that file: {"tool": "read_file", "path": "src/main.rs"}"#;
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+        assert_eq!(calls[0].args.get("path").unwrap(), "src/main.rs");
+    }
+
+    #[test]
+    fn parse_with_markdown_fences() {
+        let text = "```xml\n<tool_call>\ntool: read_file\npath: test.rs\n</tool_call>\n```";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn parse_indented_tool_call() {
+        let text = "  <tool_call>\n  tool: list_files\n  path: .\n  </tool_call>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "list_files");
+    }
+
+    #[test]
+    fn parse_multiple_json_tool_calls() {
+        let text = r#"I'll do two things:
+{"tool": "read_file", "path": "a.rs"}
+{"tool": "read_file", "path": "b.rs"}"#;
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn parse_no_tool_calls_in_regular_text() {
+        let text = "This is just a regular response about programming. No tools needed.";
+        let calls = parse_tool_calls(text);
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_json_with_nested_braces() {
+        // JSON that's NOT a tool call should be ignored
+        let text = r#"Here's some config: {"key": {"nested": "value"}}"#;
+        let calls = parse_tool_calls(text);
+        assert!(calls.is_empty()); // No "tool" key = not a tool call
+    }
+
+    #[test]
+    fn parse_json_fenced_in_markdown() {
+        let text = "```json\n{\"tool\": \"list_files\", \"path\": \".\"}\n```";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "list_files");
+    }
+
+    #[test]
+    fn parse_multiple_missing_closing_tags() {
+        // Two tool calls, neither has a closing tag, separated by triple newline
+        let text = "<tool_call>\ntool: read_file\npath: a.rs\n\n\n<tool_call>\ntool: read_file\npath: b.rs\n";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn parse_standard_takes_priority_over_json() {
+        // When standard tags are present, JSON in other parts is ignored
+        let text = r#"<tool_call>
+tool: read_file
+path: a.rs
+</tool_call>
+Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
+        let calls = parse_tool_calls(text);
+        // Standard parsing found 1, so JSON fallback is not attempted
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args.get("path").unwrap(), "a.rs");
+    }
+
+    #[test]
+    fn parse_tool_variant_only_when_no_standard() {
+        // <tool> tags should only be tried when <tool_call> finds nothing
+        let text = "<tool>\ntool: list_files\npath: src\n</tool>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "list_files");
+    }
+
+    // ── Syntax verification tests ──────────────────────────────────────
+
+    #[test]
+    fn verify_file_syntax_valid_json() {
+        let dir = std::env::temp_dir().join("nerve_verify_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("valid.json");
+        std::fs::write(&path, r#"{"key": "value"}"#).unwrap();
+        let result = verify_file_syntax(&path.to_string_lossy());
+        assert!(result.is_none()); // Valid JSON, no error
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn verify_file_syntax_unknown_ext() {
+        let result = verify_file_syntax("test.unknown_extension");
+        assert!(result.is_none()); // Unknown extension, no check
     }
 }
