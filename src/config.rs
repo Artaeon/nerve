@@ -778,4 +778,60 @@ default_provider = "openai"
         // Empty TOML is missing all required fields — should fail gracefully.
         assert!(result.is_err());
     }
+
+    // ── Theme presets ──────────────────────────────────────────────────────
+
+    #[test]
+    fn theme_presets_not_empty() {
+        let presets = theme_presets();
+        assert!(presets.len() >= 8);
+    }
+
+    #[test]
+    fn theme_presets_all_have_names() {
+        for (name, _) in theme_presets() {
+            assert!(!name.is_empty());
+        }
+    }
+
+    #[test]
+    fn theme_presets_colors_are_hex() {
+        for (name, theme) in theme_presets() {
+            for color in [&theme.user_color, &theme.assistant_color, &theme.border_color, &theme.accent_color] {
+                assert!(color.starts_with('#'), "Theme '{name}' has non-hex color: {color}");
+                assert_eq!(color.len(), 7, "Theme '{name}' has wrong color length: {color}");
+            }
+        }
+    }
+
+    #[test]
+    fn theme_presets_unique_names() {
+        let presets = theme_presets();
+        let names: std::collections::HashSet<&str> = presets.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names.len(), presets.len(), "Duplicate theme names");
+    }
+
+    #[test]
+    fn config_dir_creates_on_save() {
+        // Verify save doesn't panic
+        let config = Config::default();
+        let result = config.save();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn config_commented_toml_valid_after_stripping_comments() {
+        let config = Config::default();
+        let commented = config.to_commented_toml();
+
+        // Strip comment lines
+        let stripped: String = commented.lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Should still be valid TOML
+        let result = toml::from_str::<Config>(&stripped);
+        assert!(result.is_ok(), "Stripped TOML should be parseable: {:?}", result.err());
+    }
 }

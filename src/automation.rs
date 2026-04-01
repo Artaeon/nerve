@@ -465,4 +465,37 @@ mod tests {
         let result = delete_automation("nonexistent_automation_xyz_12345");
         assert!(result.is_err(), "Deleting nonexistent automation should error");
     }
+
+    #[test]
+    fn builtin_automations_all_have_steps() {
+        for auto in builtin_automations() {
+            assert!(!auto.steps.is_empty(),
+                "Automation '{}' has no steps", auto.name);
+        }
+    }
+
+    #[test]
+    fn builtin_steps_have_templates() {
+        for auto in builtin_automations() {
+            for step in &auto.steps {
+                assert!(!step.prompt_template.is_empty(),
+                    "Step '{}' in '{}' has empty template", step.name, auto.name);
+            }
+        }
+    }
+
+    #[test]
+    fn automation_toml_roundtrip() {
+        let mut auto = Automation::new("Test".into(), "A test".into());
+        auto.add_step(AutomationStep {
+            name: "Step 1".into(),
+            prompt_template: "Do {{input}}".into(),
+            model: None,
+        });
+
+        let toml_str = toml::to_string(&auto).unwrap();
+        let restored: Automation = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.name, "Test");
+        assert_eq!(restored.steps.len(), 1);
+    }
 }

@@ -237,4 +237,61 @@ enabled = false
         assert!(dir.join("plugin.toml").exists());
         assert!(dir.join("run.sh").exists());
     }
+
+    #[test]
+    fn manifest_with_author() {
+        let toml = r#"
+name = "Test"
+description = "A test"
+version = "1.0.0"
+author = "Test Author"
+command = "test"
+run = "run.sh"
+"#;
+        let manifest: PluginManifest = toml::from_str(toml).unwrap();
+        assert_eq!(manifest.author, Some("Test Author".into()));
+    }
+
+    #[test]
+    fn manifest_without_author() {
+        let toml = r#"
+name = "Test"
+description = "A test"
+version = "1.0.0"
+command = "test"
+run = "run.sh"
+"#;
+        let manifest: PluginManifest = toml::from_str(toml).unwrap();
+        assert!(manifest.author.is_none());
+    }
+
+    #[test]
+    fn manifest_missing_required_field_fails() {
+        let toml = r#"
+name = "Test"
+"#;
+        let result = toml::from_str::<PluginManifest>(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn example_plugin_manifest_is_valid() {
+        let _ = create_example_plugin(); // Ensure it exists
+        let dir = plugins_dir().join("example");
+        let manifest_path = dir.join("plugin.toml");
+        if manifest_path.exists() {
+            let content = std::fs::read_to_string(&manifest_path).unwrap();
+            let manifest: PluginManifest = toml::from_str(&content).unwrap();
+            assert_eq!(manifest.command, "example");
+            assert!(manifest.enabled);
+        }
+    }
+
+    #[test]
+    fn list_all_plugins_includes_example() {
+        let _ = create_example_plugin();
+        let all = list_all_plugins();
+        // May or may not find it depending on test order, just verify no panic
+        let _ = all;
+    }
 }

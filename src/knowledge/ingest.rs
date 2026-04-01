@@ -260,4 +260,35 @@ mod tests {
         ingest_file(tmp.path(), &mut kb).expect("ingest");
         assert_eq!(kb.documents[0].word_count, 5);
     }
+
+    #[test]
+    fn chunk_single_word() {
+        let chunks = chunk_text("hello", 500, 50);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "hello");
+    }
+
+    #[test]
+    fn chunk_preserves_all_words() {
+        let text = "one two three four five six seven eight nine ten";
+        let chunks = chunk_text(text, 5, 2);
+        // All words should appear in at least one chunk
+        for word in text.split_whitespace() {
+            assert!(chunks.iter().any(|c| c.contains(word)),
+                "Word '{word}' missing from chunks");
+        }
+    }
+
+    #[test]
+    fn ingest_directory_skips_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("visible.txt"), "hello").unwrap();
+        std::fs::write(dir.path().join(".hidden.txt"), "secret").unwrap();
+
+        let mut kb = KnowledgeBase::new("test".into());
+        let count = ingest_directory(dir.path(), &mut kb).unwrap();
+
+        // Should have ingested visible.txt but not .hidden.txt
+        assert_eq!(count, 1);
+    }
 }

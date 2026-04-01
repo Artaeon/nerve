@@ -275,4 +275,41 @@ mod tests {
         assert_eq!(chunk.index, 7);
         assert_eq!(chunk.word_count, 3);
     }
+
+    #[test]
+    fn add_multiple_documents() {
+        let mut kb = KnowledgeBase::new("test".into());
+        for i in 0..5 {
+            let doc = Document {
+                id: format!("doc{i}"),
+                title: format!("Doc {i}"),
+                source_path: format!("/tmp/doc{i}.md"),
+                ingested_at: chrono::Utc::now(),
+                word_count: 100,
+            };
+            let chunks = vec![Chunk {
+                id: format!("c{i}"),
+                document_id: format!("doc{i}"),
+                content: format!("Content of document {i}"),
+                index: 0,
+                word_count: 4,
+            }];
+            kb.add_document(doc, chunks);
+        }
+        assert_eq!(kb.documents.len(), 5);
+        assert_eq!(kb.total_chunks(), 5);
+    }
+
+    #[test]
+    fn remove_nonexistent_document_is_safe() {
+        let mut kb = KnowledgeBase::new("test".into());
+        kb.remove_document("nonexistent"); // Should not panic
+        assert!(kb.documents.is_empty());
+    }
+
+    #[test]
+    fn total_words_with_no_documents() {
+        let kb = KnowledgeBase::new("test".into());
+        assert_eq!(kb.total_words(), 0);
+    }
 }
