@@ -38,6 +38,21 @@ pub enum InputMode {
     Insert,
 }
 
+/// Behavioural mode that adjusts system prompts, context limits, and AI style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NerveMode {
+    /// Default behaviour — no special adjustments.
+    Standard,
+    /// Token-saving: concise prompts, auto-compact, smaller context window.
+    Efficient,
+    /// Full context, detailed responses, no compaction shortcuts.
+    Thorough,
+    /// Agent mode with tool access for autonomous coding.
+    Agent,
+    /// Explanations optimised for learning — analogies, exercises, checks.
+    Learning,
+}
+
 // ─── Conversation ────────────────────────────────────────────────────────────
 
 /// A single chat conversation.
@@ -140,6 +155,10 @@ pub struct App {
     pub code_mode: bool,
     /// Working directory for Claude Code file access.
     pub working_dir: Option<String>,
+
+    // -- smart mode --
+    /// Active behavioural mode (standard, efficient, thorough, agent, learning).
+    pub active_mode: NerveMode,
 
     // -- agent mode --
     /// When `true`, the AI can use tools (read/write files, run commands, etc.)
@@ -269,6 +288,8 @@ impl App {
 
             code_mode: false,
             working_dir: None,
+
+            active_mode: NerveMode::Standard,
 
             agent_mode: false,
             agent_iterations: 0,
