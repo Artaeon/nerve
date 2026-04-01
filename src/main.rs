@@ -1984,6 +1984,9 @@ AI Provider\n\
   /models             List available models\n\
   /code on|off        Toggle code mode (Claude Code only)\n\
   /agent on|off|status Toggle agent mode (AI tool loop)\n\
+  /agent undo          Roll back to pre-agent git checkpoint\n\
+  /agent diff          Show what the agent changed (git diff)\n\
+  /agent commit [msg]  Commit agent changes\n\
   /cwd <dir>          Set working directory\n\
   /cd <dir>           Change working directory\n\
 \n\
@@ -2053,6 +2056,8 @@ Branching\n\
 \n\
 Workspace\n\
   /workspace          Show detected project info\n\
+  /map [depth]        Show project map (file tree + symbols)\n\
+  /tree [depth]       Alias for /map\n\
 \n\
 Usage & Cost\n\
   /usage              Show session usage stats (estimated)\n\
@@ -2274,9 +2279,65 @@ System\n\
                 app.current_conversation_mut()
                     .messages
                     .insert(0, ("system".into(), tools_prompt));
-                app.set_status(
-                    "Agent mode ON \u{2014} AI can read/write files, run commands",
+                // Inject project map for context
+                if let Some(ws) = crate::workspace::detect_workspace() {
+                    let project_map =
+                        crate::workspace::generate_project_map(&ws.root, 3);
+                    // Truncate if very large (keep under 2000 chars)
+                    let map_context = if project_map.len() > 2000 {
+                        format!(
+                            "{}...\n[Project map truncated]",
+                            &project_map[..2000]
+                        )
+                    } else {
+                        project_map
+                    };
+                    app.current_conversation_mut().messages.insert(
+                        1,
+                        (
+                            "system".into(),
+                            format!(
+                                "Current project context:\n\n{map_context}"
+                            ),
+                        ),
+                    );
+                }
+                // Git safety: create a checkpoint before agent starts
+                let git_status = crate::shell::run_command(
+                    "git rev-parse --is-inside-work-tree 2>/dev/null",
                 );
+                if let Ok(ref result) = git_status {
+                    if result.stdout.trim() == "true" {
+                        let stash_result = crate::shell::run_command(
+                            "git stash push -m 'nerve-agent-checkpoint' --include-untracked 2>/dev/null",
+                        );
+                        if let Ok(ref sr) = stash_result {
+                            if sr.stdout.contains("Saved") {
+                                app.agent_has_stash = true;
+                                app.set_status(
+                                    "Agent mode ON \u{2014} git checkpoint saved, AI has tool access",
+                                );
+                            } else {
+                                app.agent_has_stash = false;
+                                app.set_status(
+                                    "Agent mode ON \u{2014} AI has tool access",
+                                );
+                            }
+                        } else {
+                            app.set_status(
+                                "Agent mode ON \u{2014} AI has tool access",
+                            );
+                        }
+                    } else {
+                        app.set_status(
+                            "Agent mode ON \u{2014} AI has tool access (no git repo detected)",
+                        );
+                    }
+                } else {
+                    app.set_status(
+                        "Agent mode ON \u{2014} AI has tool access (no git repo detected)",
+                    );
+                }
             }
             "off" => {
                 app.agent_mode = false;
@@ -2314,6 +2375,64 @@ System\n\
                 }
                 app.add_assistant_message(msg);
             }
+            "undo" | "rollback" => {
+                if !app.agent_has_stash {
+                    app.set_status("No agent checkpoint to restore");
+                } else {
+                    match crate::shell::run_command("git stash pop") {
+                        Ok(result) => {
+                            if result.success {
+                                app.agent_has_stash = false;
+                                app.set_status("Agent changes rolled back to checkpoint");
+                            } else {
+                                app.set_status(format!("Rollback failed: {}", result.stderr));
+                            }
+                        }
+                        Err(e) => app.set_status(format!("Rollback error: {e}")),
+                    }
+                }
+            }
+            "diff" => {
+                match crate::shell::run_command("git diff") {
+                    Ok(result) => {
+                        if result.stdout.trim().is_empty() {
+                            app.add_assistant_message(
+                                "No changes detected since agent started.".into(),
+                            );
+                        } else {
+                            let diff = format!(
+                                "Agent changes:\n\n```diff\n{}\n```",
+                                result.stdout,
+                            );
+                            app.add_assistant_message(diff);
+                        }
+                    }
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
+            _ if rest.starts_with("commit") => {
+                let commit_rest = rest.strip_prefix("commit").unwrap_or("").trim();
+                let msg = if commit_rest.is_empty() {
+                    "Changes made by Nerve agent".to_string()
+                } else {
+                    commit_rest.to_string()
+                };
+                let cmd = format!(
+                    "git add -A && git commit -m '{}'",
+                    msg.replace('\'', "'\\''"),
+                );
+                match crate::shell::run_command(&cmd) {
+                    Ok(result) => {
+                        if result.success {
+                            app.agent_has_stash = false;
+                            app.set_status("Agent changes committed");
+                        } else {
+                            app.set_status(format!("Commit failed: {}", result.stderr));
+                        }
+                    }
+                    Err(e) => app.set_status(format!("Error: {e}")),
+                }
+            }
             _ => {
                 let status = if app.agent_mode { "ON" } else { "OFF" };
                 app.add_assistant_message(format!(
@@ -2323,7 +2442,7 @@ System\n\
                      - Run shell commands\n\
                      - Search code\n\
                      - Create directories\n\n\
-                     Usage: /agent on | /agent off | /agent status"
+                     Usage: /agent on | off | status | undo | diff | commit [message]"
                 ));
             }
         }
@@ -2647,6 +2766,25 @@ System\n\
                 app.add_assistant_message("No project detected in current directory.".into());
             }
         }
+        app.scroll_offset = 0;
+        return true;
+    }
+
+    // /map (or /tree) — show project map with file tree and key symbols.
+    if trimmed == "/map"
+        || trimmed == "/tree"
+        || trimmed.starts_with("/map ")
+        || trimmed.starts_with("/tree ")
+    {
+        let args_str = trimmed
+            .strip_prefix("/map")
+            .or_else(|| trimmed.strip_prefix("/tree"))
+            .unwrap_or("")
+            .trim();
+        let depth = args_str.parse::<usize>().unwrap_or(3);
+        let root = std::env::current_dir().unwrap_or_default();
+        let map = crate::workspace::generate_project_map(&root, depth);
+        app.add_assistant_message(map);
         app.scroll_offset = 0;
         return true;
     }

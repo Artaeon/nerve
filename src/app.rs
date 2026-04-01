@@ -141,6 +141,8 @@ pub struct App {
     pub agent_mode: bool,
     /// Number of tool-call iterations in the current agent loop (capped at 10).
     pub agent_iterations: usize,
+    /// Whether a git stash checkpoint was created when agent mode was enabled.
+    pub agent_has_stash: bool,
 
     // -- search overlay --
     pub search_query: String,
@@ -247,6 +249,7 @@ impl App {
 
             agent_mode: false,
             agent_iterations: 0,
+            agent_has_stash: false,
 
             search_query: String::new(),
             search_results: Vec::new(),
