@@ -1,3 +1,4 @@
+pub mod autocomplete;
 pub mod chat;
 pub mod clipboard_manager;
 pub mod command_bar;
@@ -297,6 +298,9 @@ fn render_bottom(frame: &mut Frame, app: &App, area: Rect) {
 
     render_input(frame, app, chunks[0]);
     render_status_bar(frame, app, chunks[1]);
+
+    // Autocomplete overlay (drawn on top, above the input area).
+    autocomplete::render_autocomplete(frame, app, chunks[0]);
 }
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
