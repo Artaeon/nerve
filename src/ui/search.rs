@@ -18,8 +18,9 @@ pub fn render_search(frame: &mut Frame, app: &App) {
         .min(area.width.saturating_sub(2));
     let popup_height = 3u16;
     let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = 1; // near the top
+    let y = 1; // near the top, not centered
     let popup_area = Rect::new(x, y, popup_width, popup_height);
+    // Note: Search bar intentionally NOT centered vertically — pinned to top.
 
     frame.render_widget(Clear, popup_area);
 

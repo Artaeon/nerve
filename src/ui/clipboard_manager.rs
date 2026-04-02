@@ -1,13 +1,14 @@
 use chrono::{DateTime, Utc};
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Layout, Rect},
+    layout::{Alignment, Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph},
 };
 
 use crate::app::App;
+use super::utils::centered_rect_fixed;
 
 /// Render the clipboard manager overlay.
 pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
@@ -20,9 +21,7 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
     let popup_height = (area.height * 60 / 100)
         .max(10)
         .min(area.height.saturating_sub(4));
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect_fixed(popup_width, popup_height, area);
 
     // Clear the region behind the popup.
     frame.render_widget(Clear, popup_area);

@@ -6,6 +6,7 @@ pub mod history_browser;
 pub mod prompt_picker;
 pub mod search;
 pub mod settings;
+pub mod utils;
 
 use ratatui::{
     Frame,
@@ -16,6 +17,7 @@ use ratatui::{
 };
 
 use crate::app::{App, AppMode, InputMode};
+use utils::centered_rect_fixed;
 
 // ── UI Color Constants ──────────────────────────────────────────────────
 const ACCENT: Color = Color::Cyan;
@@ -873,9 +875,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
     let content_height = lines.len() as u16 + 2; // +2 for top/bottom borders
     let popup_width = 60u16.min(area.width.saturating_sub(4));
     let popup_height = (content_height + 2).min(area.height.saturating_sub(4)); // +2 for title/footer padding
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect_fixed(popup_width, popup_height, area);
 
     frame.render_widget(Clear, popup_area);
 
@@ -951,9 +951,7 @@ fn render_provider_selector(frame: &mut Frame, app: &App) {
     let popup_width = 50u16.min(area.width.saturating_sub(4));
     let popup_height =
         (app.available_providers.len() as u16 + 4).min(area.height.saturating_sub(4));
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect_fixed(popup_width, popup_height, area);
 
     frame.render_widget(Clear, popup_area);
 

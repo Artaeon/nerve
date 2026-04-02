@@ -1,10 +1,12 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
+    layout::Alignment,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Padding, Paragraph, Wrap},
 };
+
+use super::utils::centered_rect_fixed;
 
 /// Render the help overlay as a centred floating popup.
 pub fn render_help(frame: &mut Frame) {
@@ -13,9 +15,7 @@ pub fn render_help(frame: &mut Frame) {
     // ── Popup dimensions ─────────────────────────────────────────────
     let popup_width = 64u16.min(area.width.saturating_sub(4));
     let popup_height = 58u16.min(area.height.saturating_sub(4));
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect_fixed(popup_width, popup_height, area);
 
     // Clear the background behind the popup.
     frame.render_widget(Clear, popup_area);

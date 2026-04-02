@@ -2,7 +2,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::{
     Frame,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
@@ -10,6 +10,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::prompts::{self, BUILTIN_CACHE};
+use super::utils::centered_rect_fixed;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -70,9 +71,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let popup_height = (area.height * 70 / 100)
         .max(16)
         .min(area.height.saturating_sub(2));
-    let x = (area.width.saturating_sub(popup_width)) / 2;
-    let y = (area.height.saturating_sub(popup_height)) / 2;
-    let popup_area = Rect::new(x, y, popup_width, popup_height);
+    let popup_area = centered_rect_fixed(popup_width, popup_height, area);
 
     // Clear the region behind the popup.
     frame.render_widget(Clear, popup_area);
