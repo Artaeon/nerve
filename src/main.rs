@@ -105,12 +105,7 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Shell completions ──────────────────────────────────────────
     if let Some(shell) = cli.completions {
-        clap_complete::generate(
-            shell,
-            &mut Cli::command(),
-            "nerve",
-            &mut std::io::stdout(),
-        );
+        clap_complete::generate(shell, &mut Cli::command(), "nerve", &mut std::io::stdout());
         return Ok(());
     }
 
