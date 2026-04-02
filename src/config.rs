@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Top-level application configuration for Nerve.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     /// Default model identifier (e.g. "llama3.1", "gpt-4o").
     pub default_model: String,
@@ -25,6 +26,7 @@ pub struct Config {
 
 /// Connections for each supported AI provider.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProvidersConfig {
     pub claude_code: Option<ProviderConfig>,
     pub openai: Option<ProviderConfig>,
@@ -53,6 +55,7 @@ pub struct CustomProviderConfig {
 
 /// TUI colour theme.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ThemeConfig {
     pub user_color: String,
     pub assistant_color: String,
@@ -71,6 +74,7 @@ pub struct ThemeConfig {
 /// Configurable keyboard shortcuts (stored as human-readable strings such
 /// as `"ctrl+k"`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KeybindsConfig {
     pub command_bar: String,
     pub new_conversation: String,
@@ -848,17 +852,18 @@ mod tests {
 
     #[test]
     fn config_load_with_missing_fields_uses_defaults() {
-        // Test that partial TOML is handled gracefully — missing required
-        // fields cause a parse error, but Config::load would fall back to
-        // defaults. The important thing is it does not panic.
+        // Partial TOML with only top-level fields should deserialize
+        // successfully, filling missing sections from Default.
         let partial = r#"
 default_model = "gpt-4o"
 default_provider = "openai"
 "#;
-        let result = toml::from_str::<Config>(partial);
-        // It is expected to error (missing [theme], [providers], [keybinds]),
-        // but must not panic.
-        let _ = result;
+        let cfg: Config = toml::from_str(partial).expect("partial TOML should parse with defaults");
+        assert_eq!(cfg.default_model, "gpt-4o");
+        assert_eq!(cfg.default_provider, "openai");
+        // Missing sections should use their Default values
+        assert_eq!(cfg.theme.user_color, ThemeConfig::default().user_color);
+        assert_eq!(cfg.keybinds.quit, KeybindsConfig::default().quit);
     }
 
     #[test]
@@ -871,9 +876,10 @@ default_provider = "openai"
 
     #[test]
     fn config_load_with_empty_string() {
-        let result = toml::from_str::<Config>("");
-        // Empty TOML is missing all required fields — should fail gracefully.
-        assert!(result.is_err());
+        // Empty TOML should now succeed with all defaults thanks to #[serde(default)].
+        let cfg: Config = toml::from_str("").expect("empty TOML should parse with defaults");
+        assert_eq!(cfg.default_model, Config::default().default_model);
+        assert_eq!(cfg.default_provider, Config::default().default_provider);
     }
 
     // ── Theme presets ──────────────────────────────────────────────────────
