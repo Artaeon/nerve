@@ -403,6 +403,32 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 dim_color: "#6e6a86".into(),
             },
         ),
+        (
+            "High Contrast",
+            ThemeConfig {
+                user_color: "#00ffff".into(),   // bright cyan
+                assistant_color: "#ffff00".into(), // bright yellow
+                border_color: "#ffffff".into(),  // white borders
+                accent_color: "#ff00ff".into(),  // bright magenta
+                success_color: "#00ff00".into(), // bright green
+                error_color: "#ff6600".into(),   // orange (avoids red/green ambiguity)
+                warning_color: "#ffff00".into(), // bright yellow
+                dim_color: "#aaaaaa".into(),     // light gray
+            },
+        ),
+        (
+            "Monochrome",
+            ThemeConfig {
+                user_color: "#ffffff".into(),    // bright white
+                assistant_color: "#cccccc".into(), // light gray
+                border_color: "#666666".into(),  // medium gray
+                accent_color: "#ffffff".into(),  // white
+                success_color: "#cccccc".into(), // light gray
+                error_color: "#ffffff".into(),   // white (relies on context, not color)
+                warning_color: "#dddddd".into(), // near-white
+                dim_color: "#888888".into(),     // gray
+            },
+        ),
     ]
 }
 
@@ -855,7 +881,7 @@ default_provider = "openai"
     #[test]
     fn theme_presets_not_empty() {
         let presets = theme_presets();
-        assert!(presets.len() >= 8);
+        assert!(presets.len() >= 10);
     }
 
     #[test]
@@ -942,7 +968,7 @@ default_provider = "openai"
     }
 
     #[test]
-    fn exactly_eight_theme_presets() {
-        assert_eq!(theme_presets().len(), 8);
+    fn exactly_ten_theme_presets() {
+        assert_eq!(theme_presets().len(), 10);
     }
 }
