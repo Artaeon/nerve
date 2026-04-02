@@ -1390,7 +1390,9 @@ async fn handle_normal_mode(
                                 // Save current input and go to most recent history
                                 app.input_saved = app.input.clone();
                                 app.input_history_index = Some(app.input_history.len() - 1);
-                                app.input = app.input_history.last().unwrap().clone();
+                                if let Some(last) = app.input_history.last() {
+                                    app.input = last.clone();
+                                }
                                 app.cursor_position = app.input.len();
                             }
                             Some(idx) if idx > 0 => {
