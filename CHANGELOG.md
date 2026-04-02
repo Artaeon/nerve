@@ -96,7 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Provider/model override: nerve --provider ollama --model llama3
 
 #### Quality
-- 825 tests across 42 source files
+- 820 tests across 42 source files
 - 0 clippy warnings
 - 0 unsafe code
 - 0 panics in production code
