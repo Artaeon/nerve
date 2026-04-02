@@ -1450,15 +1450,7 @@ async fn handle_normal_mode(
                     app.cursor_position = app.input.len();
                 }
                 KeyCode::Char(c) => {
-                    // Special: "/" at start of empty input opens the Nerve Bar
-                    if c == '/' && app.input.is_empty() {
-                        app.mode = AppMode::CommandBar;
-                        app.command_bar_input.clear();
-                        app.command_bar_select_index = 0;
-                        app.command_bar_category = 0;
-                    } else {
-                        app.insert_char(c);
-                    }
+                    app.insert_char(c);
                 }
                 _ => {}
             }
