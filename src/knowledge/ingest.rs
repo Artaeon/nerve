@@ -215,7 +215,7 @@ mod tests {
         // First chunk covers 0..500, next 450..950, etc.
         assert!(chunks.len() >= 10);
         // All text should be covered
-        let last_chunk_words: Vec<&str> = chunks.last().unwrap().split_whitespace().collect();
+        let last_chunk_words: Vec<&str> = chunks.last().map(|c| c.split_whitespace().collect()).unwrap_or_default();
         assert!(!last_chunk_words.is_empty());
     }
 
