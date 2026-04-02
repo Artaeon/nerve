@@ -34,7 +34,7 @@ Nerve doesn't just suggest the next line of code. It reads your files, understan
 
 ### 5. Batteries Included
 
-166 expert prompts. 8 project templates. 9 agent tools. 8 color themes. Plugin system. Knowledge base. Conversation branching. Clipboard manager. All in one binary. No extensions to install, no marketplace to browse, no configuration hell.
+166 expert prompts. 8 project templates. 9 agent tools. 10 color themes. Plugin system. Knowledge base. Conversation branching. Clipboard manager. All in one binary. No extensions to install, no marketplace to browse, no configuration hell.
 
 ### 6. Open and Honest
 

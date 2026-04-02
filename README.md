@@ -197,7 +197,7 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 - **Clipboard manager** (Ctrl+B) -- fuzzy search
 - **In-chat search** (Ctrl+F)
 - **Input history** -- Up/Down arrows cycle previous inputs
-- **8 color themes** -- `/theme list`
+- **10 color themes** -- `/theme list`
 - **Plugin system** -- scripts in `~/.config/nerve/plugins/`
 - **Settings overlay** -- Ctrl+, for visual configuration
 

@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Settings & Customization
 - Interactive settings overlay (Ctrl+,) with 4 tabs
-- 8 color themes (Catppuccin, Tokyo Night, Gruvbox, Nord, Solarized, Dracula, One Dark, Rose Pine)
+- 10 color themes (Catppuccin, Tokyo Night, Gruvbox, Nord, Solarized, Dracula, One Dark, Rose Pine, High Contrast, Monochrome)
 - TOML configuration at ~/.config/nerve/config.toml
 - Plugin system (executable scripts in ~/.config/nerve/plugins/)
 
