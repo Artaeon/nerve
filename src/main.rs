@@ -395,7 +395,7 @@ fn render_splash(frame: &mut ratatui::Frame, status: &str) {
         Line::from(Span::styled("  Raw AI power in your terminal", dim_style)),
         Line::from(""),
         Line::from(vec![
-            Span::styled("  v0.1.0", version_style),
+            Span::styled(format!("  v{}", env!("CARGO_PKG_VERSION")), version_style),
             Span::styled("  |  ", dim_style),
             Span::styled(status.to_string(), dim_style),
         ]),
