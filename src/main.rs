@@ -6,6 +6,7 @@ mod clipboard;
 mod clipboard_manager;
 mod commands;
 mod config;
+#[cfg(unix)]
 mod daemon;
 mod files;
 mod history;
@@ -63,15 +64,15 @@ struct Cli {
     #[arg(short = 'n', long)]
     non_interactive: bool,
 
-    /// Start as background daemon
+    /// Start as background daemon (Unix only)
     #[arg(long)]
     daemon: bool,
 
-    /// Send query to running daemon
+    /// Send query to running daemon (Unix only)
     #[arg(long)]
     query: Option<String>,
 
-    /// Stop the running daemon
+    /// Stop the running daemon (Unix only)
     #[arg(long)]
     stop_daemon: bool,
 
@@ -109,23 +110,33 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // ── Daemon commands (no provider needed) ────────────────────────
-    if cli.daemon {
-        if daemon::is_daemon_running() {
-            eprintln!("Nerve daemon is already running.");
+    // ── Daemon commands (no provider needed, Unix only) ──────────────
+    #[cfg(unix)]
+    {
+        if cli.daemon {
+            if daemon::is_daemon_running() {
+                eprintln!("Nerve daemon is already running.");
+                return Ok(());
+            }
+            return daemon::start_daemon().await;
+        }
+        if cli.stop_daemon {
+            daemon::stop_daemon()?;
+            println!("Nerve daemon stopped.");
             return Ok(());
         }
-        return daemon::start_daemon().await;
+        if let Some(query) = &cli.query {
+            let response = daemon::send_to_daemon(query).await?;
+            println!("{}", response);
+            return Ok(());
+        }
     }
-    if cli.stop_daemon {
-        daemon::stop_daemon()?;
-        println!("Nerve daemon stopped.");
-        return Ok(());
-    }
-    if let Some(query) = &cli.query {
-        let response = daemon::send_to_daemon(query).await?;
-        println!("{}", response);
-        return Ok(());
+    #[cfg(not(unix))]
+    {
+        if cli.daemon || cli.stop_daemon || cli.query.is_some() {
+            eprintln!("Daemon mode is only supported on Unix systems.");
+            return Ok(());
+        }
     }
 
     let config = Config::load().context("failed to load configuration")?;
