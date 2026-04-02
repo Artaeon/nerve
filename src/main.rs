@@ -25,7 +25,7 @@ use std::io::{self, Read as _};
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use tokio::sync::mpsc;
 
@@ -82,6 +82,10 @@ struct Cli {
     /// Skip the splash screen
     #[arg(long)]
     no_splash: bool,
+
+    /// Generate shell completions and exit
+    #[arg(long, value_name = "SHELL")]
+    completions: Option<clap_complete::Shell>,
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -98,6 +102,17 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // ── Shell completions ──────────────────────────────────────────
+    if let Some(shell) = cli.completions {
+        clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            "nerve",
+            &mut std::io::stdout(),
+        );
+        return Ok(());
+    }
 
     // ── Daemon commands (no provider needed) ────────────────────────
     if cli.daemon {

@@ -51,6 +51,7 @@ anyhow = "1"
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 
 # Fuzzy matching for prompt search
 fuzzy-matcher = "0.3"
