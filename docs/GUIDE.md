@@ -709,7 +709,7 @@ in a #[cfg(test)] module at the bottom of the file."
 
 ## Smart Prompts
 
-130 built-in prompts across 22 categories, instantly accessible via the Nerve Bar
+166 built-in prompts across 28 categories, instantly accessible via the Nerve Bar
 or the Prompt Picker. Each prompt is a detailed 5-15 line system prompt with specific
 instructions, not a simple one-liner.
 
@@ -1967,7 +1967,7 @@ Nerve works without any internet connection.
 
 A: Nerve is designed for developers who work in the terminal. Key advantages over
 web apps: file context injection, shell integration, agent mode for autonomous coding,
-130 specialized prompts, multi-provider support, keyboard-driven workflow, pipe mode
+166 specialized prompts, multi-provider support, keyboard-driven workflow, pipe mode
 for scripting. The tradeoff is no GUI, no image generation, and no web browsing (beyond
 URL scraping).
 
@@ -2043,7 +2043,7 @@ continue.
 - File context injection (no more copy-pasting code)
 - Shell integration (run tests, build, diff -- all from the AI conversation)
 - Agent mode for autonomous coding
-- 130 specialized prompts
+- 166 specialized prompts
 - Pipe mode for scripting
 - Keyboard-driven workflow
 
@@ -2091,7 +2091,7 @@ and agent-driven multi-file changes.
 
 **What you gain:**
 - Beautiful TUI with syntax highlighting
-- Nerve Bar with 130 smart prompts
+- Nerve Bar with 166 smart prompts
 - 6 providers (not just OpenAI)
 - Knowledge base (RAG)
 - Project scaffolding
@@ -2216,7 +2216,7 @@ nerve/
 │   │   └── help.rs               Keybinding reference overlay
 │   ├── prompts/
 │   │   ├── mod.rs                Prompt loading and category listing
-│   │   ├── builtin.rs            130 built-in prompt templates
+│   │   ├── builtin.rs            166 built-in prompt templates
 │   │   └── custom.rs             User-defined prompt loading (.toml)
 │   ├── knowledge/
 │   │   ├── mod.rs                Module exports
@@ -2247,7 +2247,7 @@ Each tool has a name, description, parameter schema, and an execution function. 
 tool descriptions are included in the system prompt so the AI knows how to call them.
 
 **SmartPrompt** (`src/prompts/builtin.rs`): A struct with name, description, template,
-category, and tags. The 130 built-in prompts are defined as constants in this file.
+category, and tags. The 166 built-in prompts are defined as constants in this file.
 
 **App state machine** (`src/app.rs`): Manages the application state including input
 mode (normal/insert), active overlay (None, NerveBar, PromptPicker, etc.), conversation
