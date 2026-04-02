@@ -178,7 +178,6 @@ pub struct App {
 
     // -- branches --
     pub branches: Vec<Branch>,
-    pub branch_select_index: usize,
 
     // -- context tracking --
     /// Running count of estimated tokens in the current conversation.
@@ -220,7 +219,6 @@ pub struct App {
     /// Timestamp of when `status_message` was last set (for auto-clear).
     pub status_time: Option<std::time::Instant>,
     pub should_quit: bool,
-    pub show_help: bool,
 }
 
 impl App {
@@ -303,7 +301,6 @@ impl App {
             search_current: 0,
 
             branches: Vec::new(),
-            branch_select_index: 0,
 
             total_tokens_used: 0,
 
@@ -330,7 +327,6 @@ impl App {
             status_message: None,
             status_time: None,
             should_quit: false,
-            show_help: false,
         }
     }
 
@@ -551,7 +547,6 @@ mod tests {
         assert!(!app.available_models.is_empty());
         assert_eq!(app.model_select_index, 0);
         assert!(app.status_message.is_none());
-        assert!(!app.show_help);
         assert!(!app.code_mode);
         assert!(app.working_dir.is_none());
         assert!(!app.agent_mode);
