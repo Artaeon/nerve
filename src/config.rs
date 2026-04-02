@@ -416,8 +416,8 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 accent_color: "#ff00ff".into(),    // bright magenta
                 success_color: "#00ff00".into(),   // bright green
                 error_color: "#ff6600".into(),     // orange (avoids red/green ambiguity)
-                warning_color: "#ff00ff".into(),   // bright magenta (distinct from assistant yellow)
-                dim_color: "#aaaaaa".into(),       // light gray
+                warning_color: "#ff00ff".into(), // bright magenta (distinct from assistant yellow)
+                dim_color: "#aaaaaa".into(),     // light gray
             },
         ),
         (
