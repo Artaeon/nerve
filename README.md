@@ -29,6 +29,26 @@ Chat. Code. Ship. All from your terminal.
 
 ## Installation
 
+### Download (pre-built)
+
+Grab the latest binary from [GitHub Releases](https://github.com/Artaeon/nerve/releases/latest):
+
+| Platform | Download |
+|----------|----------|
+| Linux x86_64 | `nerve-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | `nerve-macos-arm64.tar.gz` |
+| macOS Intel | `nerve-macos-x86_64.tar.gz` |
+| Windows x86_64 | `nerve-windows-x86_64.zip` |
+
+```bash
+# Example: Linux
+curl -LO https://github.com/Artaeon/nerve/releases/latest/download/nerve-linux-x86_64.tar.gz
+tar xzf nerve-linux-x86_64.tar.gz
+mv nerve ~/.local/bin/
+```
+
+Each release includes SHA256 checksums for verification.
+
 ### Quick Install (from source)
 
 ```bash
