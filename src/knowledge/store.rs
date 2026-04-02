@@ -50,6 +50,7 @@ impl KnowledgeBase {
     }
 
     /// Remove a document and all its chunks by document ID.
+    #[allow(dead_code)]
     pub fn remove_document(&mut self, doc_id: &str) {
         self.documents.retain(|d| d.id != doc_id);
         self.chunks.retain(|c| c.document_id != doc_id);

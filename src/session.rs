@@ -95,6 +95,7 @@ pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
 }
 
 /// Delete a session
+#[allow(dead_code)]
 pub fn delete_session(id: &str) -> anyhow::Result<()> {
     let dir = sessions_dir();
     let prefix = format!("session_{}", id.chars().take(8).collect::<String>());

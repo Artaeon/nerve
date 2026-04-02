@@ -62,6 +62,7 @@ impl ClaudeCodeProvider {
     }
 
     /// Create a new provider with a specific default model.
+    #[allow(dead_code)]
     pub fn with_model(model: String) -> Self {
         Self {
             claude_binary: "claude".into(),
@@ -73,6 +74,7 @@ impl ClaudeCodeProvider {
     }
 
     /// Returns whether tools (file access, bash) are enabled.
+    #[allow(dead_code)]
     pub fn tools_enabled(&self) -> bool {
         self.enable_tools
     }
@@ -123,6 +125,7 @@ impl ClaudeCodeProvider {
     /// Runs `claude --version` and returns `true` only if it exits
     /// successfully.  This is a blocking check intended for startup
     /// validation.
+    #[allow(dead_code)]
     pub fn is_available(&self) -> bool {
         std::process::Command::new(&self.claude_binary)
             .arg("--version")

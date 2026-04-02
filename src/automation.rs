@@ -22,6 +22,7 @@ pub struct AutomationStep {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AutomationResult {
     pub automation_name: String,
     pub step_results: Vec<StepResult>,
@@ -30,6 +31,7 @@ pub struct AutomationResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StepResult {
     pub step_name: String,
     pub output: String,

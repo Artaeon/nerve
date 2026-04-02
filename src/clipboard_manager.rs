@@ -65,6 +65,7 @@ impl ClipboardManager {
     }
 
     /// Get a single entry by index.
+    #[allow(dead_code)]
     pub fn get(&self, index: usize) -> Option<&ClipboardEntry> {
         self.entries.get(index)
     }
@@ -106,6 +107,7 @@ impl ClipboardManager {
     }
 
     /// Clear all entries.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.entries.clear();
     }

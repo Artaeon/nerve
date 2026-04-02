@@ -182,6 +182,7 @@ pub fn is_sensitive_file(path: &str) -> bool {
 }
 
 /// Mask an API key for display, showing only the first 4 and last 4 characters.
+#[allow(dead_code)]
 pub fn mask_api_key(key: &str) -> String {
     if key.len() <= 8 {
         return "****".into();

@@ -23,6 +23,7 @@ pub enum ProjectType {
     Zig,
     CSharp,
     Cpp,
+    #[allow(dead_code)]
     Unknown,
 }
 

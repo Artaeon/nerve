@@ -56,11 +56,13 @@ impl ContextManager {
     }
 
     /// Check whether the conversation exceeds the token budget.
+    #[allow(dead_code)]
     pub fn is_over_budget(&self, messages: &[(String, String)]) -> bool {
         Self::conversation_tokens(messages) > self.max_tokens
     }
 
     /// Calculate remaining tokens available in the context window.
+    #[allow(dead_code)]
     pub fn remaining_tokens(&self, messages: &[(String, String)]) -> usize {
         let used = Self::conversation_tokens(messages);
         self.max_tokens.saturating_sub(used)

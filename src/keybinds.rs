@@ -15,6 +15,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 /// ```
 ///
 /// Returns `None` if the string cannot be parsed.
+#[allow(dead_code)]
 pub fn parse_keybind(s: &str) -> Option<KeyEvent> {
     let s = s.trim().to_lowercase();
     if s.is_empty() {
@@ -46,6 +47,7 @@ pub fn parse_keybind(s: &str) -> Option<KeyEvent> {
 }
 
 /// Map a single key name to a [`KeyCode`].
+#[allow(dead_code)]
 fn parse_key_code(s: &str) -> Option<KeyCode> {
     // Function keys: f1 .. f12
     if let Some(rest) = s.strip_prefix('f')

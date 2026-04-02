@@ -22,6 +22,7 @@ impl CopilotProvider {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_available() -> bool {
         std::process::Command::new("gh")
             .args(["copilot", "--help"])

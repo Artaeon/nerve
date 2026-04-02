@@ -113,6 +113,7 @@ impl OpenAiProvider {
     }
 
     /// Override the `max_tokens` sent with each request.
+    #[allow(dead_code)]
     pub fn with_max_tokens(mut self, tokens: usize) -> Self {
         self.max_tokens = Some(tokens);
         self
@@ -121,11 +122,13 @@ impl OpenAiProvider {
     // -- Convenience constructors --------------------------------------------------
 
     /// OpenAI (api.openai.com).
+    #[allow(dead_code)]
     pub fn openai(api_key: String) -> Self {
         Self::new(api_key, "https://api.openai.com/v1".into(), "OpenAI".into())
     }
 
     /// Ollama running locally on the default port.
+    #[allow(dead_code)]
     pub fn ollama() -> Self {
         Self::new(
             "ollama".into(),
@@ -135,6 +138,7 @@ impl OpenAiProvider {
     }
 
     /// OpenRouter.
+    #[allow(dead_code)]
     pub fn openrouter(api_key: String) -> Self {
         Self::new(
             api_key,
@@ -144,6 +148,7 @@ impl OpenAiProvider {
     }
 
     /// Any custom OpenAI-compatible endpoint.
+    #[allow(dead_code)]
     pub fn custom(api_key: String, base_url: String, name: String) -> Self {
         Self::new(api_key, base_url, name)
     }

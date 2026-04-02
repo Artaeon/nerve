@@ -9,6 +9,7 @@ pub fn socket_path() -> PathBuf {
     PathBuf::from(SOCKET_PATH)
 }
 
+#[allow(dead_code)]
 pub fn is_daemon_running() -> bool {
     socket_path().exists() && std::os::unix::net::UnixStream::connect(socket_path()).is_ok()
 }

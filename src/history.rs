@@ -68,6 +68,7 @@ pub fn save_conversation(record: &ConversationRecord) -> anyhow::Result<()> {
 }
 
 /// Load a single conversation by its ID.
+#[allow(dead_code)]
 pub fn load_conversation(id: &str) -> anyhow::Result<ConversationRecord> {
     let path = conversation_path(id);
     let contents = fs::read_to_string(&path)?;

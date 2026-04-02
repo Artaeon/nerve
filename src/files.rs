@@ -44,6 +44,7 @@ pub fn read_file_context(path: &str) -> anyhow::Result<FileContext> {
 }
 
 /// Read multiple files
+#[allow(dead_code)]
 pub fn read_files_context(paths: &[&str]) -> Vec<anyhow::Result<FileContext>> {
     paths.iter().map(|p| read_file_context(p)).collect()
 }

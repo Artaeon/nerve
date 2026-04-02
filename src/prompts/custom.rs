@@ -17,6 +17,7 @@ fn custom_prompts_dir() -> PathBuf {
 ///
 /// Lowercases, replaces whitespace runs with `_`, strips non-alphanumeric
 /// characters (except `_` and `-`), and appends `.toml`.
+#[allow(dead_code)]
 pub(crate) fn prompt_filename(name: &str) -> String {
     let slug: String = name
         .to_lowercase()
@@ -62,6 +63,7 @@ pub fn load_custom_prompts() -> Vec<SmartPrompt> {
 ///
 /// Creates the directory if it does not exist. Overwrites any existing file
 /// with the same derived filename.
+#[allow(dead_code)]
 pub fn save_custom_prompt(prompt: &SmartPrompt) -> anyhow::Result<()> {
     let dir = custom_prompts_dir();
     fs::create_dir_all(&dir)?;
@@ -76,6 +78,7 @@ pub fn save_custom_prompt(prompt: &SmartPrompt) -> anyhow::Result<()> {
 /// Delete a custom prompt by name.
 ///
 /// Returns `Ok(())` if the file was removed or did not exist.
+#[allow(dead_code)]
 pub fn delete_custom_prompt(name: &str) -> anyhow::Result<()> {
     let dir = custom_prompts_dir();
     let filename = prompt_filename(name);

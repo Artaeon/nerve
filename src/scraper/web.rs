@@ -50,6 +50,7 @@ pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
 }
 
 /// Fetch multiple URLs concurrently, returning results in the same order.
+#[allow(dead_code)]
 pub async fn scrape_urls(urls: &[&str]) -> Vec<anyhow::Result<ScrapeResult>> {
     let futures: Vec<_> = urls.iter().map(|url| scrape_url(url)).collect();
     futures::future::join_all(futures).await
