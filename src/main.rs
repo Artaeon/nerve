@@ -116,6 +116,10 @@ async fn main() -> anyhow::Result<()> {
 
     // ── Daemon commands (no provider needed) ────────────────────────
     if cli.daemon {
+        if daemon::is_daemon_running() {
+            eprintln!("Nerve daemon is already running.");
+            return Ok(());
+        }
         return daemon::start_daemon().await;
     }
     if cli.stop_daemon {
