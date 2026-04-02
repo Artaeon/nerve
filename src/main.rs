@@ -1233,6 +1233,7 @@ async fn handle_normal_mode(
                             for ch in text.chars() {
                                 app.insert_char(ch);
                             }
+                            update_autocomplete(app);
                         }
                     }
                     KeyCode::Char('w') => {
@@ -1246,10 +1247,44 @@ async fn handle_normal_mode(
                             .unwrap_or(0);
                         app.input.drain(new_pos..pos);
                         app.cursor_position = new_pos;
+                        update_autocomplete(app);
                     }
                     _ => {}
                 }
                 return Ok(());
+            }
+
+            // ── Autocomplete interception ──────────────────────────────
+            // When the autocomplete popup is visible, certain keys navigate
+            // or accept the selection instead of their normal behaviour.
+            if app.autocomplete_visible {
+                match code {
+                    KeyCode::Up => {
+                        app.autocomplete_index =
+                            app.autocomplete_index.saturating_sub(1);
+                        return Ok(());
+                    }
+                    KeyCode::Down => {
+                        if app.autocomplete_index + 1 < app.autocomplete_items.len() {
+                            app.autocomplete_index += 1;
+                        }
+                        return Ok(());
+                    }
+                    KeyCode::Tab | KeyCode::Enter => {
+                        accept_autocomplete(app);
+                        return Ok(());
+                    }
+                    KeyCode::Esc => {
+                        app.autocomplete_visible = false;
+                        // Also switch to Normal mode (standard Esc behaviour).
+                        app.input_mode = InputMode::Normal;
+                        return Ok(());
+                    }
+                    _ => {
+                        // Fall through to normal handling; autocomplete will
+                        // be refreshed after the keystroke is processed below.
+                    }
+                }
             }
 
             match code {
@@ -1263,12 +1298,19 @@ async fn handle_normal_mode(
                             return Ok(());
                         }
                         if let Some(text) = app.submit_input() {
+                            app.autocomplete_visible = false;
                             submit_message(app, &text, provider).await;
                         }
                     }
                 }
-                KeyCode::Esc => app.input_mode = InputMode::Normal,
-                KeyCode::Backspace => app.delete_char(),
+                KeyCode::Esc => {
+                    app.autocomplete_visible = false;
+                    app.input_mode = InputMode::Normal;
+                }
+                KeyCode::Backspace => {
+                    app.delete_char();
+                    update_autocomplete(app);
+                }
                 KeyCode::Left => app.move_cursor_left(),
                 KeyCode::Right => app.move_cursor_right(),
                 KeyCode::Tab => {
@@ -1304,52 +1346,7 @@ async fn handle_normal_mode(
                         } else {
                             // Existing slash command completion
                             let partial = &app.input[1..]; // strip the /
-                            let commands = [
-                                "help",
-                                "clear",
-                                "new",
-                                "model",
-                                "models",
-                                "provider",
-                                "providers",
-                                "code",
-                                "cwd",
-                                "ollama",
-                                "url",
-                                "kb",
-                                "auto",
-                                "status",
-                                "export",
-                                "rename",
-                                "system",
-                                "workspace",
-                                "run",
-                                "pipe",
-                                "diff",
-                                "test",
-                                "build",
-                                "git",
-                                "agent",
-                                "cd",
-                                "summary",
-                                "compact",
-                                "context",
-                                "tokens",
-                                "branch",
-                                "session",
-                                "usage",
-                                "cost",
-                                "limit",
-                                "copy",
-                                "file",
-                                "files",
-                                "theme",
-                                "alias",
-                                "repeat",
-                                "mode",
-                                "autocontext",
-                                "ac",
-                            ];
+                            let commands = get_all_commands_bare();
                             let matches: Vec<&&str> = commands
                                 .iter()
                                 .filter(|cmd| cmd.starts_with(partial))
@@ -1451,6 +1448,7 @@ async fn handle_normal_mode(
                 }
                 KeyCode::Char(c) => {
                     app.insert_char(c);
+                    update_autocomplete(app);
                 }
                 _ => {}
             }
@@ -1948,6 +1946,210 @@ fn common_prefix(strings: &[&&str]) -> String {
             .min(prefix_len);
     }
     first[..prefix_len].to_string()
+}
+
+// ─── Inline autocomplete ────────────────────────────────────────────────────
+
+/// All slash command names (without the leading `/`), used both for Tab
+/// completion and for the inline autocomplete popup.
+fn get_all_commands_bare() -> &'static [&'static str] {
+    &[
+        "help",
+        "clear",
+        "new",
+        "model",
+        "models",
+        "provider",
+        "providers",
+        "code",
+        "cwd",
+        "ollama",
+        "url",
+        "kb",
+        "auto",
+        "status",
+        "export",
+        "rename",
+        "system",
+        "workspace",
+        "run",
+        "pipe",
+        "diff",
+        "test",
+        "build",
+        "git",
+        "agent",
+        "cd",
+        "summary",
+        "compact",
+        "context",
+        "tokens",
+        "branch",
+        "session",
+        "usage",
+        "cost",
+        "limit",
+        "copy",
+        "file",
+        "files",
+        "theme",
+        "alias",
+        "repeat",
+        "mode",
+        "autocontext",
+        "ac",
+        "delete",
+        "template",
+        "scaffold",
+        "map",
+        "tree",
+        "plugin",
+        "plugins",
+    ]
+}
+
+/// Update the inline autocomplete popup based on current input.
+///
+/// Shows matching slash commands when input starts with `/`, or matching file
+/// paths when the input contains an `@` mention.
+fn update_autocomplete(app: &mut App) {
+    let input = &app.input;
+
+    if input.starts_with('/') && !input.contains(' ') {
+        // Autocomplete slash commands.
+        let partial = &input[1..];
+        if partial.is_empty() {
+            app.autocomplete_visible = false;
+            return;
+        }
+        let commands = get_all_commands_bare();
+        let mut items: Vec<String> = commands
+            .iter()
+            .filter(|cmd| cmd.starts_with(partial) || cmd.contains(partial))
+            .take(8)
+            .map(|cmd| format!("/{cmd}"))
+            .collect();
+        // Prioritise prefix matches over substring matches.
+        items.sort_by(|a, b| {
+            let a_prefix = a[1..].starts_with(partial);
+            let b_prefix = b[1..].starts_with(partial);
+            b_prefix.cmp(&a_prefix)
+        });
+        app.autocomplete_items = items;
+        app.autocomplete_visible = !app.autocomplete_items.is_empty();
+        app.autocomplete_index = 0;
+    } else if let Some(at_pos) = input.rfind('@') {
+        // Autocomplete file paths after `@`.
+        let partial = &input[at_pos + 1..];
+        if !partial.is_empty() && !partial.contains(' ') {
+            app.autocomplete_items = autocomplete_file_paths(partial);
+            app.autocomplete_visible = !app.autocomplete_items.is_empty();
+            app.autocomplete_index = 0;
+        } else {
+            app.autocomplete_visible = false;
+        }
+    } else {
+        app.autocomplete_visible = false;
+    }
+}
+
+/// Return up to 8 file path matches for the given partial path, suitable for
+/// displaying in the autocomplete popup.
+fn autocomplete_file_paths(partial: &str) -> Vec<String> {
+    use std::path::Path;
+
+    let path = if let Some(stripped) = partial.strip_prefix("~/") {
+        match dirs::home_dir() {
+            Some(h) => h.join(stripped),
+            None => return Vec::new(),
+        }
+    } else if partial.starts_with('/') {
+        std::path::PathBuf::from(partial)
+    } else {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(partial),
+            Err(_) => return Vec::new(),
+        }
+    };
+
+    let (dir, prefix) = if path.is_dir() {
+        (path.clone(), String::new())
+    } else {
+        let parent = path.parent().unwrap_or(Path::new("."));
+        let file_prefix = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        (parent.to_path_buf(), file_prefix)
+    };
+
+    if !dir.exists() {
+        return Vec::new();
+    }
+
+    let mut matches: Vec<String> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue; // skip hidden files
+            }
+            if !prefix.is_empty() && !name.starts_with(&prefix) {
+                continue;
+            }
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+
+            let completed = if partial.contains('/') {
+                let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
+                if is_dir {
+                    format!("{}{}/", dir_part, name)
+                } else {
+                    format!("{}{}", dir_part, name)
+                }
+            } else if is_dir {
+                format!("{}/", name)
+            } else {
+                name
+            };
+
+            matches.push(completed);
+            if matches.len() >= 8 {
+                break;
+            }
+        }
+    }
+
+    matches.sort();
+    matches
+}
+
+/// Accept the currently selected autocomplete item and insert it into the
+/// input buffer.
+fn accept_autocomplete(app: &mut App) {
+    if let Some(selected) = app.autocomplete_items.get(app.autocomplete_index).cloned() {
+        if app.input.starts_with('/') && !app.input.contains(' ') {
+            // Replace the entire slash command prefix.
+            app.input = format!("{} ", selected);
+            app.cursor_position = app.input.len();
+        } else if let Some(at_pos) = app.input.rfind('@') {
+            // Replace the text after `@` with the selected path.
+            let before = app.input[..at_pos + 1].to_string();
+            let after_cursor = if app.cursor_position < app.input.len() {
+                // Preserve any text after the current partial.
+                let partial_end = app.input[at_pos + 1..]
+                    .find(' ')
+                    .map(|i| at_pos + 1 + i)
+                    .unwrap_or(app.input.len());
+                app.input[partial_end..].to_string()
+            } else {
+                String::new()
+            };
+            app.input = format!("{}{}{}", before, selected, after_cursor);
+            app.cursor_position = before.len() + selected.len();
+        }
+        app.autocomplete_visible = false;
+    }
 }
 
 // ─── File path completion ──────────────────────────────────────────────────
