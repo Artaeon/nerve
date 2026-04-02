@@ -616,6 +616,10 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             let msg_style = if msg.starts_with("Error")
                 || msg.starts_with("Blocked")
                 || msg.starts_with("Failed")
+                || msg.starts_with("Cannot")
+                || msg.starts_with("Unable")
+                || msg.starts_with("Invalid")
+                || msg.contains("error:")
             {
                 Style::default().fg(theme.error)
             } else if msg.starts_with("Saved")
