@@ -38,7 +38,7 @@ use config::Config;
 // ─── CLI ────────────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "nerve", about = "Raw AI power in your terminal")]
+#[command(name = "nerve", about = "Raw AI power in your terminal", version)]
 struct Cli {
     /// Direct prompt (non-interactive mode): nerve "translate this to Spanish"
     prompt: Option<String>,
