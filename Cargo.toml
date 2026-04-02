@@ -3,12 +3,22 @@ name = "nerve"
 version = "0.1.0"
 edition = "2024"
 description = "Raw AI power in your terminal"
+authors = ["Artaeon <raphael.lugmayr@stoicera.com>"]
 license = "MIT"
 repository = "https://github.com/Artaeon/nerve"
 homepage = "https://github.com/Artaeon/nerve"
 keywords = ["ai", "tui", "terminal", "assistant", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+rust-version = "1.85"
+exclude = [
+    ".github/",
+    "docs/",
+    "assets/",
+    "MANIFESTO.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+]
 
 [[bin]]
 name = "nerve"
@@ -56,6 +66,9 @@ futures = "0.3"
 
 # Syntax highlighting
 syntect = "5"
+
+# Unicode display width
+unicode-width = "0.2"
 
 # Tracing/logging
 tracing = "0.1"
