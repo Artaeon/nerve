@@ -67,8 +67,16 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: nerve-linux-x86_64
+            binary: nerve
           - os: macos-latest
             artifact: nerve-macos-arm64
+            binary: nerve
+          - os: macos-13
+            artifact: nerve-macos-x86_64
+            binary: nerve
+          - os: windows-latest
+            artifact: nerve-windows-x86_64
+            binary: nerve.exe
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -79,9 +87,25 @@ jobs:
       - name: Package
         run: |
           cd target/release
-          tar czf ../../../${{ matrix.artifact }}.tar.gz nerve
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a ../../../${{ matrix.artifact }}.zip ${{ matrix.binary }}
+          else
+            tar czf ../../../${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
+          fi
+        shell: bash
+      - name: Generate checksum
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            sha256sum ${{ matrix.artifact }}.zip > ${{ matrix.artifact }}.sha256
+          else
+            sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.sha256
+          fi
+        shell: bash
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: ${{ matrix.artifact }}.tar.gz
+          files: |
+            ${{ matrix.artifact }}.tar.gz
+            ${{ matrix.artifact }}.zip
+            ${{ matrix.artifact }}.sha256
