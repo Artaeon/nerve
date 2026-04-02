@@ -31,6 +31,7 @@ pub(crate) struct ResolvedTheme {
     pub warning: Color,
     pub dim: Color,
     pub user_color: Color,
+    #[allow(dead_code)]
     pub assistant_color: Color,
 }
 

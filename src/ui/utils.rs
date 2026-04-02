@@ -2,6 +2,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use unicode_width::UnicodeWidthStr;
 
 /// Calculate a centered rect within the given area using percentage dimensions.
+#[allow(dead_code)]
 pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

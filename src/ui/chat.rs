@@ -467,7 +467,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             // Append a pulsing cursor to the very last line of content.
             if si == stream_line_count - 1 {
                 // Pulse the cursor colour between bright green and dim green
-                let cursor_color = if (app.thinking_frame / 6).is_multiple_of(2) {
+                let cursor_color = if (app.thinking_frame / 6) % 2 == 0 {
                     Color::Green
                 } else {
                     Color::Rgb(0, 160, 0)
