@@ -18,7 +18,7 @@ use ratatui::{
 
 use crate::app::{App, AppMode, InputMode};
 use crate::config;
-use utils::centered_rect_fixed;
+use utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 
 // ── Resolved theme colors ───────────────────────────────────────────────
 
@@ -118,7 +118,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         // Count wrapped lines
         let mut lines = 0;
         for line in app.input.lines() {
-            lines += 1 + line.len() / input_width.max(1);
+            lines += 1 + display_width(line) / input_width.max(1);
         }
         lines.max(1)
     };
@@ -205,7 +205,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         "{} \u{203a} {} \u{2502} {} msgs ",
         provider_label, app.selected_model, msg_count
     );
-    let right_len = right_display.len() as u16;
+    let right_len = display_width(&right_display) as u16;
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -244,12 +244,8 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Conversation indicator + title (truncated if too long for available space)
     let title = &app.current_conversation().title;
-    let max_title_len = chunks[2].width.saturating_sub(conv_indicator.len() as u16) as usize;
-    let display_title = if title.len() > max_title_len {
-        format!("{}...", &title[..max_title_len.saturating_sub(3)])
-    } else {
-        title.to_string()
-    };
+    let max_title_len = chunks[2].width.saturating_sub(display_width(&conv_indicator) as u16) as usize;
+    let display_title = truncate_with_ellipsis(title, max_title_len);
     let mut title_spans = Vec::new();
     if !conv_indicator.is_empty() {
         title_spans.push(Span::styled(conv_indicator, Style::default().fg(theme.dim)));
@@ -670,7 +666,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             app.conversations.len(),
         );
         let right_span = Span::styled(right_text.clone(), Style::default().fg(Color::DarkGray));
-        let right_width = right_text.len() as u16;
+        let right_width = display_width(&right_text) as u16;
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)

@@ -10,7 +10,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::prompts::{self, BUILTIN_CACHE};
-use super::utils::centered_rect_fixed;
+use super::utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -247,17 +247,13 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 };
                 let badge = format!("[{}]", prompt.category);
                 // Truncate long prompt names to fit the available width.
-                let max_name_len = list_width.saturating_sub(badge.len() + 6); // 6 = marker + padding
-                let truncated_name = if prompt.name.len() > max_name_len {
-                    format!("{}...", &prompt.name[..max_name_len.saturating_sub(3)])
-                } else {
-                    prompt.name.clone()
-                };
+                let max_name_len = list_width.saturating_sub(display_width(&badge) + 6); // 6 = marker + padding
+                let truncated_name = truncate_with_ellipsis(&prompt.name, max_name_len);
                 let name_part = format!("{}{}", marker, truncated_name);
                 // Calculate padding between name and badge.
                 let padding_len = list_width
-                    .saturating_sub(name_part.len())
-                    .saturating_sub(badge.len())
+                    .saturating_sub(display_width(&name_part))
+                    .saturating_sub(display_width(&badge))
                     .max(2);
                 let padding = " ".repeat(padding_len);
 
@@ -276,14 +272,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 // -- Line 2: indented description (truncated if too long) --
                 let desc_style = Style::default().fg(Color::DarkGray);
                 let max_desc_len = list_width.saturating_sub(4); // 4 = indent
-                let truncated_desc = if prompt.description.len() > max_desc_len {
-                    format!(
-                        "{}...",
-                        &prompt.description[..max_desc_len.saturating_sub(3)]
-                    )
-                } else {
-                    prompt.description.clone()
-                };
+                let truncated_desc = truncate_with_ellipsis(&prompt.description, max_desc_len);
                 let line2 = Line::from(vec![
                     Span::raw("    "),
                     Span::styled(truncated_desc, desc_style),
@@ -339,8 +328,8 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let footer_left = format!("{}/{} prompts", match_count, total);
     let footer_right = "Enter \u{23ce}  |  Tab: category  |  Esc: close";
     let footer_pad = (chunks[4].width as usize)
-        .saturating_sub(footer_left.len())
-        .saturating_sub(footer_right.len());
+        .saturating_sub(display_width(&footer_left))
+        .saturating_sub(display_width(footer_right));
 
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(footer_left, Style::default().fg(Color::DarkGray)),

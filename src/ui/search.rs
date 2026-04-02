@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::app::App;
+use super::utils::display_width;
 
 /// Render the search overlay as a small floating bar at the top-center of the screen.
 pub fn render_search(frame: &mut Frame, app: &App) {
@@ -64,10 +65,10 @@ pub fn render_search(frame: &mut Frame, app: &App) {
 
     // Calculate how much space we have for the match info on the right.
     let available = inner.width as usize;
-    let left_part_len = 2 + query_display.len() + 1; // "> " + query + cursor
+    let left_part_len = 2 + display_width(query_display) + 1; // "> " + query + cursor
     let padding_len = available
         .saturating_sub(left_part_len)
-        .saturating_sub(match_info.len());
+        .saturating_sub(display_width(&match_info));
 
     let line = Line::from(vec![
         Span::styled(

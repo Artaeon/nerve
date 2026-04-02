@@ -15,6 +15,7 @@ use syntect::{
 };
 
 use crate::app::App;
+use super::utils::display_width;
 
 // ── Lazily-initialised syntect resources (loaded once) ───────────────────────
 
@@ -548,7 +549,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let total_lines: u16 = lines
         .iter()
         .map(|line| {
-            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            let line_width: usize = line.spans.iter().map(|s| display_width(&s.content)).sum();
             if line_width == 0 {
                 1u16 // Empty lines still take 1 row
             } else {
