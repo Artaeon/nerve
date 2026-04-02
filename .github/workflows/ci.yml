@@ -68,6 +68,10 @@ jobs:
             artifact: nerve-linux-x86_64
           - os: macos-latest
             artifact: nerve-macos-arm64
+          - os: macos-13
+            artifact: nerve-macos-x86_64
+          - os: windows-latest
+            artifact: nerve-windows-x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -79,4 +83,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/nerve
+          path: target/release/nerve${{ matrix.os == 'windows-latest' && '.exe' || '' }}
