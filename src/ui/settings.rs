@@ -384,6 +384,26 @@ fn render_theme_tab(frame: &mut Frame, app: &App, area: Rect) {
             theme.map(|t| t.accent_color.clone()).unwrap_or_default(),
             theme.map(|t| hex_to_color(&t.accent_color)),
         ),
+        (
+            "Success Color",
+            theme.map(|t| t.success_color.clone()).unwrap_or_default(),
+            theme.map(|t| hex_to_color(&t.success_color)),
+        ),
+        (
+            "Error Color",
+            theme.map(|t| t.error_color.clone()).unwrap_or_default(),
+            theme.map(|t| hex_to_color(&t.error_color)),
+        ),
+        (
+            "Warning Color",
+            theme.map(|t| t.warning_color.clone()).unwrap_or_default(),
+            theme.map(|t| hex_to_color(&t.warning_color)),
+        ),
+        (
+            "Dim Color",
+            theme.map(|t| t.dim_color.clone()).unwrap_or_default(),
+            theme.map(|t| hex_to_color(&t.dim_color)),
+        ),
     ];
 
     let clamped = app.settings_select.min(items.len().saturating_sub(1));
@@ -474,7 +494,7 @@ fn render_theme_tab(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Returns the item count for the Theme tab.
 pub fn theme_item_count() -> usize {
-    5
+    9
 }
 
 /// Parse a hex colour string (#rrggbb) into a ratatui Color.

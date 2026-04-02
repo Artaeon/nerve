@@ -17,16 +17,71 @@ use ratatui::{
 };
 
 use crate::app::{App, AppMode, InputMode};
+use crate::config;
 use utils::centered_rect_fixed;
 
-// ── UI Color Constants ──────────────────────────────────────────────────
-const ACCENT: Color = Color::Cyan;
-const USER_BADGE_BG: Color = Color::Blue;
-const AI_BADGE_BG: Color = Color::Green;
-const SEPARATOR: Color = Color::Rgb(60, 60, 80);
-const DIM_TEXT: Color = Color::DarkGray;
-const ACTIVE_BORDER: Color = Color::Cyan;
-const INACTIVE_BORDER: Color = Color::DarkGray;
+// ── Resolved theme colors ───────────────────────────────────────────────
+
+/// Parsed theme colors ready for use in rendering.
+pub(crate) struct ResolvedTheme {
+    pub accent: Color,
+    pub border: Color,
+    pub success: Color,
+    pub error: Color,
+    pub warning: Color,
+    pub dim: Color,
+    pub user_color: Color,
+    pub assistant_color: Color,
+}
+
+impl ResolvedTheme {
+    /// Separator color derived from the border color (slightly brighter).
+    pub fn separator(&self) -> Color {
+        self.border
+    }
+
+    /// Active border = accent, inactive border = dim.
+    pub fn active_border(&self) -> Color {
+        self.accent
+    }
+
+    pub fn inactive_border(&self) -> Color {
+        self.dim
+    }
+}
+
+/// Parse a hex colour string (#rrggbb) into a ratatui Color.
+fn hex_to_color(hex: &str) -> Color {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return Color::White;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
+    Color::Rgb(r, g, b)
+}
+
+/// Resolve the current theme from the app's theme_index into parsed Colors.
+pub(crate) fn resolve_theme(app: &App) -> ResolvedTheme {
+    let presets = config::theme_presets();
+    let theme = presets
+        .get(app.theme_index)
+        .map(|(_, t)| t.clone())
+        .unwrap_or_default();
+
+    ResolvedTheme {
+        accent: hex_to_color(&theme.accent_color),
+        border: hex_to_color(&theme.border_color),
+        success: hex_to_color(&theme.success_color),
+        error: hex_to_color(&theme.error_color),
+        warning: hex_to_color(&theme.warning_color),
+        dim: hex_to_color(&theme.dim_color),
+        user_color: hex_to_color(&theme.user_color),
+        assistant_color: hex_to_color(&theme.assistant_color),
+    }
+}
+
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
@@ -101,9 +156,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
 // ─── Top bar ─────────────────────────────────────────────────────────────────
 
 fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = resolve_theme(app);
+
     let block = Block::default()
         .borders(Borders::BOTTOM)
-        .border_style(Style::default().fg(SEPARATOR));
+        .border_style(Style::default().fg(theme.separator()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -137,7 +194,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             " CODE ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Yellow)
+                .bg(theme.warning)
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -166,10 +223,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             " Nerve ",
             Style::default()
                 .fg(Color::Black)
-                .bg(ACCENT)
+                .bg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" v0.1", Style::default().fg(DIM_TEXT)),
+        Span::styled(" v0.1", Style::default().fg(theme.dim)),
     ];
     if !badge_spans.is_empty() {
         brand_spans.push(Span::raw(" "));
@@ -181,7 +238,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Separator
     let sep = Paragraph::new(Line::from(Span::styled(
         " \u{2502} ",
-        Style::default().fg(SEPARATOR),
+        Style::default().fg(theme.separator()),
     )));
     frame.render_widget(sep, chunks[1]);
 
@@ -195,7 +252,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     };
     let mut title_spans = Vec::new();
     if !conv_indicator.is_empty() {
-        title_spans.push(Span::styled(conv_indicator, Style::default().fg(DIM_TEXT)));
+        title_spans.push(Span::styled(conv_indicator, Style::default().fg(theme.dim)));
     }
     title_spans.push(Span::styled(
         display_title,
@@ -212,15 +269,15 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
             format!("{} ", provider_label),
             Style::default().fg(Color::Magenta),
         ),
-        Span::styled("\u{203a} ", Style::default().fg(SEPARATOR)),
+        Span::styled("\u{203a} ", Style::default().fg(theme.separator())),
         Span::styled(
             app.selected_model.to_string(),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.warning)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" \u{2502} ", Style::default().fg(SEPARATOR)),
-        Span::styled(format!("{} msgs ", msg_count), Style::default().fg(ACCENT)),
+        Span::styled(" \u{2502} ", Style::default().fg(theme.separator())),
+        Span::styled(format!("{} msgs ", msg_count), Style::default().fg(theme.accent)),
     ]))
     .alignment(Alignment::Right);
     frame.render_widget(model_badge, chunks[3]);
@@ -242,26 +299,28 @@ fn render_bottom(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_input(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = resolve_theme(app);
+
     let mode_indicator = match app.input_mode {
         InputMode::Normal => Span::styled(
             " NOR ",
             Style::default()
                 .fg(Color::White)
-                .bg(USER_BADGE_BG)
+                .bg(theme.user_color)
                 .add_modifier(Modifier::BOLD),
         ),
         InputMode::Insert => Span::styled(
             " INS ",
             Style::default()
                 .fg(Color::Black)
-                .bg(AI_BADGE_BG)
+                .bg(theme.success)
                 .add_modifier(Modifier::BOLD),
         ),
     };
 
     let border_color = match app.input_mode {
-        InputMode::Insert => ACTIVE_BORDER,
-        InputMode::Normal => INACTIVE_BORDER,
+        InputMode::Insert => theme.active_border(),
+        InputMode::Normal => theme.inactive_border(),
     };
 
     let is_empty = app.input.is_empty();
@@ -275,12 +334,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
             Span::styled(
                 "Type your message... (Enter to send, Shift+Enter for newline)",
-                Style::default().fg(DIM_TEXT),
+                Style::default().fg(theme.dim),
             ),
             Span::styled(
                 "\u{258c}",
                 Style::default()
-                    .fg(ACCENT)
+                    .fg(theme.accent)
                     .add_modifier(Modifier::SLOW_BLINK),
             ),
         ])]
@@ -291,7 +350,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             Span::raw(" "),
             Span::styled(
                 "Press i to start typing, / for Nerve Bar",
-                Style::default().fg(DIM_TEXT),
+                Style::default().fg(theme.dim),
             ),
         ])]
     } else {
@@ -331,7 +390,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                         Span::styled(
                             cursor_char.to_string(),
                             Style::default()
-                                .fg(ACCENT)
+                                .fg(theme.accent)
                                 .add_modifier(Modifier::SLOW_BLINK),
                         ),
                         Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
@@ -366,7 +425,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                     Span::styled(
                         cursor_char.to_string(),
                         Style::default()
-                            .fg(ACCENT)
+                            .fg(theme.accent)
                             .add_modifier(Modifier::SLOW_BLINK),
                     ),
                     Span::styled(first_after.to_string(), Style::default().fg(Color::White)),
@@ -424,12 +483,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(
             format!("({} words) ", word_count),
-            Style::default().fg(DIM_TEXT),
+            Style::default().fg(theme.dim),
         ),
     ]);
     let bottom_line = Line::from(vec![Span::styled(
         format!(" {} ", hint),
-        Style::default().fg(DIM_TEXT),
+        Style::default().fg(theme.dim),
     )]);
 
     let input_block = Block::default()
@@ -448,8 +507,9 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let theme = resolve_theme(app);
     let provider_label = provider_display_name(&app.selected_provider);
-    let sep = Span::styled(" \u{2502} ", Style::default().fg(SEPARATOR));
+    let sep = Span::styled(" \u{2502} ", Style::default().fg(theme.separator()));
 
     if app.is_streaming {
         // Streaming status bar with animated bouncing progress bar
@@ -556,22 +616,22 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 || msg.starts_with("Blocked")
                 || msg.starts_with("Failed")
             {
-                Style::default().fg(Color::Red)
+                Style::default().fg(theme.error)
             } else if msg.starts_with("Saved")
                 || msg.starts_with("Copied")
                 || msg.starts_with("Exported")
                 || msg.contains("success")
             {
-                Style::default().fg(Color::Green)
+                Style::default().fg(theme.success)
             } else {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(theme.warning)
             };
             Span::styled(format!(" {msg}"), msg_style)
         } else {
             Span::styled(
                 " Ready",
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme.success)
                     .add_modifier(Modifier::BOLD),
             )
         };
@@ -636,9 +696,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
                 format!(" \u{2191} {} lines above ", app.scroll_offset),
-                Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
             ));
-            left_spans.push(Span::styled("j/k", Style::default().fg(DIM_TEXT)));
+            left_spans.push(Span::styled("j/k", Style::default().fg(theme.dim)));
         }
 
         left_spans.push(sep.clone());

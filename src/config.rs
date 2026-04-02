@@ -58,6 +58,14 @@ pub struct ThemeConfig {
     pub assistant_color: String,
     pub border_color: String,
     pub accent_color: String,
+    #[serde(default = "ThemeConfig::default_success_color")]
+    pub success_color: String,
+    #[serde(default = "ThemeConfig::default_error_color")]
+    pub error_color: String,
+    #[serde(default = "ThemeConfig::default_warning_color")]
+    pub warning_color: String,
+    #[serde(default = "ThemeConfig::default_dim_color")]
+    pub dim_color: String,
 }
 
 /// Configurable keyboard shortcuts (stored as human-readable strings such
@@ -117,6 +125,21 @@ impl Default for ProvidersConfig {
     }
 }
 
+impl ThemeConfig {
+    fn default_success_color() -> String {
+        "#a6e3a1".into()
+    }
+    fn default_error_color() -> String {
+        "#f38ba8".into()
+    }
+    fn default_warning_color() -> String {
+        "#f9e2af".into()
+    }
+    fn default_dim_color() -> String {
+        "#6c7086".into()
+    }
+}
+
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
@@ -124,6 +147,10 @@ impl Default for ThemeConfig {
             assistant_color: "#a6e3a1".into(),
             border_color: "#585b70".into(),
             accent_color: "#cba6f7".into(),
+            success_color: "#a6e3a1".into(),
+            error_color: "#f38ba8".into(),
+            warning_color: "#f9e2af".into(),
+            dim_color: "#6c7086".into(),
         }
     }
 }
@@ -279,6 +306,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#a6e3a1".into(),
                 border_color: "#585b70".into(),
                 accent_color: "#cba6f7".into(),
+                success_color: "#a6e3a1".into(),
+                error_color: "#f38ba8".into(),
+                warning_color: "#f9e2af".into(),
+                dim_color: "#6c7086".into(),
             },
         ),
         (
@@ -288,6 +319,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#9ece6a".into(),
                 border_color: "#3b4261".into(),
                 accent_color: "#bb9af7".into(),
+                success_color: "#9ece6a".into(),
+                error_color: "#f7768e".into(),
+                warning_color: "#e0af68".into(),
+                dim_color: "#565f89".into(),
             },
         ),
         (
@@ -297,6 +332,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#b8bb26".into(),
                 border_color: "#504945".into(),
                 accent_color: "#d3869b".into(),
+                success_color: "#b8bb26".into(),
+                error_color: "#fb4934".into(),
+                warning_color: "#fabd2f".into(),
+                dim_color: "#665c54".into(),
             },
         ),
         (
@@ -306,6 +345,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#a3be8c".into(),
                 border_color: "#4c566a".into(),
                 accent_color: "#b48ead".into(),
+                success_color: "#a3be8c".into(),
+                error_color: "#bf616a".into(),
+                warning_color: "#ebcb8b".into(),
+                dim_color: "#616e88".into(),
             },
         ),
         (
@@ -315,6 +358,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#859900".into(),
                 border_color: "#586e75".into(),
                 accent_color: "#6c71c4".into(),
+                success_color: "#859900".into(),
+                error_color: "#dc322f".into(),
+                warning_color: "#b58900".into(),
+                dim_color: "#657b83".into(),
             },
         ),
         (
@@ -324,6 +371,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#50fa7b".into(),
                 border_color: "#6272a4".into(),
                 accent_color: "#ff79c6".into(),
+                success_color: "#50fa7b".into(),
+                error_color: "#ff5555".into(),
+                warning_color: "#f1fa8c".into(),
+                dim_color: "#6272a4".into(),
             },
         ),
         (
@@ -333,6 +384,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#98c379".into(),
                 border_color: "#5c6370".into(),
                 accent_color: "#c678dd".into(),
+                success_color: "#98c379".into(),
+                error_color: "#e06c75".into(),
+                warning_color: "#e5c07b".into(),
+                dim_color: "#5c6370".into(),
             },
         ),
         (
@@ -342,6 +397,10 @@ pub fn theme_presets() -> Vec<(&'static str, ThemeConfig)> {
                 assistant_color: "#31748f".into(),
                 border_color: "#524f67".into(),
                 accent_color: "#c4a7e7".into(),
+                success_color: "#31748f".into(),
+                error_color: "#eb6f92".into(),
+                warning_color: "#f6c177".into(),
+                dim_color: "#6e6a86".into(),
             },
         ),
     ]
@@ -464,6 +523,10 @@ mod tests {
             &t.assistant_color,
             &t.border_color,
             &t.accent_color,
+            &t.success_color,
+            &t.error_color,
+            &t.warning_color,
+            &t.dim_color,
         ] {
             assert!(color.starts_with('#'), "color should start with #: {color}");
             assert_eq!(color.len(), 7, "color should be #rrggbb: {color}");
@@ -610,6 +673,10 @@ mod tests {
         assert_eq!(restored.assistant_color, theme.assistant_color);
         assert_eq!(restored.border_color, theme.border_color);
         assert_eq!(restored.accent_color, theme.accent_color);
+        assert_eq!(restored.success_color, theme.success_color);
+        assert_eq!(restored.error_color, theme.error_color);
+        assert_eq!(restored.warning_color, theme.warning_color);
+        assert_eq!(restored.dim_color, theme.dim_color);
     }
 
     #[test]
@@ -806,6 +873,10 @@ default_provider = "openai"
                 &theme.assistant_color,
                 &theme.border_color,
                 &theme.accent_color,
+                &theme.success_color,
+                &theme.error_color,
+                &theme.warning_color,
+                &theme.dim_color,
             ] {
                 assert!(
                     color.starts_with('#'),
