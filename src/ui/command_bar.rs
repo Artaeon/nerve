@@ -148,7 +148,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let mut active_end = 0usize;
     let mut cursor = 0usize;
     for (label, is_active) in &tab_labels {
-        let w = label.len() + 2; // +2 for the "  " spacer
+        let w = display_width(label) + 2; // +2 for the "  " spacer
         if *is_active {
             active_start = cursor;
             active_end = cursor + w;
@@ -175,7 +175,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
         ));
     }
     for (i, (label, _is_active)) in tab_labels.iter().enumerate() {
-        let w = label.len() + 2;
+        let w = display_width(label) + 2;
         let end = pos + w;
         // Skip tabs entirely before the scroll window.
         if end <= scroll_x {

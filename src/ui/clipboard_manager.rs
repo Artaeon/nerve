@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph},
 };
 
-use super::utils::centered_rect_fixed;
+use super::utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 use crate::app::App;
 
 /// Render the clipboard manager overlay.
@@ -118,9 +118,9 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
 
             // Compute how much space the preview text can use.
             // Layout: "{badge} {preview}  {time}"
-            let overhead = badge.len() + 1 + 2 + time_str.len();
+            let overhead = display_width(badge) + 1 + 2 + display_width(&time_str);
             let max_preview = content_width.saturating_sub(overhead);
-            let preview: String = entry.preview.chars().take(max_preview).collect();
+            let preview = truncate_with_ellipsis(&entry.preview, max_preview);
 
             let line = Line::from(vec![
                 Span::styled(badge, badge_style),
