@@ -82,6 +82,9 @@ A comprehensive guide to using Nerve as your terminal AI assistant and coding ag
     - [Config File Location](#config-file-location)
     - [Full Configuration Reference](#full-configuration-reference)
     - [Theme Customization](#theme-customization)
+      - [Available Theme Presets](#available-theme-presets)
+      - [Theme Color Fields](#theme-color-fields)
+      - [Custom Theme Example](#custom-theme-example)
     - [Keybind Customization](#keybind-customization)
     - [File Paths and Data Storage](#file-paths-and-data-storage)
 15. [Workspace Awareness](#workspace-awareness)
@@ -1455,6 +1458,10 @@ user_color = "#89b4fa"         # User message headers and text accents
 assistant_color = "#a6e3a1"    # AI response headers
 border_color = "#585b70"       # Panel borders and dividers
 accent_color = "#cba6f7"       # Status bar, selections, search matches
+success_color = "#a6e3a1"     # Success status messages
+error_color = "#f38ba8"       # Error status messages
+warning_color = "#f9e2af"     # Warning status messages
+dim_color = "#6c7086"         # Dimmed/secondary text
 
 # --- Providers ---
 
@@ -1499,16 +1506,76 @@ quit = "ctrl+q"
 
 ### Theme Customization
 
-All colors are hex codes. The four theme colors control different parts of the UI:
+Nerve ships with 10 built-in theme presets and supports fully custom themes. You
+can switch themes at runtime or set a default in your config file.
+
+#### Available Theme Presets
+
+| Theme | Style |
+|-------|-------|
+| Catppuccin Mocha | Warm pastel colors on dark background |
+| Tokyo Night | Cool blues and purples inspired by Tokyo at night |
+| Gruvbox Dark | Retro warm earth tones |
+| Nord | Arctic, north-bluish colors |
+| Solarized Dark | Precision colors designed for readability |
+| Dracula | Dark theme with vibrant colors |
+| One Dark | Atom editor-inspired dark theme |
+| Rose Pine | Muted, elegant colors with a touch of pink |
+| High Contrast | Accessibility theme with maximum contrast, avoids red/green |
+| Monochrome | White/gray tones only for true color-blind accessibility |
+
+**Switching themes at runtime:**
+
+```
+/theme tokyo_night
+/theme list
+```
+
+Use `/theme list` to see all available presets with the currently active one
+marked. You can also reference a theme by number (e.g. `/theme 2` for Tokyo
+Night) or by partial name match (e.g. `/theme rose`).
+
+Themes can also be cycled in the Settings panel (press the keybinding for
+settings, navigate to the Theme tab, and press Enter to cycle).
+
+#### Theme Color Fields
+
+All colors are CSS-style hex codes (`#rrggbb`). Eight color fields control
+different parts of the UI:
 
 | Key | Controls |
 |-----|----------|
-| `user_color` | User message headers and text accents |
-| `assistant_color` | AI response headers |
-| `border_color` | Panel borders and dividers |
-| `accent_color` | Status bar highlights, selections, matched search terms |
+| `user_color` | Color for user message badges and names |
+| `assistant_color` | Color for AI message badges and names |
+| `border_color` | UI borders and separators |
+| `accent_color` | Active elements, highlights, key UI accents |
+| `success_color` | Success status messages |
+| `error_color` | Error status messages |
+| `warning_color` | Warning status messages |
+| `dim_color` | Dimmed/secondary text |
 
-**Example: Dark blue theme:**
+#### Custom Theme Example
+
+To define a fully custom theme, set `preset = "custom"` and specify all eight
+color fields in your `config.toml`:
+
+```toml
+[theme]
+preset = "custom"
+user_color = "#89b4fa"
+assistant_color = "#a6e3a1"
+border_color = "#45475a"
+accent_color = "#cba6f7"
+success_color = "#a6e3a1"
+error_color = "#f38ba8"
+warning_color = "#f9e2af"
+dim_color = "#6c7086"
+```
+
+You only need to set the fields you want to override; any omitted fields fall
+back to the Catppuccin Mocha defaults.
+
+**Example: Dark blue theme (Tokyo Night-inspired):**
 
 ```toml
 [theme]
@@ -1516,6 +1583,10 @@ user_color = "#7aa2f7"
 assistant_color = "#9ece6a"
 border_color = "#3b4261"
 accent_color = "#bb9af7"
+success_color = "#9ece6a"
+error_color = "#f7768e"
+warning_color = "#e0af68"
+dim_color = "#565f89"
 ```
 
 **Example: Solarized-inspired:**
@@ -1525,7 +1596,11 @@ accent_color = "#bb9af7"
 user_color = "#268bd2"
 assistant_color = "#859900"
 border_color = "#586e75"
-accent_color = "#d33682"
+accent_color = "#6c71c4"
+success_color = "#859900"
+error_color = "#dc322f"
+warning_color = "#b58900"
+dim_color = "#586e75"
 ```
 
 ### Keybind Customization
