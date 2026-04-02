@@ -37,7 +37,7 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings -A dead_code -A unused_imports
+      - run: cargo clippy --all-targets -- -D warnings
 
   fmt:
     name: Format
@@ -48,6 +48,15 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   build:
     name: Build (${{ matrix.artifact }})
