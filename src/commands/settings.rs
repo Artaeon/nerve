@@ -229,9 +229,7 @@ fn handle_plugin(app: &mut App, trimmed: &str) -> bool {
             app.set_status(format!("{} plugin(s) loaded", app.plugins.len()));
         }
         _ => {
-            app.add_assistant_message(
-                "Usage: /plugin list | /plugin init | /plugin reload".into(),
-            );
+            app.add_assistant_message("Usage: /plugin list | /plugin init | /plugin reload".into());
         }
     }
     app.scroll_offset = 0;

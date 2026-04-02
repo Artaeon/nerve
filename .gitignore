@@ -13,3 +13,4 @@
 # Debug
 *.pdb
 *.dSYM/
+.claude/worktrees/

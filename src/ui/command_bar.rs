@@ -8,9 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap},
 };
 
+use super::utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 use crate::app::App;
 use crate::prompts::{self, BUILTIN_CACHE};
-use super::utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

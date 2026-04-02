@@ -14,8 +14,8 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
-use crate::app::App;
 use super::utils::display_width;
+use crate::app::App;
 
 // ── Lazily-initialised syntect resources (loaded once) ───────────────────────
 

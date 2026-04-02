@@ -194,36 +194,35 @@ fn handle_copy(app: &mut App, trimmed: &str) -> bool {
             .last()
             .map(|(_, c)| c.clone())
             .unwrap_or_default(),
-        "code" => {
-            conv.messages
-                .iter()
-                .rev()
-                .filter(|(r, _)| r == "assistant")
-                .find_map(|(_, content)| {
-                    let mut in_block = false;
-                    let mut code = String::new();
-                    let mut last_code: Option<String> = None;
-                    for line in content.lines() {
-                        if line.starts_with("```") {
-                            if in_block {
-                                last_code = Some(code.clone());
-                                code.clear();
-                                in_block = false;
-                            } else {
-                                in_block = true;
-                                code.clear();
-                            }
-                        } else if in_block {
-                            if !code.is_empty() {
-                                code.push('\n');
-                            }
-                            code.push_str(line);
+        "code" => conv
+            .messages
+            .iter()
+            .rev()
+            .filter(|(r, _)| r == "assistant")
+            .find_map(|(_, content)| {
+                let mut in_block = false;
+                let mut code = String::new();
+                let mut last_code: Option<String> = None;
+                for line in content.lines() {
+                    if line.starts_with("```") {
+                        if in_block {
+                            last_code = Some(code.clone());
+                            code.clear();
+                            in_block = false;
+                        } else {
+                            in_block = true;
+                            code.clear();
                         }
+                    } else if in_block {
+                        if !code.is_empty() {
+                            code.push('\n');
+                        }
+                        code.push_str(line);
                     }
-                    last_code
-                })
-                .unwrap_or_default()
-        }
+                }
+                last_code
+            })
+            .unwrap_or_default(),
         other => {
             if let Ok(num) = other.parse::<usize>() {
                 let idx = conv.messages.len().saturating_sub(num);

@@ -83,7 +83,6 @@ pub(crate) fn resolve_theme(app: &App) -> ResolvedTheme {
     }
 }
 
-
 // ─── Public entry point ──────────────────────────────────────────────────────
 
 /// Main draw function — called once per frame by the event loop.
@@ -245,7 +244,9 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
 
     // Conversation indicator + title (truncated if too long for available space)
     let title = &app.current_conversation().title;
-    let max_title_len = chunks[2].width.saturating_sub(display_width(&conv_indicator) as u16) as usize;
+    let max_title_len = chunks[2]
+        .width
+        .saturating_sub(display_width(&conv_indicator) as u16) as usize;
     let display_title = truncate_with_ellipsis(title, max_title_len);
     let mut title_spans = Vec::new();
     if !conv_indicator.is_empty() {
@@ -274,7 +275,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(" \u{2502} ", Style::default().fg(theme.separator())),
-        Span::styled(format!("{} msgs ", msg_count), Style::default().fg(theme.accent)),
+        Span::styled(
+            format!("{} msgs ", msg_count),
+            Style::default().fg(theme.accent),
+        ),
     ]))
     .alignment(Alignment::Right);
     frame.render_widget(model_badge, chunks[3]);
@@ -693,7 +697,9 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
                 format!(" \u{2191} {} lines above ", app.scroll_offset),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ));
             left_spans.push(Span::styled("j/k", Style::default().fg(theme.dim)));
         }

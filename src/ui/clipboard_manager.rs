@@ -7,8 +7,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph},
 };
 
-use crate::app::App;
 use super::utils::centered_rect_fixed;
+use crate::app::App;
 
 /// Render the clipboard manager overlay.
 pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {

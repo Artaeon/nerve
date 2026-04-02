@@ -6,8 +6,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Padding, Paragraph},
 };
 
-use crate::app::App;
 use super::utils::display_width;
+use crate::app::App;
 
 /// Render the search overlay as a small floating bar at the top-center of the screen.
 pub fn render_search(frame: &mut Frame, app: &App) {

@@ -165,10 +165,8 @@ fn handle_provider_switch(app: &mut App, rest: &str) -> bool {
     if valid.contains(&name) {
         app.selected_provider = name.to_string();
         app.provider_changed = true;
-        app.selected_model =
-            crate::default_model_for_provider(&app.selected_provider).into();
-        app.available_models =
-            crate::models_for_provider(&app.selected_provider);
+        app.selected_model = crate::default_model_for_provider(&app.selected_provider).into();
+        app.available_models = crate::models_for_provider(&app.selected_provider);
         app.set_status(format!("Switched to provider: {name}"));
     } else {
         app.add_assistant_message(format!(
@@ -314,9 +312,7 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                     );
                 }
             } else {
-                app.set_status(
-                    "Agent mode ON \u{2014} AI has tool access (no git repo detected)",
-                );
+                app.set_status("Agent mode ON \u{2014} AI has tool access (no git repo detected)");
             }
         }
         "off" => {
@@ -373,9 +369,7 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
         "diff" => match crate::shell::run_command("git diff") {
             Ok(result) => {
                 if result.stdout.trim().is_empty() {
-                    app.add_assistant_message(
-                        "No changes detected since agent started.".into(),
-                    );
+                    app.add_assistant_message("No changes detected since agent started.".into());
                 } else {
                     let diff = format!("Agent changes:\n\n```diff\n{}\n```", result.stdout);
                     app.add_assistant_message(diff);
@@ -655,9 +649,7 @@ fn handle_mode(app: &mut App, trimmed: &str) -> bool {
             app.current_conversation_mut()
                 .messages
                 .insert(0, ("system".into(), sys.into()));
-            app.set_status(
-                "Mode: Review \u{2014} structured code review with severity ratings",
-            );
+            app.set_status("Mode: Review \u{2014} structured code review with severity ratings");
         }
         "standard" | "default" | "reset" => {
             app.active_mode = app::NerveMode::Standard;

@@ -288,8 +288,7 @@ fn handle_summary(app: &mut App) -> bool {
 }
 
 fn handle_compact(app: &mut App) -> bool {
-    let limit =
-        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
     let cm = crate::agent::context::ContextManager::new(limit);
     let messages = app.current_conversation().messages.clone();
 
@@ -307,11 +306,10 @@ fn handle_compact(app: &mut App) -> bool {
         app.set_status("Conversation already compact");
     } else {
         app.current_conversation_mut().messages = compacted;
-        let saved_tokens =
-            crate::agent::context::ContextManager::conversation_tokens(&messages)
-                - crate::agent::context::ContextManager::conversation_tokens(
-                    &app.current_conversation().messages,
-                );
+        let saved_tokens = crate::agent::context::ContextManager::conversation_tokens(&messages)
+            - crate::agent::context::ContextManager::conversation_tokens(
+                &app.current_conversation().messages,
+            );
         app.set_status(format!(
             "Compacted: {} \u{2192} {} messages (~{} tokens saved)",
             before, after, saved_tokens
@@ -323,8 +321,7 @@ fn handle_compact(app: &mut App) -> bool {
 fn handle_tokens(app: &mut App) -> bool {
     let conv = app.current_conversation();
     let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
-    let limit =
-        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let limit = crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
     let pct = (total as f64 / limit as f64 * 100.0).min(100.0);
 
     let mut msg = format!("Token Usage\n{}\n\n", "=".repeat(30));

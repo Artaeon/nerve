@@ -142,8 +142,7 @@ fn handle_test(app: &mut App) -> bool {
                 .push(("system".into(), context));
             app.add_assistant_message(output);
             if !result.success {
-                app.status_message =
-                    Some("Tests FAILED \u{2014} ask me to help fix them".into());
+                app.status_message = Some("Tests FAILED \u{2014} ask me to help fix them".into());
             } else {
                 app.status_message = Some("Tests passed".into());
             }

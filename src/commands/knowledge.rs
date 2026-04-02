@@ -29,11 +29,7 @@ pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>
     false
 }
 
-async fn handle_url(
-    app: &mut App,
-    rest: &str,
-    provider: &Arc<dyn AiProvider>,
-) -> bool {
+async fn handle_url(app: &mut App, rest: &str, provider: &Arc<dyn AiProvider>) -> bool {
     let rest = rest.trim();
     if rest.is_empty() {
         app.status_message = Some("Usage: /url <url> [question]".into());
@@ -445,8 +441,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
         return;
     }
 
-    app.status_message =
-        Some("Unknown /auto command. Use: list, run, create, delete, info".into());
+    app.status_message = Some("Unknown /auto command. Use: list, run, create, delete, info".into());
 }
 
 /// Execute an automation pipeline.
@@ -516,12 +511,8 @@ async fn run_automation(
             match provider.chat(&messages, &model_owned).await {
                 Ok(response) => prev_output = response,
                 Err(e) => {
-                    app.add_assistant_message(format!(
-                        "Automation error at step {}: {e}",
-                        i + 1,
-                    ));
-                    app.status_message =
-                        Some(format!("Automation failed at step {}", i + 1));
+                    app.add_assistant_message(format!("Automation error at step {}: {e}", i + 1,));
+                    app.status_message = Some(format!("Automation failed at step {}", i + 1));
                     return;
                 }
             }

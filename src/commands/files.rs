@@ -180,11 +180,7 @@ fn handle_template(app: &mut App, trimmed: &str) -> bool {
     true
 }
 
-async fn handle_scaffold(
-    app: &mut App,
-    trimmed: &str,
-    provider: &Arc<dyn AiProvider>,
-) -> bool {
+async fn handle_scaffold(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
     let rest = trimmed.strip_prefix("/scaffold").unwrap_or("").trim();
     if rest.is_empty() {
         app.add_assistant_message(
