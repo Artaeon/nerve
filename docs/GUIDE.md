@@ -130,7 +130,7 @@ codegen unit, and symbol stripping to produce the smallest possible binary.
 # Check the binary size
 ls -lh target/release/nerve
 
-# Run the test suite (450 tests)
+# Run the test suite (820 tests)
 cargo test
 
 # Verify it launches
@@ -1556,12 +1556,11 @@ different parts of the UI:
 
 #### Custom Theme Example
 
-To define a fully custom theme, set `preset = "custom"` and specify all eight
-color fields in your `config.toml`:
+To define a fully custom theme, specify all eight color fields in your
+`config.toml`. Any field you set will override the default theme:
 
 ```toml
 [theme]
-preset = "custom"
 user_color = "#89b4fa"
 assistant_color = "#a6e3a1"
 border_color = "#45475a"
@@ -2181,8 +2180,8 @@ For contributors and curious users, here is the high-level project layout:
 
 ```
 nerve/
-├── src/                          38 files, ~18K lines of Rust
-│   ├── main.rs                   Entry point, event loop, 38 slash commands
+├── src/                          42 files, ~28K lines of Rust
+│   ├── main.rs                   Entry point, event loop, 50+ slash commands
 │   ├── app.rs                    Application state machine
 │   ├── config.rs                 TOML configuration (load/save/defaults)
 │   ├── daemon.rs                 Background daemon (Unix socket IPC)
@@ -2274,7 +2273,7 @@ list, and provider state.
 
 ### Test Suite
 
-The test suite contains 450 tests across all 38 source files. Tests cover:
+The test suite contains 820 tests across 42 source files. Tests cover:
 
 - AI provider abstractions (mock providers, message formatting)
 - Agent tool parsing (tool call extraction, parameter validation)
