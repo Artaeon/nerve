@@ -27,6 +27,22 @@ Chat. Code. Ship. All from your terminal.
 
 ---
 
+## Why Nerve?
+
+| | Nerve | Claude Code | Cursor | Aider |
+|---|---|---|---|---|
+| **Open source** | MIT | No | No | Apache-2.0 |
+| **Terminal-native** | Yes | Yes | No (Electron) | Yes |
+| **Multi-provider** | 6 providers | Claude only | Limited | Multi |
+| **Local/offline** | Ollama | No | No | Ollama |
+| **Agent mode** | 9 tools | Yes | Yes | Yes |
+| **Smart prompts** | 166 built-in | No | No | No |
+| **Cost** | Free + API keys | $20/mo | $20/mo | Free + API |
+| **Binary size** | 7.3 MB | ~150 MB | ~500 MB | Python |
+| **Vim keybindings** | Native | No | Plugin | No |
+
+---
+
 ## Installation
 
 ### Download (pre-built)
