@@ -10,8 +10,8 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem},
 };
 
-use crate::app::App;
 use super::resolve_theme;
+use crate::app::App;
 
 /// Render the autocomplete popup above the input area.
 ///

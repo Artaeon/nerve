@@ -1260,8 +1260,7 @@ async fn handle_normal_mode(
             if app.autocomplete_visible {
                 match code {
                     KeyCode::Up => {
-                        app.autocomplete_index =
-                            app.autocomplete_index.saturating_sub(1);
+                        app.autocomplete_index = app.autocomplete_index.saturating_sub(1);
                         return Ok(());
                     }
                     KeyCode::Down => {
