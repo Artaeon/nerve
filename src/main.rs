@@ -1486,7 +1486,7 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.input = template;
                 app.cursor_position = app.input.len();
                 app.input_mode = InputMode::Insert;
-                app.status_message = Some(format!("Loaded prompt: {}", prompt.name));
+                app.set_status(format!("Loaded prompt: {}", prompt.name));
             }
             app.mode = AppMode::Normal;
         }
@@ -1588,7 +1588,7 @@ fn handle_prompt_picker(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.input = template;
                 app.cursor_position = app.input.len();
                 app.input_mode = InputMode::Insert;
-                app.status_message = Some(format!("Loaded prompt: {}", prompt.name));
+                app.set_status(format!("Loaded prompt: {}", prompt.name));
             }
             app.mode = AppMode::Normal;
         }
@@ -1675,10 +1675,10 @@ fn handle_clipboard_manager(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some(&(original_idx, _)) = filtered.get(app.clipboard_select_index) {
                 match app.clipboard_manager.copy_to_system(original_idx) {
                     Ok(()) => {
-                        app.status_message = Some("Copied to clipboard".into());
+                        app.set_status("Copied to clipboard");
                     }
                     Err(e) => {
-                        app.status_message = Some(format!("Clipboard error: {e}"));
+                        app.set_status(format!("Clipboard error: {e}"));
                     }
                 }
             }
@@ -1904,7 +1904,7 @@ fn handle_search(app: &mut App, key: crossterm::event::KeyEvent) {
             // Jump to next match
             if !app.search_results.is_empty() {
                 app.search_current = (app.search_current + 1) % app.search_results.len();
-                app.status_message = Some(format!(
+                app.set_status(format!(
                     "Match {}/{}",
                     app.search_current + 1,
                     app.search_results.len()
