@@ -32,7 +32,7 @@ pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>
 async fn handle_url(app: &mut App, rest: &str, provider: &Arc<dyn AiProvider>) -> bool {
     let rest = rest.trim();
     if rest.is_empty() {
-        app.status_message = Some("Usage: /url <url> [question]".into());
+        app.set_status("Usage: /url <url> [question]");
         return true;
     }
 
@@ -49,7 +49,7 @@ async fn handle_url(app: &mut App, rest: &str, provider: &Arc<dyn AiProvider>) -
         None => (rest, None),
     };
 
-    app.status_message = Some(format!("Scraping {url}..."));
+    app.set_status(format!("Scraping {url}..."));
 
     match scraper::scrape_url(url).await {
         Ok(result) => {
@@ -70,14 +70,14 @@ async fn handle_url(app: &mut App, rest: &str, provider: &Arc<dyn AiProvider>) -
                 Some(q) => q,
                 None => format!("I've loaded content from {url}. Please summarise it."),
             };
-            app.status_message = Some(format!("Scraped {url} ({} words)", result.word_count));
+            app.set_status(format!("Scraped {url} ({} words)", result.word_count));
 
             app.add_user_message(user_msg);
             app.scroll_offset = 0;
             crate::send_to_ai_from_history(app, provider).await;
         }
         Err(e) => {
-            app.status_message = Some(format!("Scrape failed: {e}"));
+            app.set_status(format!("Scrape failed: {e}"));
         }
     }
     true
@@ -90,12 +90,12 @@ fn handle_kb(app: &mut App, trimmed: &str) {
     if let Some(dir_path) = rest.strip_prefix("add ") {
         let dir_path = dir_path.trim();
         if dir_path.is_empty() {
-            app.status_message = Some("Usage: /kb add <directory>".into());
+            app.set_status("Usage: /kb add <directory>");
             return;
         }
         let path = std::path::Path::new(dir_path);
         if !path.is_dir() {
-            app.status_message = Some(format!("Not a directory: {dir_path}"));
+            app.set_status(format!("Not a directory: {dir_path}"));
             return;
         }
         let mut kb = knowledge::KnowledgeBase::load("default")
@@ -117,11 +117,11 @@ fn handle_kb(app: &mut App, trimmed: &str) {
                         .messages
                         .push(("assistant".into(), msg));
                     app.scroll_offset = 0;
-                    app.status_message = Some(format!("KB: ingested {count} documents"));
+                    app.set_status(format!("KB: ingested {count} documents"));
                 }
             }
             Err(e) => {
-                app.status_message = Some(format!("Ingest failed: {e}"));
+                app.set_status(format!("Ingest failed: {e}"));
             }
         }
         return;
@@ -158,7 +158,7 @@ fn handle_kb(app: &mut App, trimmed: &str) {
                 app.scroll_offset = 0;
             }
             Err(e) => {
-                app.status_message = Some(format!("Failed to list KBs: {e}"));
+                app.set_status(format!("Failed to list KBs: {e}"));
             }
         }
         return;
@@ -168,7 +168,7 @@ fn handle_kb(app: &mut App, trimmed: &str) {
     if let Some(query) = rest.strip_prefix("search ") {
         let query = query.trim();
         if query.is_empty() {
-            app.status_message = Some("Usage: /kb search <query>".into());
+            app.set_status("Usage: /kb search <query>");
             return;
         }
         match knowledge::KnowledgeBase::load("default") {
@@ -218,10 +218,10 @@ fn handle_kb(app: &mut App, trimmed: &str) {
                     .messages
                     .push(("assistant".into(), "Default knowledge base cleared.".into()));
                 app.scroll_offset = 0;
-                app.status_message = Some("KB cleared".into());
+                app.set_status("KB cleared");
             }
             Err(e) => {
-                app.status_message = Some(format!("Failed to clear KB: {e}"));
+                app.set_status(format!("Failed to clear KB: {e}"));
             }
         }
         return;
@@ -257,7 +257,7 @@ fn handle_kb(app: &mut App, trimmed: &str) {
         return;
     }
 
-    app.status_message = Some(format!(
+    app.set_status(format!(
         "Unknown /kb command: {rest}. Try /kb add, /kb list, /kb search, /kb clear, or /kb status."
     ));
 }
@@ -301,7 +301,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     if let Some(name) = rest.strip_prefix("info ") {
         let name = name.trim();
         if name.is_empty() {
-            app.status_message = Some("Usage: /auto info <name>".into());
+            app.set_status("Usage: /auto info <name>");
             return;
         }
         match automation::find_automation(name) {
@@ -318,7 +318,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
                 app.add_assistant_message(msg);
             }
             Err(_) => {
-                app.status_message = Some(format!("Automation '{name}' not found"));
+                app.set_status(format!("Automation '{name}' not found"));
             }
         }
         app.scroll_offset = 0;
@@ -329,7 +329,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     if let Some(name) = rest.strip_prefix("delete ") {
         let name = name.trim();
         if name.is_empty() {
-            app.status_message = Some("Usage: /auto delete <name>".into());
+            app.set_status("Usage: /auto delete <name>");
             return;
         }
         let builtin_names: Vec<String> = automation::builtin_automations()
@@ -337,15 +337,15 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
             .map(|a| a.name.to_lowercase())
             .collect();
         if builtin_names.contains(&name.to_lowercase()) {
-            app.status_message = Some("Cannot delete built-in automations".into());
+            app.set_status("Cannot delete built-in automations");
             return;
         }
         match automation::delete_automation(name) {
             Ok(()) => {
-                app.status_message = Some(format!("Deleted automation '{name}'"));
+                app.set_status(format!("Deleted automation '{name}'"));
             }
             Err(e) => {
-                app.status_message = Some(format!("Delete failed: {e}"));
+                app.set_status(format!("Delete failed: {e}"));
             }
         }
         return;
@@ -355,7 +355,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     if let Some(name) = rest.strip_prefix("create ") {
         let name = name.trim();
         if name.is_empty() {
-            app.status_message = Some("Usage: /auto create <name>".into());
+            app.set_status("Usage: /auto create <name>");
             return;
         }
         let auto = automation::Automation::new(name.to_string(), "Custom automation".into());
@@ -388,7 +388,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
                 app.add_assistant_message(msg);
             }
             Err(e) => {
-                app.status_message = Some(format!("Create failed: {e}"));
+                app.set_status(format!("Create failed: {e}"));
             }
         }
         app.scroll_offset = 0;
@@ -399,13 +399,13 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     if let Some(name) = rest.strip_prefix("run ") {
         let name = name.trim();
         if name.is_empty() {
-            app.status_message = Some("Usage: /auto run <name>".into());
+            app.set_status("Usage: /auto run <name>");
             return;
         }
         match automation::find_automation(name) {
             Ok(auto) => {
                 if auto.steps.is_empty() {
-                    app.status_message = Some(format!("Automation '{name}' has no steps"));
+                    app.set_status(format!("Automation '{name}' has no steps"));
                     return;
                 }
 
@@ -425,9 +425,8 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
                 };
 
                 if input.is_empty() {
-                    app.status_message = Some(
-                        "No input provided. Type something first or have a previous message."
-                            .into(),
+                    app.set_status(
+                        "No input provided. Type something first or have a previous message.",
                     );
                     return;
                 }
@@ -435,13 +434,13 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
                 run_automation(app, &auto, &input, provider).await;
             }
             Err(_) => {
-                app.status_message = Some(format!("Automation '{name}' not found"));
+                app.set_status(format!("Automation '{name}' not found"));
             }
         }
         return;
     }
 
-    app.status_message = Some("Unknown /auto command. Use: list, run, create, delete, info".into());
+    app.set_status("Unknown /auto command. Use: list, run, create, delete, info");
 }
 
 /// Execute an automation pipeline.
@@ -455,7 +454,7 @@ async fn run_automation(
     let mut prev_output = String::new();
     let total_steps = automation.steps.len();
 
-    app.status_message = Some(format!("Running automation: {}", automation.name));
+    app.set_status(format!("Running automation: {}", automation.name));
 
     for (i, step) in automation.steps.iter().enumerate() {
         let model_owned = step
@@ -467,7 +466,7 @@ async fn run_automation(
             .replace("{{input}}", input)
             .replace("{{prev_output}}", &prev_output);
 
-        app.status_message = Some(format!(
+        app.set_status(format!(
             "Automation step {}/{}: {}...",
             i + 1,
             total_steps,
@@ -502,7 +501,7 @@ async fn run_automation(
             });
 
             let elapsed = start.elapsed().as_millis();
-            app.status_message = Some(format!(
+            app.set_status(format!(
                 "Automation '{}' complete ({total_steps} steps, {elapsed}ms)",
                 automation.name,
             ));
@@ -512,7 +511,7 @@ async fn run_automation(
                 Ok(response) => prev_output = response,
                 Err(e) => {
                     app.add_assistant_message(format!("Automation error at step {}: {e}", i + 1,));
-                    app.status_message = Some(format!("Automation failed at step {}", i + 1));
+                    app.set_status(format!("Automation failed at step {}", i + 1));
                     return;
                 }
             }

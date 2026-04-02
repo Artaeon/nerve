@@ -53,14 +53,14 @@ fn handle_run(app: &mut App, trimmed: &str) -> bool {
         app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
         return true;
     }
-    app.status_message = Some(format!("Running: {cmd}"));
+    app.set_status(format!("Running: {cmd}"));
     match shell::run_command(&cmd) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);
         }
         Err(e) => {
-            app.status_message = Some(format!("Error: {e}"));
+            app.set_status(format!("Error: {e}"));
         }
     }
     true
@@ -79,21 +79,21 @@ fn handle_pipe(app: &mut App, trimmed: &str) -> bool {
         app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
         return true;
     }
-    app.status_message = Some(format!("Running: {cmd}"));
+    app.set_status(format!("Running: {cmd}"));
     match shell::run_command(&cmd) {
         Ok(result) => {
             let context = shell::format_command_for_context(&result);
             app.current_conversation_mut()
                 .messages
                 .push(("system".into(), context));
-            app.status_message = Some(format!(
+            app.set_status(format!(
                 "Added output of '{}' as context ({} lines)",
                 cmd,
                 result.stdout.lines().count()
             ));
         }
         Err(e) => {
-            app.status_message = Some(format!("Error: {e}"));
+            app.set_status(format!("Error: {e}"));
         }
     }
     true
@@ -125,14 +125,14 @@ fn handle_diff(app: &mut App, trimmed: &str) -> bool {
                 ));
             }
         }
-        Err(e) => app.status_message = Some(format!("Error: {e}")),
+        Err(e) => app.set_status(format!("Error: {e}")),
     }
     true
 }
 
 fn handle_test(app: &mut App) -> bool {
     let cmd = shell::detect_test_command();
-    app.status_message = Some(format!("Running: {cmd}"));
+    app.set_status(format!("Running: {cmd}"));
     match shell::run_command(cmd) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
@@ -142,19 +142,19 @@ fn handle_test(app: &mut App) -> bool {
                 .push(("system".into(), context));
             app.add_assistant_message(output);
             if !result.success {
-                app.status_message = Some("Tests FAILED \u{2014} ask me to help fix them".into());
+                app.set_status("Tests FAILED \u{2014} ask me to help fix them");
             } else {
-                app.status_message = Some("Tests passed".into());
+                app.set_status("Tests passed");
             }
         }
-        Err(e) => app.status_message = Some(format!("Error: {e}")),
+        Err(e) => app.set_status(format!("Error: {e}")),
     }
     true
 }
 
 fn handle_build(app: &mut App) -> bool {
     let cmd = shell::detect_build_command();
-    app.status_message = Some(format!("Running: {cmd}"));
+    app.set_status(format!("Running: {cmd}"));
     match shell::run_command(cmd) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
@@ -164,13 +164,13 @@ fn handle_build(app: &mut App) -> bool {
                     .messages
                     .push(("system".into(), context));
                 app.add_assistant_message(output);
-                app.status_message = Some("Build FAILED \u{2014} ask me to help fix it".into());
+                app.set_status("Build FAILED \u{2014} ask me to help fix it");
             } else {
                 app.add_assistant_message(output);
-                app.status_message = Some("Build succeeded".into());
+                app.set_status("Build succeeded");
             }
         }
-        Err(e) => app.status_message = Some(format!("Error: {e}")),
+        Err(e) => app.set_status(format!("Error: {e}")),
     }
     true
 }
@@ -201,7 +201,7 @@ fn handle_git(app: &mut App, trimmed: &str) -> bool {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);
         }
-        Err(e) => app.status_message = Some(format!("Error: {e}")),
+        Err(e) => app.set_status(format!("Error: {e}")),
     }
     true
 }

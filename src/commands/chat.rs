@@ -101,8 +101,8 @@ fn handle_export(app: &mut App) -> bool {
     }
 
     match std::fs::write(&path, &content) {
-        Ok(()) => app.status_message = Some(format!("Exported to {}", path.display())),
-        Err(e) => app.status_message = Some(format!("Export error: {e}")),
+        Ok(()) => app.set_status(format!("Exported to {}", path.display())),
+        Err(e) => app.set_status(format!("Export error: {e}")),
     }
     true
 }
@@ -128,7 +128,7 @@ fn handle_system(app: &mut App, trimmed: &str) -> bool {
         app.current_conversation_mut()
             .messages
             .retain(|(r, _)| r != "system");
-        app.status_message = Some("System prompt cleared".into());
+        app.set_status("System prompt cleared");
     } else {
         let prompt = rest.to_string();
         app.current_conversation_mut()
@@ -137,7 +137,7 @@ fn handle_system(app: &mut App, trimmed: &str) -> bool {
         app.current_conversation_mut()
             .messages
             .insert(0, ("system".into(), prompt));
-        app.status_message = Some("System prompt set".into());
+        app.set_status("System prompt set");
     }
     app.scroll_offset = 0;
     true
@@ -150,7 +150,7 @@ fn handle_rename(app: &mut App, trimmed: &str) -> bool {
     } else {
         let new_title = rest.to_string();
         app.current_conversation_mut().title = new_title.clone();
-        app.status_message = Some(format!("Renamed to: {new_title}"));
+        app.set_status(format!("Renamed to: {new_title}"));
     }
     app.scroll_offset = 0;
     true
@@ -163,18 +163,18 @@ fn handle_delete(app: &mut App, trimmed: &str) -> bool {
         app.conversations.push(app::Conversation::new());
         app.active_conversation = 0;
         app.scroll_offset = 0;
-        app.status_message = Some("All conversations deleted".into());
+        app.set_status("All conversations deleted");
     } else if app.conversations.len() <= 1 {
         app.current_conversation_mut().messages.clear();
         app.current_conversation_mut().title = "New Conversation".into();
-        app.status_message = Some("Conversation cleared".into());
+        app.set_status("Conversation cleared");
     } else {
         app.conversations.remove(app.active_conversation);
         if app.active_conversation >= app.conversations.len() {
             app.active_conversation = app.conversations.len() - 1;
         }
         app.scroll_offset = 0;
-        app.status_message = Some("Conversation deleted".into());
+        app.set_status("Conversation deleted");
     }
     true
 }
@@ -241,11 +241,11 @@ fn handle_copy(app: &mut App, trimmed: &str) -> bool {
         }
     };
     if text.is_empty() {
-        app.status_message = Some("Nothing to copy".into());
+        app.set_status("Nothing to copy");
     } else {
         match clipboard::copy_to_clipboard(&text) {
-            Ok(()) => app.status_message = Some("Copied to clipboard".into()),
-            Err(e) => app.status_message = Some(format!("Clipboard error: {e}")),
+            Ok(()) => app.set_status("Copied to clipboard"),
+            Err(e) => app.set_status(format!("Clipboard error: {e}")),
         }
     }
     true

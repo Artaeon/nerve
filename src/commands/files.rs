@@ -72,10 +72,10 @@ fn handle_file(app: &mut App, trimmed: &str) -> bool {
             app.current_conversation_mut()
                 .messages
                 .push(("system".into(), formatted));
-            app.status_message = Some(format!("Added {} ({} lines)", fc.path, fc.line_count));
+            app.set_status(format!("Added {} ({} lines)", fc.path, fc.line_count));
         }
         Err(e) => {
-            app.status_message = Some(format!("Error: {e}"));
+            app.set_status(format!("Error: {e}"));
         }
     }
     app.scroll_offset = 0;
@@ -101,12 +101,12 @@ fn handle_files(app: &mut App, trimmed: &str) -> bool {
                 added += 1;
             }
             Err(e) => {
-                app.status_message = Some(format!("Error reading {path}: {e}"));
+                app.set_status(format!("Error reading {path}: {e}"));
             }
         }
     }
     if added > 0 {
-        app.status_message = Some(format!("Added {added} file(s) as context"));
+        app.set_status(format!("Added {added} file(s) as context"));
     }
     app.scroll_offset = 0;
     true
@@ -165,7 +165,7 @@ fn handle_template(app: &mut App, trimmed: &str) -> bool {
                     ));
                 }
                 Err(e) => {
-                    app.status_message = Some(format!("Error: {e}"));
+                    app.set_status(format!("Error: {e}"));
                 }
             }
         }

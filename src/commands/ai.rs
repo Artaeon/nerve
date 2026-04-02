@@ -81,7 +81,7 @@ fn handle_models(app: &mut App) -> bool {
 fn handle_model_switch(app: &mut App, rest: &str) -> bool {
     let name = rest.trim();
     if name.is_empty() {
-        app.status_message = Some("Usage: /model <model-name>".into());
+        app.set_status("Usage: /model <model-name>");
         return true;
     }
     let matched = app
@@ -492,9 +492,9 @@ fn handle_cwd(app: &mut App, trimmed: &str) -> bool {
         if path.is_dir() {
             app.working_dir = Some(rest.to_string());
             app.provider_changed = true;
-            app.status_message = Some(format!("Working directory set to {rest}"));
+            app.set_status(format!("Working directory set to {rest}"));
         } else {
-            app.status_message = Some(format!("Not a directory: {rest}"));
+            app.set_status(format!("Not a directory: {rest}"));
         }
     }
     app.scroll_offset = 0;
