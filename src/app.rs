@@ -214,6 +214,14 @@ pub struct App {
     // -- aliases --
     pub aliases: HashMap<String, String>,
 
+    // -- autocomplete --
+    /// Autocomplete suggestions currently visible.
+    pub autocomplete_items: Vec<String>,
+    /// Currently selected index in the autocomplete popup.
+    pub autocomplete_index: usize,
+    /// Whether the autocomplete popup is visible.
+    pub autocomplete_visible: bool,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -323,6 +331,10 @@ impl App {
             input_saved: String::new(),
 
             aliases: HashMap::new(),
+
+            autocomplete_items: Vec::new(),
+            autocomplete_index: 0,
+            autocomplete_visible: false,
 
             status_message: None,
             status_time: None,
