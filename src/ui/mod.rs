@@ -632,6 +632,16 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.warning)
             };
             Span::styled(format!(" {msg}"), msg_style)
+        } else if app.input_mode == InputMode::Insert && app.input.starts_with('/') {
+            Span::styled(
+                " Type a command and press Enter | Tab: autocomplete",
+                Style::default().fg(theme.dim),
+            )
+        } else if app.input_mode == InputMode::Normal {
+            Span::styled(
+                " Ctrl+K: commands  Ctrl+,: settings  i: insert  /: commands  ?: help",
+                Style::default().fg(theme.dim),
+            )
         } else {
             Span::styled(
                 " Ready",
