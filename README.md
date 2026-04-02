@@ -19,7 +19,7 @@
 
 Chat. Code. Ship. All from your terminal.
 
-27K lines of Rust. 820 tests. 166 prompts. 9 agent tools. 6 providers. 7.3MB binary.
+28K lines of Rust. 820 tests. 166 prompts. 9 agent tools. 6 providers. 7.3MB binary.
 
 </div>
 
@@ -261,7 +261,7 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 | `/alias <n> <cmd>` | Create command alias |
 | `/status` | System overview |
 
-See `/help` in the TUI for the complete list of 45+ commands.
+See `/help` in the TUI for the complete list of 50+ commands.
 
 ---
 
