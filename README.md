@@ -6,7 +6,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-2563EB.svg)](LICENSE)
 [![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-F74C00.svg)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/Tests-820%20passing-22C55E.svg)](#quality)
+[![CI](https://github.com/Artaeon/nerve/actions/workflows/ci.yml/badge.svg)](https://github.com/Artaeon/nerve/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/Version-0.1.0-7C3AED.svg)](CHANGELOG.md)
 
 ```
