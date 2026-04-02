@@ -17,5 +17,5 @@
 │ You are a senior software engineer performing a thorough code          │
 │ review. Analyze the following code with extreme attention to detail... │
 │                                                                         │
-│ 3/130 prompts                    Tab: category | Enter: use | Esc     │
+│ 3/166 prompts                    Tab: category | Enter: use | Esc     │
 ╰───────────────────────────────────────────────────────────────────────╯
