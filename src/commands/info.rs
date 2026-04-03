@@ -89,6 +89,9 @@ Shell & Git\n\
   /diff [args]        Show git diff (adds as context)\n\
   /test               Auto-detect and run project tests\n\
   /build              Auto-detect and run project build\n\
+  /lint               Auto-detect and run linter\n\
+  /format (/fmt)      Auto-detect and run code formatter\n\
+  /search <pattern>   Search codebase with ripgrep\n\
   /git [subcommand]   Quick git operations (status/log/diff/branch)\n\
   /commit [message]   Stage all and commit (AI-generates message if omitted)\n\
   /stage [files...]   Stage files (all if no args)\n\

@@ -1,4 +1,4 @@
-//! Shell commands: /run, /pipe, /diff, /test, /build, /git
+//! Shell commands: /run, /pipe, /diff, /test, /build, /lint, /format, /search, /git
 
 use crate::app::App;
 use crate::shell;
@@ -23,6 +23,18 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
 
     if trimmed == "/build" {
         return handle_build(app);
+    }
+
+    if trimmed == "/lint" {
+        return handle_lint(app);
+    }
+
+    if trimmed == "/format" || trimmed == "/fmt" {
+        return handle_format(app);
+    }
+
+    if crate::shell::matches_command(trimmed, "/search") {
+        return handle_search(app, trimmed);
     }
 
     if crate::shell::matches_command(trimmed, "/git") {
@@ -200,6 +212,79 @@ fn handle_git(app: &mut App, trimmed: &str) -> bool {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);
+        }
+        Err(e) => app.report_error(e),
+    }
+    true
+}
+
+fn handle_lint(app: &mut App) -> bool {
+    let cmd = shell::detect_lint_command();
+    app.set_status(format!("Running: {cmd}"));
+    match shell::run_command_with_timeout(cmd, app.command_timeout_secs) {
+        Ok(result) => {
+            let output = shell::format_command_output(&result);
+            let context = shell::format_command_for_context(&result);
+            app.current_conversation_mut()
+                .messages
+                .push(("system".into(), context));
+            app.add_assistant_message(output);
+            if !result.success {
+                app.set_status("Lint FAILED \u{2014} ask me to help fix issues");
+            } else {
+                app.set_status("Lint passed");
+            }
+        }
+        Err(e) => app.report_error(e),
+    }
+    true
+}
+
+fn handle_format(app: &mut App) -> bool {
+    let cmd = shell::detect_format_command();
+    app.set_status(format!("Running: {cmd}"));
+    match shell::run_command_with_timeout(cmd, app.command_timeout_secs) {
+        Ok(result) => {
+            let output = shell::format_command_output(&result);
+            app.add_assistant_message(output);
+            if !result.success {
+                app.set_status("Format failed");
+            } else {
+                app.set_status("Code formatted");
+            }
+        }
+        Err(e) => app.report_error(e),
+    }
+    true
+}
+
+fn handle_search(app: &mut App, trimmed: &str) -> bool {
+    let pattern = trimmed.strip_prefix("/search").unwrap_or("").trim();
+    if pattern.is_empty() {
+        app.set_status("Usage: /search <pattern>");
+        return true;
+    }
+
+    let escaped = shell::shell_escape(pattern);
+    let cmd = format!("rg --line-number --color=never --max-count=5 --max-columns=200 {escaped} | head -50");
+    match shell::run_command_with_timeout(&cmd, app.command_timeout_secs) {
+        Ok(result) => {
+            if result.stdout.trim().is_empty() {
+                app.add_assistant_message(format!("No matches found for: `{pattern}`"));
+            } else {
+                let match_count = result.stdout.lines().count();
+                let context = format!(
+                    "Search results for `{pattern}`:\n\n```\n{}\n```",
+                    result.stdout
+                );
+                app.current_conversation_mut()
+                    .messages
+                    .push(("system".into(), context));
+                app.add_assistant_message(format!(
+                    "Found {match_count} matches for `{pattern}`. Ask me to analyze or modify the matching code."
+                ));
+            }
+            app.set_status(format!("Search: {pattern}"));
         }
         Err(e) => app.report_error(e),
     }

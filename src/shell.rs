@@ -409,6 +409,58 @@ pub fn detect_build_command() -> &'static str {
     "echo 'No build command detected'"
 }
 
+/// Detect the project's lint command.
+pub fn detect_lint_command() -> &'static str {
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    if cwd.join("Cargo.toml").exists() {
+        return "cargo clippy 2>&1";
+    }
+    if cwd.join("package.json").exists() {
+        return "npx eslint . 2>&1";
+    }
+    if cwd.join("go.mod").exists() {
+        return "golangci-lint run 2>&1";
+    }
+    if cwd.join("pyproject.toml").exists() || cwd.join("setup.py").exists() {
+        return "ruff check . 2>&1";
+    }
+    if cwd.join("Gemfile").exists() {
+        return "bundle exec rubocop 2>&1";
+    }
+    if cwd.join("mix.exs").exists() {
+        return "mix credo 2>&1";
+    }
+
+    "echo 'No lint command detected'"
+}
+
+/// Detect the project's format command.
+pub fn detect_format_command() -> &'static str {
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    if cwd.join("Cargo.toml").exists() {
+        return "cargo fmt";
+    }
+    if cwd.join("package.json").exists() {
+        return "npx prettier --write .";
+    }
+    if cwd.join("go.mod").exists() {
+        return "gofmt -w .";
+    }
+    if cwd.join("pyproject.toml").exists() || cwd.join("setup.py").exists() {
+        return "ruff format .";
+    }
+    if cwd.join("Gemfile").exists() {
+        return "bundle exec rubocop -A";
+    }
+    if cwd.join("mix.exs").exists() {
+        return "mix format";
+    }
+
+    "echo 'No format command detected'"
+}
+
 /// Get the git diff.  Arguments are passed through shell escaping to prevent
 /// injection via metacharacters like `$(...)`, backticks, pipes, etc.
 pub fn git_diff(args: &str) -> anyhow::Result<CommandResult> {

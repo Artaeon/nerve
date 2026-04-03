@@ -157,6 +157,9 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/diff", "Show git diff (adds as context)", "Shell & Git"),
         ("/test", "Auto-detect and run project tests", "Shell & Git"),
         ("/build", "Auto-detect and run project build", "Shell & Git"),
+        ("/lint", "Auto-detect and run linter (clippy/eslint/ruff)", "Shell & Git"),
+        ("/format", "Auto-detect and run formatter (fmt/prettier/ruff)", "Shell & Git"),
+        ("/search", "Search codebase with ripgrep (adds results as context)", "Shell & Git"),
         (
             "/git",
             "Quick git operations (status/log/diff/branch)",
