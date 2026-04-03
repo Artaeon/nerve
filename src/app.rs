@@ -63,13 +63,13 @@ impl NerveMode {
                 "You are in Efficient mode. Be extremely concise. \
                  Use short sentences. Omit pleasantries. Skip explanations \
                  unless asked. Prefer code over prose. Use bullet points. \
-                 Never repeat the question back."
+                 Never repeat the question back.",
             ),
             Self::Thorough => Some(
                 "You are in Thorough mode. Provide detailed, comprehensive responses. \
                  Explain your reasoning step by step. Consider edge cases. \
                  Show alternative approaches when relevant. Include examples. \
-                 Cite file paths and line numbers when discussing code."
+                 Cite file paths and line numbers when discussing code.",
             ),
             Self::Agent => Some(
                 "You are in Agent mode with tool access. Follow this workflow: \
@@ -78,7 +78,7 @@ impl NerveMode {
                  3) IMPLEMENT using the available tools (read, write, edit, run). \
                  4) VERIFY your changes compile and work. \
                  5) REPORT what you did and any issues found. \
-                 Always read files before modifying them. Run tests after changes."
+                 Always read files before modifying them. Run tests after changes.",
             ),
             Self::Learning => Some(
                 "You are in Learning mode. The user wants to understand, not just get answers. \
@@ -86,7 +86,7 @@ impl NerveMode {
                  Ask Socratic questions to check understanding. \
                  Break complex topics into digestible pieces. \
                  Provide small exercises or challenges when appropriate. \
-                 Use progressive disclosure — start simple, add detail on follow-up."
+                 Use progressive disclosure — start simple, add detail on follow-up.",
             ),
         }
     }

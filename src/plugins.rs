@@ -10,17 +10,40 @@ fn strip_ansi_and_control(s: &str) -> String {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\x1b' {
-            // Consume CSI sequence: ESC [ ... <final byte>
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Read until we hit a letter (0x40..=0x7E)
-                for ch in chars.by_ref() {
-                    if ch.is_ascii_alphabetic() || ch == '~' {
-                        break;
+            match chars.peek() {
+                // CSI sequence: ESC [ ... <final byte (letter or ~)>
+                Some(&'[') => {
+                    chars.next();
+                    for ch in chars.by_ref() {
+                        if ch.is_ascii_alphabetic() || ch == '~' {
+                            break;
+                        }
                     }
                 }
+                // OSC sequence: ESC ] ... <ST>
+                // ST is either BEL (\x07) or ESC \ (two chars)
+                Some(&']') => {
+                    chars.next();
+                    loop {
+                        match chars.next() {
+                            Some('\x07') | None => break,
+                            Some('\x1b') => {
+                                // Consume the backslash of the ST (ESC \)
+                                if chars.peek() == Some(&'\\') {
+                                    chars.next();
+                                }
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // Any other ESC sequence (SS2, SS3, etc.) — skip next char.
+                Some(_) => {
+                    chars.next();
+                }
+                None => {}
             }
-            // Also skip OSC (ESC ]) and other short sequences.
             continue;
         }
         if c.is_control() && c != '\n' && c != '\t' {
@@ -445,5 +468,19 @@ enabled = true
     fn strip_ansi_truecolor() {
         let input = "\x1b[38;2;255;0;0mred\x1b[0m";
         assert_eq!(strip_ansi_and_control(input), "red");
+    }
+
+    #[test]
+    fn strip_ansi_osc_title_bel() {
+        // OSC to set terminal title, terminated by BEL
+        let input = "\x1b]0;my title\x07visible";
+        assert_eq!(strip_ansi_and_control(input), "visible");
+    }
+
+    #[test]
+    fn strip_ansi_osc_title_st() {
+        // OSC to set terminal title, terminated by ESC backslash (ST)
+        let input = "\x1b]0;my title\x1b\\visible";
+        assert_eq!(strip_ansi_and_control(input), "visible");
     }
 }

@@ -520,7 +520,10 @@ mod tests {
                 id: "unicode-conv".into(),
                 title: "\u{1F980} Ferris says hi \u{2764}".into(),
                 messages: vec![
-                    ("user".into(), "\u{00E4}\u{00F6}\u{00FC}\u{00DF} German".into()),
+                    (
+                        "user".into(),
+                        "\u{00E4}\u{00F6}\u{00FC}\u{00DF} German".into(),
+                    ),
                     ("assistant".into(), "\u{4F60}\u{597D} Chinese".into()),
                     ("user".into(), "\u{0410}\u{0411}\u{0412} Russian".into()),
                 ],
@@ -538,8 +541,16 @@ mod tests {
         let loaded = load_last_session().unwrap();
 
         assert!(loaded.conversations[0].title.contains("\u{1F980}"));
-        assert!(loaded.conversations[0].messages[0].1.contains("\u{00E4}\u{00F6}\u{00FC}"));
-        assert!(loaded.conversations[0].messages[1].1.contains("\u{4F60}\u{597D}"));
+        assert!(
+            loaded.conversations[0].messages[0]
+                .1
+                .contains("\u{00E4}\u{00F6}\u{00FC}")
+        );
+        assert!(
+            loaded.conversations[0].messages[1]
+                .1
+                .contains("\u{4F60}\u{597D}")
+        );
 
         delete_session(&session.id).unwrap();
     }
@@ -681,10 +692,9 @@ mod tests {
 
     #[test]
     fn session_conversation_preserves_created_at() {
-        let fixed_time =
-            chrono::DateTime::parse_from_rfc3339("2025-06-15T12:00:00Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        let fixed_time = chrono::DateTime::parse_from_rfc3339("2025-06-15T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
 
         let session = Session {
             id: "time-test".into(),
@@ -728,8 +738,14 @@ mod tests {
         // be no entry whose id came only from the last_session.json file.
         // We can't directly test the skip, but we can verify the named copy
         // shows up exactly once.
-        let count = sessions.iter().filter(|(id, _, _)| *id == session.id).count();
-        assert_eq!(count, 1, "Session should appear exactly once (from named copy)");
+        let count = sessions
+            .iter()
+            .filter(|(id, _, _)| *id == session.id)
+            .count();
+        assert_eq!(
+            count, 1,
+            "Session should appear exactly once (from named copy)"
+        );
 
         delete_session(&session.id).unwrap();
     }

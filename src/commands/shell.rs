@@ -266,7 +266,9 @@ fn handle_search(app: &mut App, trimmed: &str) -> bool {
     }
 
     let escaped = shell::shell_escape(pattern);
-    let cmd = format!("rg --line-number --color=never --max-count=5 --max-columns=200 {escaped} | head -50");
+    let cmd = format!(
+        "rg --line-number --color=never --max-count=5 --max-columns=200 {escaped} | head -50"
+    );
     match shell::run_command_with_timeout(&cmd, app.command_timeout_secs) {
         Ok(result) => {
             if result.stdout.trim().is_empty() {

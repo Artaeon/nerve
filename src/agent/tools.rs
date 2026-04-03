@@ -439,9 +439,7 @@ fn verify_file_syntax(path: &str) -> Option<String> {
         Some("py") => Some(format!(
             "python3 -c \"import ast; ast.parse(open({escaped}).read())\" 2>&1",
         )),
-        Some("js" | "ts" | "jsx" | "tsx") => {
-            Some(format!("node --check {escaped} 2>&1 | head -5"))
-        }
+        Some("js" | "ts" | "jsx" | "tsx") => Some(format!("node --check {escaped} 2>&1 | head -5")),
         Some("json") => Some(format!(
             "python3 -c \"import json; json.load(open({escaped}))\" 2>&1",
         )),

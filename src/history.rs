@@ -415,10 +415,7 @@ mod tests {
         // We'll test by temporarily pointing at a dir that does exist but is empty
         std::fs::create_dir_all(&empty_dir).unwrap();
         assert!(
-            std::fs::read_dir(&empty_dir)
-                .unwrap()
-                .next()
-                .is_none(),
+            std::fs::read_dir(&empty_dir).unwrap().next().is_none(),
             "Dir should be empty"
         );
         // We can't redirect history_dir(), but we can verify the behavior
@@ -462,7 +459,11 @@ mod tests {
         let loaded = load_conversation(&id).unwrap();
 
         assert!(loaded.title.contains("\u{1F980}"));
-        assert!(loaded.messages[0].content.contains("\u{00E4}\u{00F6}\u{00FC}"));
+        assert!(
+            loaded.messages[0]
+                .content
+                .contains("\u{00E4}\u{00F6}\u{00FC}")
+        );
         assert!(loaded.messages[1].content.contains("\u{0410}\u{0411}"));
         assert!(loaded.messages[2].content.contains("\u{1F680}"));
 
@@ -544,7 +545,10 @@ mod tests {
             "updated_at": "2025-01-01T00:00:00Z"
         }"#;
         let record: ConversationRecord = serde_json::from_str(json).unwrap();
-        assert_eq!(record.provider, "", "Missing provider should default to empty string");
+        assert_eq!(
+            record.provider, "",
+            "Missing provider should default to empty string"
+        );
     }
 
     #[test]
