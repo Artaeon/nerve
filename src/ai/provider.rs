@@ -43,6 +43,16 @@ pub enum StreamEvent {
     Done,
     /// An error occurred during streaming.
     Error(String),
+    /// A tool has started executing.
+    #[allow(dead_code)]
+    ToolStart { tool: String, summary: String },
+    /// A tool has finished executing.
+    #[allow(dead_code)]
+    ToolDone {
+        tool: String,
+        success: bool,
+        output_preview: String,
+    },
 }
 
 /// Metadata about an available model.

@@ -213,6 +213,8 @@ pub struct App {
     pub agent_mode: bool,
     /// Number of tool-call iterations in the current agent loop (capped at 10).
     pub agent_iterations: usize,
+    /// Currently executing tool name (shown in UI during agent execution).
+    pub active_tool: Option<String>,
     /// Whether a git stash checkpoint was created when agent mode was enabled.
     pub agent_has_stash: bool,
     /// When `true`, automatically enable agent mode for messages that appear
@@ -369,6 +371,7 @@ impl App {
 
             agent_mode: false,
             agent_iterations: 0,
+            active_tool: None,
             agent_has_stash: false,
             auto_agent: true,
             auto_agent_active: false,

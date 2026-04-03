@@ -592,16 +592,23 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Agent badge with iteration count.
     if app.agent_mode {
         badge_spans.push(Span::raw(" "));
-        let agent_text = if app.agent_iterations > 0 {
+        let agent_text = if let Some(ref tool) = app.active_tool {
+            format!(" \u{2699} {} ", tool)
+        } else if app.agent_iterations > 0 {
             format!(" AGENT {}/10 ", app.agent_iterations)
         } else {
             " AGENT ".to_string()
+        };
+        let agent_bg = if app.active_tool.is_some() {
+            Color::Yellow
+        } else {
+            Color::Magenta
         };
         badge_spans.push(Span::styled(
             agent_text,
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Magenta)
+                .bg(agent_bg)
                 .add_modifier(Modifier::BOLD),
         ));
     }

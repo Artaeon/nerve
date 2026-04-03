@@ -754,6 +754,19 @@ async fn event_loop(
             while let Ok(ev) = rx.try_recv() {
                 match ev {
                     StreamEvent::Token(token) => app.append_to_streaming(&token),
+                    StreamEvent::ToolStart { tool, summary } => {
+                        app.active_tool = Some(tool.clone());
+                        app.set_status(format!("\u{2699} {tool}: {summary}"));
+                    }
+                    StreamEvent::ToolDone {
+                        tool,
+                        success,
+                        output_preview,
+                    } => {
+                        app.active_tool = None;
+                        let icon = if success { "\u{2713}" } else { "\u{2717}" };
+                        app.set_status(format!("{icon} {tool}: {output_preview}"));
+                    }
                     StreamEvent::Done => {
                         // Grab the content before finish_streaming moves it.
                         let response_content = app.streaming_response.clone();
@@ -888,10 +901,31 @@ async fn event_loop(
                                     let mut all_success = true;
 
                                     for (idx, call) in tool_calls.iter().enumerate() {
+                                        // Show which tool is executing.
+                                        app.active_tool = Some(call.tool.clone());
+                                        let args_summary = call
+                                            .args
+                                            .iter()
+                                            .map(|(k, v)| {
+                                                let short = if v.len() > 40 { &v[..40] } else { v };
+                                                format!("{k}={short}")
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(", ");
+                                        app.set_status(format!(
+                                            "Tool {}/{}: {} ({})",
+                                            idx + 1,
+                                            tool_calls.len(),
+                                            call.tool,
+                                            args_summary,
+                                        ));
+
                                         let result = crate::agent::tools::execute_tool(
                                             call,
                                             config.command_timeout_secs,
                                         );
+                                        app.active_tool = None;
+
                                         if !result.success {
                                             all_success = false;
                                         }
