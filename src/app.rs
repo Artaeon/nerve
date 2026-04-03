@@ -440,6 +440,9 @@ impl App {
         self.is_streaming = false;
         self.stream_rx = None;
         self.streaming_start = None;
+        // Reset auto-agent flag so it doesn't leak into the next message
+        // (e.g. if the user cancelled streaming with Esc).
+        self.auto_agent_active = false;
     }
 
     // ── Cursor / editing ────────────────────────────────────────────────

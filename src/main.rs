@@ -2158,9 +2158,13 @@ fn update_autocomplete(app: &mut App) {
             app.autocomplete_index = 0;
         } else {
             app.autocomplete_visible = false;
+            app.autocomplete_items.clear();
+            app.autocomplete_index = 0;
         }
     } else {
         app.autocomplete_visible = false;
+        app.autocomplete_items.clear();
+        app.autocomplete_index = 0;
     }
 }
 
