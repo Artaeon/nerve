@@ -1102,4 +1102,87 @@ mod tests {
     fn matches_command_multiple_spaces() {
         assert!(matches_command("/commit  two spaces", "/commit"));
     }
+
+    // ── shell_escape edge cases ───────────────────────────────────────
+
+    #[test]
+    fn shell_escape_control_chars() {
+        let result = shell_escape("hello\x00world");
+        assert!(result.starts_with('\'') && result.ends_with('\''));
+    }
+
+    #[test]
+    fn shell_escape_newlines() {
+        let result = shell_escape("line1\nline2");
+        assert_eq!(result, "'line1\nline2'");
+    }
+
+    #[test]
+    fn shell_escape_unicode_emoji() {
+        let result = shell_escape("🚀 rocket");
+        assert_eq!(result, "'🚀 rocket'");
+    }
+
+    #[test]
+    fn shell_escape_dollar_backtick() {
+        // These are dangerous in double quotes but safe in single quotes
+        let result = shell_escape("$(rm -rf /) `whoami`");
+        assert_eq!(result, "'$(rm -rf /) `whoami`'");
+    }
+
+    #[test]
+    fn shell_escape_multiple_quotes() {
+        let result = shell_escape("it's a 'test' isn't it");
+        // Each ' becomes '\''
+        assert!(result.contains("'\\''"));
+        assert!(!result.contains("'''"));
+    }
+
+    // ── detect_lint_command / detect_format_command ────────────────────
+
+    #[test]
+    fn detect_lint_in_rust_project() {
+        // We're in a Rust project (Cargo.toml exists)
+        let cmd = detect_lint_command();
+        assert!(
+            cmd.contains("clippy"),
+            "Should detect clippy for Rust: {cmd}"
+        );
+    }
+
+    #[test]
+    fn detect_format_in_rust_project() {
+        let cmd = detect_format_command();
+        assert!(
+            cmd.contains("cargo fmt"),
+            "Should detect cargo fmt for Rust: {cmd}"
+        );
+    }
+
+    // ── is_protected_path edge cases ──────────────────────────────────
+
+    #[test]
+    fn protected_path_etc_with_trailing_slash() {
+        assert!(is_protected_path("/etc/"));
+    }
+
+    #[test]
+    fn protected_path_usr_bin() {
+        assert!(is_protected_path("/usr/bin/something"));
+    }
+
+    #[test]
+    fn protected_path_root() {
+        assert!(is_protected_path("/boot/vmlinuz"));
+    }
+
+    #[test]
+    fn not_protected_home_dir() {
+        assert!(!is_protected_path("/home/user/code/file.rs"));
+    }
+
+    #[test]
+    fn not_protected_tmp_dir() {
+        assert!(!is_protected_path("/tmp/test_file"));
+    }
 }

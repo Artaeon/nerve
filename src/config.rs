@@ -1155,4 +1155,54 @@ default_provider = "claude_code"
         assert!(restored.git_user_name.is_none());
         assert!(restored.git_user_email.is_none());
     }
+
+    // ── New fields: temperature, top_p, context_limit ─────────────────
+
+    #[test]
+    fn config_default_new_fields_are_none() {
+        let cfg = Config::default();
+        assert!(cfg.temperature.is_none());
+        assert!(cfg.top_p.is_none());
+        assert!(cfg.context_limit.is_none());
+    }
+
+    #[test]
+    fn config_roundtrip_temperature() {
+        let mut cfg = Config::default();
+        cfg.temperature = Some(0.7);
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn config_roundtrip_top_p() {
+        let mut cfg = Config::default();
+        cfg.top_p = Some(0.9);
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.top_p, Some(0.9));
+    }
+
+    #[test]
+    fn config_roundtrip_context_limit() {
+        let mut cfg = Config::default();
+        cfg.context_limit = Some(128_000);
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.context_limit, Some(128_000));
+    }
+
+    #[test]
+    fn config_load_missing_new_fields_defaults_to_none() {
+        // Simulate an old config without the new fields
+        let toml_str = r#"
+default_model = "gpt-4o"
+default_provider = "openai"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert!(cfg.temperature.is_none());
+        assert!(cfg.top_p.is_none());
+        assert!(cfg.context_limit.is_none());
+    }
 }

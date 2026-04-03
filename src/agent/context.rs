@@ -538,4 +538,92 @@ mod tests {
         let tokens = ContextManager::conversation_tokens(&messages);
         assert_eq!(tokens, 100 * 1334); // (4000/3 + 1) * 100
     }
+
+    // ── effective_limit ───────────────────────────────────────────────
+
+    #[test]
+    fn effective_limit_uses_default_when_no_override() {
+        let limit = ContextManager::effective_limit("openai", None);
+        assert_eq!(limit, 60_000);
+    }
+
+    #[test]
+    fn effective_limit_uses_override_when_set() {
+        let limit = ContextManager::effective_limit("openai", Some(100_000));
+        assert_eq!(limit, 100_000);
+    }
+
+    #[test]
+    fn effective_limit_override_zero_is_literal() {
+        let limit = ContextManager::effective_limit("openai", Some(0));
+        assert_eq!(limit, 0);
+    }
+
+    #[test]
+    fn effective_limit_ollama_default() {
+        let limit = ContextManager::effective_limit("ollama", None);
+        assert_eq!(limit, 32_000);
+    }
+
+    #[test]
+    fn effective_limit_ollama_override() {
+        let limit = ContextManager::effective_limit("ollama", Some(128_000));
+        assert_eq!(limit, 128_000);
+    }
+
+    #[test]
+    fn effective_limit_unknown_provider() {
+        let limit = ContextManager::effective_limit("custom_llm", None);
+        assert_eq!(limit, 30_000);
+    }
+
+    // ── compact edge cases ────────────────────────────────────────────
+
+    #[test]
+    fn compact_messages_empty() {
+        let cm = ContextManager::new(100);
+        let messages: Vec<(String, String)> = vec![];
+        let compacted = cm.compact_messages(&messages);
+        assert!(compacted.is_empty());
+    }
+
+    #[test]
+    fn compact_messages_single_system() {
+        let cm = ContextManager::new(100_000);
+        let messages = vec![("system".into(), "You are helpful.".into())];
+        let compacted = cm.compact_messages(&messages);
+        assert_eq!(compacted.len(), 1);
+        assert_eq!(compacted[0].0, "system");
+    }
+
+    #[test]
+    fn compact_messages_under_budget_unchanged() {
+        let cm = ContextManager::new(100_000);
+        let messages = vec![
+            ("user".into(), "Hello".into()),
+            ("assistant".into(), "Hi there!".into()),
+        ];
+        let compacted = cm.compact_messages(&messages);
+        assert_eq!(compacted.len(), 2);
+        assert_eq!(compacted[0].1, "Hello");
+    }
+
+    #[test]
+    fn estimate_tokens_empty_is_one() {
+        assert_eq!(ContextManager::estimate_tokens(""), 1);
+    }
+
+    #[test]
+    fn estimate_tokens_two_chars() {
+        // "hi" = 2 chars / 3 + 1 = 1
+        assert_eq!(ContextManager::estimate_tokens("hi"), 1);
+    }
+
+    #[test]
+    fn estimate_tokens_cjk_multibyte() {
+        // CJK chars are 3 bytes each in UTF-8, so len() counts bytes not chars
+        let cjk = "日本語"; // 9 bytes in UTF-8
+        let est = ContextManager::estimate_tokens(cjk);
+        assert_eq!(est, 9 / 3 + 1); // 4 tokens
+    }
 }

@@ -483,4 +483,40 @@ enabled = true
         let input = "\x1b]0;my title\x1b\\visible";
         assert_eq!(strip_ansi_and_control(input), "visible");
     }
+
+    #[test]
+    fn strip_ansi_incomplete_csi_at_eof() {
+        // ESC [ at end of string with no terminator
+        let input = "text\x1b[";
+        assert_eq!(strip_ansi_and_control(input), "text");
+    }
+
+    #[test]
+    fn strip_ansi_incomplete_osc_at_eof() {
+        // ESC ] at end of string, no BEL/ST terminator
+        let input = "text\x1b]unterminated";
+        assert_eq!(strip_ansi_and_control(input), "text");
+    }
+
+    #[test]
+    fn strip_ansi_bare_escape_at_eof() {
+        // Lone ESC at end of string
+        let input = "text\x1b";
+        assert_eq!(strip_ansi_and_control(input), "text");
+    }
+
+    #[test]
+    fn strip_ansi_mixed_sequences() {
+        // Multiple different ANSI sequences interleaved
+        let input = "\x1b[31mred\x1b[0m \x1b]0;title\x07\x1b[1mbold\x1b[0m";
+        assert_eq!(strip_ansi_and_control(input), "red bold");
+    }
+
+    #[test]
+    fn strip_ansi_ss2_ss3_sequences() {
+        // SS2 (ESC N) and SS3 (ESC O) — the ESC + next char are consumed
+        let input = "a\x1bNb\x1bOc";
+        // ESC N → consumed, "b" passes through, ESC O → consumed, "c" passes through
+        assert_eq!(strip_ansi_and_control(input), "abc");
+    }
 }

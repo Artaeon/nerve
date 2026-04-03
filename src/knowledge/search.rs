@@ -318,4 +318,42 @@ mod tests {
         let score = calculate_score("   \n\t  ", &["test"], &matcher);
         assert!(score.is_finite());
     }
+
+    #[test]
+    fn shorter_focused_chunk_scores_higher() {
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let short = calculate_score("rust programming", &["rust"], &matcher);
+        let long = calculate_score(
+            "rust is a systems programming language that runs blazingly fast and prevents segfaults",
+            &["rust"],
+            &matcher,
+        );
+        // Shorter, more focused chunks should score higher due to ln(word_count) normalization
+        assert!(
+            short >= long,
+            "short={short}, long={long}: shorter chunk should score >= longer"
+        );
+    }
+
+    #[test]
+    fn exact_match_scores_positive() {
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let score = calculate_score("rust is great", &["rust"], &matcher);
+        assert!(
+            score > 0.0,
+            "exact keyword match should be positive: {score}"
+        );
+    }
+
+    #[test]
+    fn no_match_scores_zero_or_near_zero() {
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let score = calculate_score("python django flask", &["rust"], &matcher);
+        // Fuzzy matching may give a tiny score, but it should be much lower
+        let exact_score = calculate_score("rust programming language", &["rust"], &matcher);
+        assert!(
+            score < exact_score,
+            "no-match={score} should be less than exact={exact_score}"
+        );
+    }
 }

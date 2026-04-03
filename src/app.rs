@@ -1884,4 +1884,86 @@ mod tests {
         assert!(app.input_saved.is_empty());
         assert!(app.aliases.is_empty());
     }
+
+    // ── NerveMode system prompts ──────────────────────────────────────
+
+    #[test]
+    fn nerve_mode_standard_returns_none() {
+        assert!(NerveMode::Standard.system_prompt().is_none());
+    }
+
+    #[test]
+    fn nerve_mode_efficient_returns_some() {
+        let prompt = NerveMode::Efficient.system_prompt().unwrap();
+        assert!(prompt.contains("concise"));
+    }
+
+    #[test]
+    fn nerve_mode_thorough_returns_some() {
+        let prompt = NerveMode::Thorough.system_prompt().unwrap();
+        assert!(prompt.contains("detailed"));
+    }
+
+    #[test]
+    fn nerve_mode_agent_returns_some() {
+        let prompt = NerveMode::Agent.system_prompt().unwrap();
+        assert!(prompt.contains("UNDERSTAND"));
+        assert!(prompt.contains("VERIFY"));
+    }
+
+    #[test]
+    fn nerve_mode_learning_returns_some() {
+        let prompt = NerveMode::Learning.system_prompt().unwrap();
+        assert!(prompt.contains("Socratic"));
+    }
+
+    #[test]
+    fn all_non_standard_modes_have_prompts() {
+        for mode in [
+            NerveMode::Efficient,
+            NerveMode::Thorough,
+            NerveMode::Agent,
+            NerveMode::Learning,
+        ] {
+            assert!(
+                mode.system_prompt().is_some(),
+                "{mode:?} should have a system prompt"
+            );
+        }
+    }
+
+    // ── Scroll methods ────────────────────────────────────────────────
+
+    #[test]
+    fn scroll_to_bottom_resets_offset() {
+        let mut app = App::new();
+        app.scroll_offset = 100;
+        app.scroll_to_bottom();
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    #[test]
+    fn scroll_to_top_sets_large_offset() {
+        let mut app = App::new();
+        app.scroll_to_top();
+        assert!(app.scroll_offset > 10_000);
+    }
+
+    #[test]
+    fn scroll_up_then_to_bottom() {
+        let mut app = App::new();
+        app.scroll_up();
+        app.scroll_up();
+        assert!(app.scroll_offset > 0);
+        app.scroll_to_bottom();
+        assert_eq!(app.scroll_offset, 0);
+    }
+
+    // ── Context limit override ────────────────────────────────────────
+
+    #[test]
+    fn new_app_has_no_context_limit_override() {
+        let app = App::new();
+        assert!(app.context_limit_override.is_none());
+    }
 }

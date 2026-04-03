@@ -562,4 +562,53 @@ mod tests {
     fn allows_public_ipv6() {
         assert!(!is_private_url("http://[2607:f8b0:4004:800::200e]/"));
     }
+
+    // ── Extended SSRF edge cases ──────────────────────────────────────
+
+    #[test]
+    fn blocks_ipv6_loopback_with_port() {
+        assert!(is_private_url("http://[::1]:8080/api"));
+    }
+
+    #[test]
+    fn blocks_private_range_boundaries() {
+        assert!(is_private_url("http://10.0.0.0/"));
+        assert!(is_private_url("http://10.255.255.255/"));
+        assert!(is_private_url("http://172.16.0.0/"));
+        assert!(is_private_url("http://172.31.255.255/"));
+        assert!(is_private_url("http://192.168.0.0/"));
+        assert!(is_private_url("http://192.168.255.255/"));
+    }
+
+    #[test]
+    fn allows_public_172_outside_private() {
+        // 172.32.0.0 is NOT in the 172.16-31 private range
+        assert!(!is_private_url("http://172.32.0.1/"));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_private_192() {
+        assert!(is_private_url("http://[::ffff:192.168.1.1]/"));
+    }
+
+    #[test]
+    fn allows_regular_domain() {
+        assert!(!is_private_url("https://github.com/"));
+        assert!(!is_private_url("https://docs.rs/"));
+    }
+
+    #[test]
+    fn blocks_no_scheme() {
+        assert!(is_private_url("//example.com/path"));
+    }
+
+    #[test]
+    fn blocks_ftp_scheme() {
+        assert!(is_private_url("ftp://example.com/file"));
+    }
+
+    #[test]
+    fn blocks_data_scheme() {
+        assert!(is_private_url("data:text/html,<h1>hi</h1>"));
+    }
 }

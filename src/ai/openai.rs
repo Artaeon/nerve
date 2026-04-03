@@ -616,4 +616,100 @@ mod tests {
         let content = resp.choices[0].message.content.as_ref().unwrap();
         assert!(content.contains('\u{4e16}')); // Chinese character
     }
+
+    // ── Temperature & top_p clamping ──────────────────────────────────
+
+    #[test]
+    fn temperature_clamps_below_zero() {
+        let p =
+            OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_temperature(-1.0);
+        assert_eq!(p.temperature, Some(0.0));
+    }
+
+    #[test]
+    fn temperature_clamps_above_two() {
+        let p =
+            OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_temperature(5.0);
+        assert_eq!(p.temperature, Some(2.0));
+    }
+
+    #[test]
+    fn temperature_within_range_unchanged() {
+        let p =
+            OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_temperature(0.7);
+        assert_eq!(p.temperature, Some(0.7));
+    }
+
+    #[test]
+    fn temperature_at_boundaries() {
+        let p0 =
+            OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_temperature(0.0);
+        let p2 =
+            OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_temperature(2.0);
+        assert_eq!(p0.temperature, Some(0.0));
+        assert_eq!(p2.temperature, Some(2.0));
+    }
+
+    #[test]
+    fn top_p_clamps_below_zero() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_top_p(-0.5);
+        assert_eq!(p.top_p, Some(0.0));
+    }
+
+    #[test]
+    fn top_p_clamps_above_one() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_top_p(2.0);
+        assert_eq!(p.top_p, Some(1.0));
+    }
+
+    #[test]
+    fn top_p_within_range_unchanged() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_top_p(0.9);
+        assert_eq!(p.top_p, Some(0.9));
+    }
+
+    #[test]
+    fn top_p_at_boundaries() {
+        let p0 = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_top_p(0.0);
+        let p1 = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_top_p(1.0);
+        assert_eq!(p0.top_p, Some(0.0));
+        assert_eq!(p1.top_p, Some(1.0));
+    }
+
+    #[test]
+    fn defaults_have_no_temperature_or_top_p() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into());
+        assert!(p.temperature.is_none());
+        assert!(p.top_p.is_none());
+    }
+
+    #[test]
+    fn serialized_request_omits_none_temperature() {
+        let req = ChatCompletionRequest {
+            model: "test",
+            messages: &[],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("temperature"));
+        assert!(!json.contains("top_p"));
+    }
+
+    #[test]
+    fn serialized_request_includes_set_temperature() {
+        let req = ChatCompletionRequest {
+            model: "test",
+            messages: &[],
+            stream: false,
+            max_tokens: None,
+            temperature: Some(0.7),
+            top_p: Some(0.9),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"temperature\":0.7"));
+        assert!(json.contains("\"top_p\":0.9"));
+    }
 }
