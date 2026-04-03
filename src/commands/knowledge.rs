@@ -443,6 +443,220 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     app.set_status("Unknown /auto command. Use: list, run, create, delete, info");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    struct MockProvider;
+
+    impl AiProvider for MockProvider {
+        fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+            _tx: mpsc::UnboundedSender<StreamEvent>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+            Box::pin(async { Ok(String::new()) })
+        }
+
+        fn list_models(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    fn mock_provider() -> Arc<dyn AiProvider> {
+        Arc::new(MockProvider)
+    }
+
+    // ── /kb ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn kb_bare_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn kb_status_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb status", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn kb_list_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb list", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn kb_add_extracts_path() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        // /kb add with a non-existent dir should set a status error
+        assert!(handle(&mut app, "/kb add /nonexistent_xyz", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Not a directory"));
+    }
+
+    #[tokio::test]
+    async fn kb_add_no_arg_is_unknown() {
+        // "/kb add " trims to rest="add", which doesn't match strip_prefix("add ")
+        // so it falls through to the unknown subcommand branch
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb add", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /kb command"));
+    }
+
+    #[tokio::test]
+    async fn kb_search_extracts_query() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb search test query", &provider).await);
+        // Either shows results or says no KB found
+    }
+
+    #[tokio::test]
+    async fn kb_search_no_arg_is_unknown() {
+        // "/kb search " trims to rest="search", which doesn't match strip_prefix("search ")
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb search", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /kb command"));
+    }
+
+    #[tokio::test]
+    async fn kb_clear_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb clear", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn kb_unknown_subcommand() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/kb foobar", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /kb command"));
+    }
+
+    // ── /url ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn url_bare_is_not_handled() {
+        // "/url" without a space is not matched (strip_prefix("/url ") needs the space)
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(!handle(&mut app, "/url", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn url_empty_arg_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/url ", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Usage"));
+    }
+
+    // ── /auto ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn auto_bare_lists_automations() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn auto_list_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto list", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn auto_info_no_arg_falls_through() {
+        // "/auto info " trims to rest="info" which doesn't match strip_prefix("info ")
+        // so it falls to the unknown branch
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto info", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /auto command"));
+    }
+
+    #[tokio::test]
+    async fn auto_create_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto create test-auto", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn auto_run_no_arg_falls_through() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto run", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /auto command"));
+    }
+
+    #[tokio::test]
+    async fn auto_delete_no_arg_falls_through() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto delete", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /auto command"));
+    }
+
+    #[tokio::test]
+    async fn auto_unknown_subcommand() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto xyz", &provider).await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown /auto command"));
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(!handle(&mut app, "/kbx", &provider).await);
+        assert!(!handle(&mut app, "/urls", &provider).await);
+        assert!(!handle(&mut app, "/autox", &provider).await);
+    }
+}
+
 /// Execute an automation pipeline.
 async fn run_automation(
     app: &mut App,
