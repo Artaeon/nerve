@@ -303,4 +303,19 @@ mod tests {
         assert!(!results.is_empty());
         assert!(results.len() <= 5);
     }
+
+    #[test]
+    fn score_empty_chunk_does_not_panic() {
+        // An empty chunk has 0 words — ln(0) = -inf without the .max(1) guard.
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let score = calculate_score("", &["anything"], &matcher);
+        assert!(score.is_finite());
+    }
+
+    #[test]
+    fn score_whitespace_only_chunk_does_not_panic() {
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let score = calculate_score("   \n\t  ", &["test"], &matcher);
+        assert!(score.is_finite());
+    }
 }

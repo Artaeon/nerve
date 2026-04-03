@@ -500,4 +500,66 @@ mod tests {
     fn allows_public_ip() {
         assert!(!is_private_url("http://8.8.8.8/dns"));
     }
+
+    // ── IPv6 bypass tests ─────────────────────────────────────────────
+
+    #[test]
+    fn blocks_ipv6_unspecified() {
+        assert!(is_private_url("http://[::]/api"));
+    }
+
+    #[test]
+    fn blocks_ipv6_link_local() {
+        assert!(is_private_url("http://[fe80::1]/api"));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_loopback() {
+        assert!(is_private_url("http://[::ffff:127.0.0.1]/api"));
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_private() {
+        assert!(is_private_url("http://[::ffff:10.0.0.1]/api"));
+    }
+
+    #[test]
+    fn blocks_zero_ip() {
+        assert!(is_private_url("http://0.0.0.0/"));
+    }
+
+    #[test]
+    fn blocks_link_local_169() {
+        assert!(is_private_url("http://169.254.1.1/"));
+    }
+
+    #[test]
+    fn blocks_cgn_range() {
+        assert!(is_private_url("http://100.64.0.1/"));
+    }
+
+    #[test]
+    fn blocks_dot_localhost_domain() {
+        assert!(is_private_url("http://foo.localhost/api"));
+    }
+
+    #[test]
+    fn blocks_dot_internal_domain() {
+        assert!(is_private_url("http://service.internal/api"));
+    }
+
+    #[test]
+    fn blocks_dot_local_domain() {
+        assert!(is_private_url("http://printer.local/api"));
+    }
+
+    #[test]
+    fn blocks_invalid_url() {
+        assert!(is_private_url("not-a-url"));
+    }
+
+    #[test]
+    fn allows_public_ipv6() {
+        assert!(!is_private_url("http://[2607:f8b0:4004:800::200e]/"));
+    }
 }

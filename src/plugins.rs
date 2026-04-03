@@ -391,4 +391,59 @@ enabled = true
         // May or may not find it depending on test order, just verify no panic
         let _ = all;
     }
+
+    // ── ANSI / control-character sanitization ─────────────────────────
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        let input = "\x1b[31mERROR\x1b[0m normal";
+        assert_eq!(strip_ansi_and_control(input), "ERROR normal");
+    }
+
+    #[test]
+    fn strip_ansi_removes_cursor_movement() {
+        let input = "\x1b[2J\x1b[H\x1b[1;1Hfake prompt";
+        assert_eq!(strip_ansi_and_control(input), "fake prompt");
+    }
+
+    #[test]
+    fn strip_ansi_removes_bold_underline() {
+        let input = "\x1b[1mbold\x1b[4munderline\x1b[0m";
+        assert_eq!(strip_ansi_and_control(input), "boldunderline");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_newlines_and_tabs() {
+        let input = "line1\n\tindented\nline3";
+        assert_eq!(strip_ansi_and_control(input), input);
+    }
+
+    #[test]
+    fn strip_ansi_removes_control_chars() {
+        let input = "hello\x07\x08world";
+        assert_eq!(strip_ansi_and_control(input), "helloworld");
+    }
+
+    #[test]
+    fn strip_ansi_empty_input() {
+        assert_eq!(strip_ansi_and_control(""), "");
+    }
+
+    #[test]
+    fn strip_ansi_plain_text_unchanged() {
+        let input = "just normal text with numbers 123";
+        assert_eq!(strip_ansi_and_control(input), input);
+    }
+
+    #[test]
+    fn strip_ansi_256_color() {
+        let input = "\x1b[38;5;196mred\x1b[0m";
+        assert_eq!(strip_ansi_and_control(input), "red");
+    }
+
+    #[test]
+    fn strip_ansi_truecolor() {
+        let input = "\x1b[38;2;255;0;0mred\x1b[0m";
+        assert_eq!(strip_ansi_and_control(input), "red");
+    }
 }
