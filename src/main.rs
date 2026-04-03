@@ -2158,7 +2158,7 @@ fn update_autocomplete(app: &mut App) {
     } else if let Some(at_pos) = input.rfind('@') {
         // Autocomplete file paths after `@`.
         let partial = &input[at_pos + 1..];
-        if !partial.is_empty() && !partial.contains(' ') {
+        if !partial.contains(' ') {
             app.autocomplete_items = autocomplete_file_paths(partial);
             app.autocomplete_visible = !app.autocomplete_items.is_empty();
             app.autocomplete_index = 0;
@@ -2174,12 +2174,21 @@ fn update_autocomplete(app: &mut App) {
     }
 }
 
-/// Return up to 8 file path matches for the given partial path, suitable for
+/// Return up to 10 file path matches for the given partial path, suitable for
 /// displaying in the autocomplete popup.
+///
+/// When `partial` is empty, lists files in the current directory. Directories
+/// are sorted before files and shown with a trailing `/`. Each entry includes
+/// a description suffix (e.g. "directory" or a human-readable file size).
 fn autocomplete_file_paths(partial: &str) -> Vec<String> {
     use std::path::Path;
 
-    let path = if let Some(stripped) = partial.strip_prefix("~/") {
+    let path = if partial.is_empty() {
+        match std::env::current_dir() {
+            Ok(cwd) => cwd,
+            Err(_) => return Vec::new(),
+        }
+    } else if let Some(stripped) = partial.strip_prefix("~/") {
         match dirs::home_dir() {
             Some(h) => h.join(stripped),
             None => return Vec::new(),
@@ -2208,7 +2217,8 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let mut matches: Vec<String> = Vec::new();
+    // Collect (display_path, is_dir, size_bytes) tuples.
+    let mut entries_vec: Vec<(String, bool, u64)> = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.filter_map(|e| e.ok()) {
@@ -2220,6 +2230,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
                 continue;
             }
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
             let completed = if partial.contains('/') {
                 let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
@@ -2234,15 +2245,38 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
                 name
             };
 
-            matches.push(completed);
-            if matches.len() >= 8 {
-                break;
-            }
+            entries_vec.push((completed, is_dir, size));
         }
     }
 
-    matches.sort();
-    matches
+    // Sort: directories first, then alphabetically within each group.
+    entries_vec.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+    // Build display strings with description suffixes.
+    entries_vec
+        .into_iter()
+        .take(10)
+        .map(|(path, is_dir, size)| {
+            if is_dir {
+                format!("{}  \u{2500}\u{2500} directory", path)
+            } else {
+                format!("{}  \u{2500}\u{2500} {}", path, format_file_size(size))
+            }
+        })
+        .collect()
+}
+
+/// Format a byte count into a human-readable size string.
+fn format_file_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
 }
 
 /// Accept the currently selected autocomplete item and insert it into the
