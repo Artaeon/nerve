@@ -468,7 +468,45 @@ fn verify_file_syntax(path: &str) -> Option<String> {
 /// Resolve a path and check it (and its canonical form) against the protected
 /// list.  Returns the resolved [`PathBuf`] on success, or a blocking
 /// [`ToolResult`] on failure.
+/// Normalize a path by resolving `.` and `..` segments without touching the
+/// filesystem.  This catches traversal attempts like `/tmp/x/../../etc/passwd`
+/// even when intermediate directories don't exist.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut parts: Vec<&std::ffi::OsStr> = Vec::new();
+    let mut is_absolute = false;
+    for comp in path.components() {
+        match comp {
+            Component::RootDir => {
+                is_absolute = true;
+                parts.clear();
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(c) => {
+                parts.push(c);
+            }
+            Component::Prefix(p) => {
+                parts.clear();
+                parts.push(p.as_os_str());
+            }
+        }
+    }
+    let mut result = if is_absolute {
+        PathBuf::from("/")
+    } else {
+        PathBuf::new()
+    };
+    for p in parts {
+        result.push(p);
+    }
+    result
+}
+
 fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {
+    // First check the raw path.
     if crate::shell::is_protected_path(path) {
         return Err(ToolResult {
             tool: tool.into(),
@@ -479,21 +517,33 @@ fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {
 
     let buf = PathBuf::from(path);
 
+    // Normalize ".." segments without touching the filesystem — catches
+    // traversal attempts like /tmp/x/../../etc/passwd.
+    let normalized = normalize_path(&buf);
+    let norm_str = normalized.to_string_lossy();
+    if crate::shell::is_protected_path(&norm_str) {
+        return Err(ToolResult {
+            tool: tool.into(),
+            success: false,
+            output: format!("Blocked: normalized path is protected: {norm_str}"),
+        });
+    }
+
     // If the file (or a parent) already exists, canonicalize to defeat
     // symlink attacks that redirect writes to protected locations.
     let canonical = if buf.exists() {
-        buf.canonicalize().unwrap_or_else(|_| buf.clone())
+        buf.canonicalize().unwrap_or_else(|_| normalized.clone())
     } else if let Some(parent) = buf.parent() {
         if parent.exists() {
             parent
                 .canonicalize()
                 .map(|p| p.join(buf.file_name().unwrap_or_default()))
-                .unwrap_or_else(|_| buf.clone())
+                .unwrap_or_else(|_| normalized.clone())
         } else {
-            buf.clone()
+            normalized.clone()
         }
     } else {
-        buf.clone()
+        normalized.clone()
     };
 
     let canon_str = canonical.to_string_lossy();

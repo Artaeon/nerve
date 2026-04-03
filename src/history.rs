@@ -48,8 +48,16 @@ pub fn history_dir() -> PathBuf {
 }
 
 /// Build the file path for a given conversation ID.
+/// Validates the ID to prevent path traversal attacks.
 fn conversation_path(id: &str) -> PathBuf {
-    history_dir().join(format!("{id}.json"))
+    // Sanitize: only allow alphanumeric, hyphens, and underscores.
+    let safe_id: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .take(128)
+        .collect();
+    let safe_id = if safe_id.is_empty() { "invalid" } else { &safe_id };
+    history_dir().join(format!("{safe_id}.json"))
 }
 
 // ---------------------------------------------------------------------------
