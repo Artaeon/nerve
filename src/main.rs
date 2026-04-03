@@ -2279,6 +2279,16 @@ fn format_file_size(bytes: u64) -> String {
     }
 }
 
+/// Strip the description suffix (e.g. `  -- directory` or `  -- 1.2 KB`) from
+/// an autocomplete display item, returning just the path portion.
+fn strip_autocomplete_description(item: &str) -> &str {
+    if let Some(pos) = item.find("  \u{2500}\u{2500} ") {
+        &item[..pos]
+    } else {
+        item
+    }
+}
+
 /// Accept the currently selected autocomplete item and insert it into the
 /// input buffer.
 fn accept_autocomplete(app: &mut App) {
@@ -2296,6 +2306,10 @@ fn accept_autocomplete(app: &mut App) {
             app.input = format!("{} ", clean);
             app.cursor_position = app.input.len();
         } else if let Some(at_pos) = app.input.rfind('@') {
+            // Strip the description suffix to get the actual path.
+            let path = strip_autocomplete_description(&clean).to_string();
+            let is_directory = path.ends_with('/');
+
             // Replace the text after `@` with the selected path.
             let before = app.input[..at_pos + 1].to_string();
             let after_cursor = if app.cursor_position < app.input.len() {
@@ -2308,8 +2322,19 @@ fn accept_autocomplete(app: &mut App) {
             } else {
                 String::new()
             };
-            app.input = format!("{}{}{}", before, clean, after_cursor);
-            app.cursor_position = before.len() + clean.len();
+
+            if is_directory {
+                // Don't add a space — let the user browse into the directory.
+                app.input = format!("{}{}{}", before, path, after_cursor);
+                app.cursor_position = before.len() + path.len();
+                // Re-trigger autocomplete so the directory contents are shown.
+                update_autocomplete(app);
+                return;
+            } else {
+                // File selected — add a trailing space.
+                app.input = format!("{}{} {}", before, path, after_cursor);
+                app.cursor_position = before.len() + path.len() + 1;
+            }
         }
         app.autocomplete_visible = false;
     }
