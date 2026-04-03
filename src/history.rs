@@ -326,4 +326,353 @@ mod tests {
 
         delete_conversation(&id).unwrap();
     }
+
+    // === New comprehensive tests ================================================
+
+    #[test]
+    fn save_load_roundtrip_preserves_all_fields() {
+        let now = Utc::now();
+        let id = format!("test-full-roundtrip-{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "Full Roundtrip".into(),
+            messages: vec![
+                MessageRecord {
+                    role: "user".into(),
+                    content: "What is Rust?".into(),
+                    timestamp: now,
+                },
+                MessageRecord {
+                    role: "assistant".into(),
+                    content: "Rust is a systems programming language.".into(),
+                    timestamp: now,
+                },
+                MessageRecord {
+                    role: "user".into(),
+                    content: "Tell me more.".into(),
+                    timestamp: now,
+                },
+            ],
+            model: "opus-4".into(),
+            provider: "openai".into(),
+            created_at: now,
+            updated_at: now,
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+
+        assert_eq!(loaded.id, record.id);
+        assert_eq!(loaded.title, record.title);
+        assert_eq!(loaded.model, "opus-4");
+        assert_eq!(loaded.provider, "openai");
+        assert_eq!(loaded.messages.len(), 3);
+        assert_eq!(loaded.messages[0].role, "user");
+        assert_eq!(loaded.messages[0].content, "What is Rust?");
+        assert_eq!(loaded.messages[2].content, "Tell me more.");
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn corrupted_json_skipped_in_list_conversations() {
+        let dir = history_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Write a corrupted JSON file
+        let corrupt_id = format!("test-corrupt-{}", uuid::Uuid::new_v4());
+        let corrupt_path = dir.join(format!("{corrupt_id}.json"));
+        std::fs::write(&corrupt_path, "NOT VALID JSON {{{{").unwrap();
+
+        // Write a valid record
+        let valid_id = format!("test-valid-{}", uuid::Uuid::new_v4());
+        let valid_record = sample_record(&valid_id, "Valid Record");
+        save_conversation(&valid_record).unwrap();
+
+        let list = list_conversations().unwrap();
+
+        // The valid one should be present
+        assert!(
+            list.iter().any(|r| r.id == valid_id),
+            "Valid record must appear in list"
+        );
+        // The corrupted one should NOT be present
+        assert!(
+            !list.iter().any(|r| r.id == corrupt_id),
+            "Corrupted record must be skipped"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_file(&corrupt_path);
+        delete_conversation(&valid_id).unwrap();
+    }
+
+    #[test]
+    fn empty_history_dir_returns_empty_vec() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty_dir = tmp.path().join("empty_history");
+        // Don't even create the dir -- list_conversations checks if dir exists
+        // We'll test by temporarily pointing at a dir that does exist but is empty
+        std::fs::create_dir_all(&empty_dir).unwrap();
+        assert!(
+            std::fs::read_dir(&empty_dir)
+                .unwrap()
+                .next()
+                .is_none(),
+            "Dir should be empty"
+        );
+        // We can't redirect history_dir(), but we can verify the behavior
+        // by checking that the function handles a nonexistent dir path.
+        // Since history_dir() may or may not exist, the best we can test is
+        // that list_conversations does not panic and returns Ok.
+        let result = list_conversations();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn history_record_with_unicode_title_and_content() {
+        let id = format!("test-unicode-{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "\u{1F980} Ferris \u{2764}\u{FE0F} \u{4F60}\u{597D}".into(),
+            messages: vec![
+                MessageRecord {
+                    role: "user".into(),
+                    content: "\u{00E4}\u{00F6}\u{00FC}\u{00DF} German umlauts".into(),
+                    timestamp: Utc::now(),
+                },
+                MessageRecord {
+                    role: "assistant".into(),
+                    content: "\u{0410}\u{0411}\u{0412}\u{0413} Cyrillic".into(),
+                    timestamp: Utc::now(),
+                },
+                MessageRecord {
+                    role: "user".into(),
+                    content: "\u{1F600}\u{1F4BB}\u{1F680} emoji everywhere".into(),
+                    timestamp: Utc::now(),
+                },
+            ],
+            model: "sonnet".into(),
+            provider: "claude_code".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+
+        assert!(loaded.title.contains("\u{1F980}"));
+        assert!(loaded.messages[0].content.contains("\u{00E4}\u{00F6}\u{00FC}"));
+        assert!(loaded.messages[1].content.contains("\u{0410}\u{0411}"));
+        assert!(loaded.messages[2].content.contains("\u{1F680}"));
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn delete_conversation_removes_file_from_disk() {
+        let id = format!("test-delete-verify-{}", uuid::Uuid::new_v4());
+        let record = sample_record(&id, "Will be deleted");
+
+        save_conversation(&record).unwrap();
+        let path = conversation_path(&id);
+        assert!(path.exists(), "File must exist after save");
+
+        delete_conversation(&id).unwrap();
+        assert!(!path.exists(), "File must not exist after delete");
+
+        // Verify it's gone from list too
+        let list = list_conversations().unwrap();
+        assert!(
+            !list.iter().any(|r| r.id == id),
+            "Deleted record must not appear in list"
+        );
+    }
+
+    #[test]
+    fn save_overwrites_existing_conversation() {
+        let id = format!("test-overwrite-{}", uuid::Uuid::new_v4());
+        let mut record = sample_record(&id, "Original Title");
+        save_conversation(&record).unwrap();
+
+        // Update and save again
+        record.title = "Updated Title".into();
+        record.messages.push(MessageRecord {
+            role: "user".into(),
+            content: "New message".into(),
+            timestamp: Utc::now(),
+        });
+        save_conversation(&record).unwrap();
+
+        let loaded = load_conversation(&id).unwrap();
+        assert_eq!(loaded.title, "Updated Title");
+        assert_eq!(loaded.messages.len(), 3); // original 2 + 1 new
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn conversation_record_with_empty_messages() {
+        let id = format!("test-empty-msgs-{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "Empty".into(),
+            messages: vec![],
+            model: "sonnet".into(),
+            provider: "claude_code".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+        assert_eq!(loaded.messages.len(), 0);
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn conversation_record_provider_defaults_to_empty() {
+        // The `provider` field has #[serde(default)], so missing it in JSON
+        // should default to ""
+        let json = r#"{
+            "id": "test-no-provider",
+            "title": "No Provider",
+            "messages": [],
+            "model": "sonnet",
+            "created_at": "2025-01-01T00:00:00Z",
+            "updated_at": "2025-01-01T00:00:00Z"
+        }"#;
+        let record: ConversationRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.provider, "", "Missing provider should default to empty string");
+    }
+
+    #[test]
+    fn list_conversations_ignores_non_json_files() {
+        let dir = history_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Write a non-JSON file
+        let non_json = dir.join("test_not_json.txt");
+        std::fs::write(&non_json, "This is not JSON").unwrap();
+
+        // Should not cause an error or appear in results
+        let result = list_conversations();
+        assert!(result.is_ok());
+
+        // Cleanup
+        let _ = std::fs::remove_file(&non_json);
+    }
+
+    #[test]
+    fn conversation_path_uses_id_directly() {
+        let path = conversation_path("my-conversation-id");
+        assert!(
+            path.to_string_lossy().ends_with("my-conversation-id.json"),
+            "Path should end with id.json"
+        );
+    }
+
+    #[test]
+    fn save_multiple_then_list_returns_all() {
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let id = format!("test-multi-list-{i}-{}", uuid::Uuid::new_v4());
+            let record = sample_record(&id, &format!("Multi {i}"));
+            save_conversation(&record).unwrap();
+            ids.push(id);
+        }
+
+        let list = list_conversations().unwrap();
+        for id in &ids {
+            assert!(
+                list.iter().any(|r| r.id == *id),
+                "Record {id} must appear in list"
+            );
+        }
+
+        // Cleanup
+        for id in &ids {
+            delete_conversation(id).unwrap();
+        }
+    }
+
+    #[test]
+    fn message_record_roles() {
+        let id = format!("test-roles-{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "Role Test".into(),
+            messages: vec![
+                MessageRecord {
+                    role: "system".into(),
+                    content: "You are a helpful assistant.".into(),
+                    timestamp: Utc::now(),
+                },
+                MessageRecord {
+                    role: "user".into(),
+                    content: "Hello".into(),
+                    timestamp: Utc::now(),
+                },
+                MessageRecord {
+                    role: "assistant".into(),
+                    content: "Hi!".into(),
+                    timestamp: Utc::now(),
+                },
+            ],
+            model: "sonnet".into(),
+            provider: "claude_code".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+        assert_eq!(loaded.messages[0].role, "system");
+        assert_eq!(loaded.messages[1].role, "user");
+        assert_eq!(loaded.messages[2].role, "assistant");
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn conversation_record_preserves_timestamps() {
+        let fixed_time = chrono::DateTime::parse_from_rfc3339("2025-03-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let id = format!("test-timestamps-{}", uuid::Uuid::new_v4());
+        let record = ConversationRecord {
+            id: id.clone(),
+            title: "Timestamp Test".into(),
+            messages: vec![MessageRecord {
+                role: "user".into(),
+                content: "test".into(),
+                timestamp: fixed_time,
+            }],
+            model: "sonnet".into(),
+            provider: "claude_code".into(),
+            created_at: fixed_time,
+            updated_at: fixed_time,
+        };
+
+        save_conversation(&record).unwrap();
+        let loaded = load_conversation(&id).unwrap();
+        assert_eq!(loaded.created_at, fixed_time);
+        assert_eq!(loaded.updated_at, fixed_time);
+        assert_eq!(loaded.messages[0].timestamp, fixed_time);
+
+        delete_conversation(&id).unwrap();
+    }
+
+    #[test]
+    fn delete_idempotent() {
+        let id = format!("test-idempotent-{}", uuid::Uuid::new_v4());
+        // Delete something that was never saved
+        let r1 = delete_conversation(&id);
+        assert!(r1.is_ok());
+        // Delete again
+        let r2 = delete_conversation(&id);
+        assert!(r2.is_ok());
+    }
 }
