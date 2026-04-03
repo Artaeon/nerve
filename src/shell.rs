@@ -39,15 +39,15 @@ pub struct CommandResult {
 
 /// Truncate text to at most `max_lines` lines, appending a notice if trimmed.
 fn truncate_output(text: &str, max_lines: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= max_lines {
+    let total_lines = text.lines().count();
+    if total_lines <= max_lines {
         return text.to_string();
     }
-    let mut truncated: String = lines[..max_lines].join("\n");
+    let mut truncated: String = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
     truncated.push_str(&format!(
         "\n\n... ({} lines truncated, {} total)",
-        lines.len() - max_lines,
-        lines.len()
+        total_lines - max_lines,
+        total_lines
     ));
     truncated
 }
