@@ -222,6 +222,11 @@ pub struct App {
     /// Whether the autocomplete popup is visible.
     pub autocomplete_visible: bool,
 
+    // -- pending command --
+    /// A slash command queued for execution (e.g. selected from Nerve Bar).
+    /// Checked and drained at the top of the event loop.
+    pub pending_command: Option<String>,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -335,6 +340,8 @@ impl App {
             autocomplete_items: Vec::new(),
             autocomplete_index: 0,
             autocomplete_visible: false,
+
+            pending_command: None,
 
             status_message: None,
             status_time: None,

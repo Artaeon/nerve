@@ -333,14 +333,32 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     // Build the displayed text with a cursor indicator or placeholder.
     // For multi-line input we build a Vec<Line> so that explicit newlines are honoured.
     let input_lines: Vec<Line<'_>> = if is_empty && app.input_mode == InputMode::Insert {
-        // Show placeholder text when empty in insert mode
+        // Show placeholder showcasing capabilities when empty in insert mode.
         vec![Line::from(vec![
             mode_indicator,
             Span::raw(" "),
+            Span::styled("Ask anything... ", Style::default().fg(theme.dim)),
             Span::styled(
-                "Type your message... (Enter to send, Shift+Enter for newline)",
-                Style::default().fg(theme.dim),
+                "/",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
+            Span::styled("commands  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "@",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("files  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "Ctrl+K",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Nerve Bar", Style::default().fg(theme.dim)),
             Span::styled(
                 "\u{258c}",
                 Style::default()
@@ -349,14 +367,45 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
             ),
         ])]
     } else if is_empty && app.input_mode == InputMode::Normal {
-        // Hint in normal mode when empty
+        // Hint in normal mode when empty — show key actions.
         vec![Line::from(vec![
             mode_indicator,
             Span::raw(" "),
             Span::styled(
-                "Press i to start typing, / for Nerve Bar",
-                Style::default().fg(theme.dim),
+                "i",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
+            Span::styled(": type  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "/",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": commands  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "?",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": help  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "Ctrl+K",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": Nerve Bar  ", Style::default().fg(theme.dim)),
+            Span::styled(
+                "Ctrl+,",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(": settings", Style::default().fg(theme.dim)),
         ])]
     } else {
         let pos = app.cursor_position.min(app.input.len());
@@ -473,10 +522,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
         app.input.split_whitespace().count()
     };
 
-    // Hint text for bottom line
+    // Hint text for bottom border of the input box.
     let hint = match app.input_mode {
-        InputMode::Insert => "Enter: send | Shift+Enter: newline | Esc: normal mode",
-        InputMode::Normal => "i: insert | /: Nerve Bar | q: quit",
+        InputMode::Insert => {
+            "Enter: send | Shift+Enter: newline | Esc: normal | /: commands | @: files"
+        }
+        InputMode::Normal => "i: insert | /: commands | ?: help | Ctrl+K: Nerve Bar | q: quit",
     };
 
     let title_line = Line::from(vec![
@@ -516,8 +567,66 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let provider_label = provider_display_name(&app.selected_provider);
     let sep = Span::styled(" \u{2502} ", Style::default().fg(theme.separator()));
 
+    // ── Helper: build mode badges (reused by both streaming and idle) ───
+    let mut badge_spans: Vec<Span<'_>> = Vec::new();
+
+    // NerveMode badge — always visible so users know what mode they're in.
+    let (mode_label, mode_fg, mode_bg) = match app.mode_name.as_str() {
+        "efficient" | "eco" => ("ECO", Color::Black, Color::Green),
+        "thorough" => ("THOROUGH", Color::Black, Color::Cyan),
+        "learning" => ("LEARN", Color::Black, Color::Blue),
+        "auto" => ("AUTO", Color::Black, Color::Yellow),
+        "code" => ("CODE-MODE", Color::Black, Color::Magenta),
+        "review" => ("REVIEW", Color::Black, Color::Red),
+        "agent" => ("AGENT-MODE", Color::Black, Color::Magenta),
+        _ => ("STANDARD", Color::Black, Color::Rgb(88, 91, 112)), // visible neutral badge
+    };
+    badge_spans.push(Span::styled(
+        format!(" {mode_label} "),
+        Style::default()
+            .fg(mode_fg)
+            .bg(mode_bg)
+            .add_modifier(Modifier::BOLD),
+    ));
+
+    // Agent badge with iteration count.
+    if app.agent_mode {
+        badge_spans.push(Span::raw(" "));
+        let agent_text = if app.agent_iterations > 0 {
+            format!(" AGENT {}/10 ", app.agent_iterations)
+        } else {
+            " AGENT ".to_string()
+        };
+        badge_spans.push(Span::styled(
+            agent_text,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Code mode badge.
+    if app.code_mode {
+        badge_spans.push(Span::raw(" "));
+        badge_spans.push(Span::styled(
+            " CODE ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Provider + model.
+    badge_spans.push(sep.clone());
+    badge_spans.push(Span::styled(
+        format!("{} \u{203a} {}", provider_label, app.selected_model),
+        Style::default().fg(Color::DarkGray),
+    ));
+
     if app.is_streaming {
-        // Streaming status bar with animated bouncing progress bar
+        // ── Streaming status bar ───────────────────────────────────────
         let bar_width: usize = 8;
         let bar_pos = (app.thinking_frame / 3) % (bar_width * 2);
         let mut progress = String::new();
@@ -535,11 +644,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             });
         }
 
-        // Approximate token count: words * 4/3
         let word_count = app.streaming_response.split_whitespace().count();
         let approx_tokens = word_count * 4 / 3;
-
-        // Elapsed time and speed
         let elapsed_secs = app
             .streaming_start
             .map(|start| start.elapsed().as_secs_f64())
@@ -550,26 +656,17 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             0.0
         };
 
-        let mut spans = vec![];
-
-        // Agent iteration badge (shown before streaming indicator when active)
-        if app.agent_mode && app.agent_iterations > 0 {
-            spans.push(Span::styled(
-                format!(" AGENT {}/10 ", app.agent_iterations),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            spans.push(sep.clone());
-        }
-
         let spinner_frames = ["\u{25dc}", "\u{25dd}", "\u{25de}", "\u{25df}"];
         let spinner = spinner_frames[(app.thinking_frame / 4) % 4];
 
+        let mut spans = vec![];
+        // Left: badges
+        spans.extend(badge_spans);
+        spans.push(sep.clone());
+        // Streaming indicator
         spans.extend_from_slice(&[
             Span::styled(
-                format!(" {spinner} Streaming... "),
+                format!("{spinner} Streaming... "),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -590,33 +687,14 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 format!("{:.0} tok/s", tok_per_sec),
                 Style::default().fg(Color::DarkGray),
             ),
-            sep.clone(),
-            Span::styled(
-                app.selected_model.to_string(),
-                Style::default().fg(Color::Yellow),
-            ),
-            Span::raw(" "),
         ]);
-
-        if app.code_mode {
-            spans.insert(spans.len() - 1, sep.clone());
-            spans.insert(
-                spans.len() - 1,
-                Span::styled(
-                    "CODE",
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            );
-        }
 
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
     } else {
-        // Normal status bar with conversation stats
-        // Color-code status messages: red for errors/warnings, green for success, yellow for info.
-        let left_status = if let Some(ref msg) = app.status_message {
+        // ── Idle status bar ────────────────────────────────────────────
+
+        // Context-aware status/hint message.
+        let status_span = if let Some(ref msg) = app.status_message {
             let msg_style = if msg.starts_with("Error")
                 || msg.starts_with("Blocked")
                 || msg.starts_with("Failed")
@@ -629,6 +707,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             } else if msg.starts_with("Saved")
                 || msg.starts_with("Copied")
                 || msg.starts_with("Exported")
+                || msg.starts_with("Running")
                 || msg.contains("success")
             {
                 Style::default().fg(theme.success)
@@ -638,53 +717,34 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!(" {msg}"), msg_style)
         } else if app.input_mode == InputMode::Insert && app.input.starts_with('/') {
             Span::styled(
-                " Type a command and press Enter | Tab: autocomplete",
+                " Tab: accept | \u{2191}\u{2193}: navigate | Enter: send | Try /help, /agent, /mode",
                 Style::default().fg(theme.dim),
             )
         } else if app.input_mode == InputMode::Normal {
             Span::styled(
-                " Ctrl+K: commands  Ctrl+,: settings  i: insert  /: commands  ?: help",
+                " /: commands | Ctrl+K: Nerve Bar | Ctrl+,: settings | i: insert | ?: help",
                 Style::default().fg(theme.dim),
             )
         } else {
             Span::styled(
-                " Ready",
-                Style::default()
-                    .fg(theme.success)
-                    .add_modifier(Modifier::BOLD),
+                " Ready \u{2500} type a message, / for commands, @ to attach files",
+                Style::default().fg(theme.dim),
             )
         };
 
-        // Calculate total word count and token estimate across all messages in current conversation
-        let total_words: usize = app
-            .current_conversation()
-            .messages
-            .iter()
-            .map(|(_, content)| content.split_whitespace().count())
-            .sum();
+        // Token/word count for the conversation.
         let total_tokens: usize = app
             .current_conversation()
             .messages
             .iter()
             .map(|(_, content)| content.len() / 4 + 1)
             .sum();
+        let tokens_display = format_number(total_tokens);
 
-        // Format word count with thousands separator
-        let words_display = if total_words >= 1_000 {
-            format!("{},{:03}", total_words / 1_000, total_words % 1_000)
-        } else {
-            format!("{}", total_words)
-        };
-
-        // Format token count with thousands separator
-        let tokens_display = if total_tokens >= 1_000 {
-            format!("{},{:03}", total_tokens / 1_000, total_tokens % 1_000)
-        } else {
-            format!("{}", total_tokens)
-        };
-
+        // Right section: conversation position.
         let right_text = format!(
-            "Conv {}/{} \u{2502} Ctrl+K: Nerve Bar ",
+            " ~{} tokens \u{2502} Conv {}/{} ",
+            tokens_display,
             app.active_conversation + 1,
             app.conversations.len(),
         );
@@ -696,97 +756,54 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .constraints([Constraint::Min(1), Constraint::Length(right_width)])
             .split(area);
 
-        let mut left_spans = vec![left_status];
+        // Left side: badges + status + scroll indicator + cost.
+        let mut left_spans: Vec<Span<'_>> = Vec::new();
+        left_spans.extend(badge_spans);
 
-        // Agent iteration badge (shown when agent is active with iterations)
-        if app.agent_mode && app.agent_iterations > 0 {
-            left_spans.push(sep.clone());
-            left_spans.push(Span::styled(
-                format!(" AGENT {}/10 ", app.agent_iterations),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-
-        // Show scroll position when user has scrolled up from the bottom
+        // Scroll indicator.
         if app.scroll_offset > 0 {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
-                format!(" \u{2191} {} lines above ", app.scroll_offset),
+                format!("\u{2191}{}", app.scroll_offset),
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ));
-            left_spans.push(Span::styled("j/k", Style::default().fg(theme.dim)));
         }
 
-        left_spans.push(sep.clone());
-        left_spans.push(Span::styled(
-            format!("~{} tokens", tokens_display),
-            Style::default().fg(Color::DarkGray),
-        ));
-        left_spans.push(sep.clone());
-        left_spans.push(Span::styled(
-            format!("{} words", words_display),
-            Style::default().fg(Color::DarkGray),
-        ));
-        left_spans.push(sep.clone());
-        left_spans.push(Span::styled(
-            format!("{} \u{203a} {}", provider_label, app.selected_model),
-            Style::default().fg(Color::DarkGray),
-        ));
-
-        // Show estimated cost badge for paid providers.
+        // Cost badge for paid providers.
         if app.usage_stats.estimated_cost_usd > 0.0 {
             left_spans.push(sep.clone());
             left_spans.push(Span::styled(
-                format!("{} (est.)", app.usage_stats.format_cost()),
+                app.usage_stats.format_cost(),
                 Style::default().fg(Color::Yellow),
             ));
         }
 
-        if app.code_mode {
-            left_spans.push(sep.clone());
-            left_spans.push(Span::styled(
-                "CODE",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
+        left_spans.push(sep.clone());
+        left_spans.push(status_span);
 
-        // Smart mode badge based on mode_name (skip "standard" and "agent")
-        if app.mode_name != "standard" && app.mode_name != "agent" {
-            let badge_color = match app.mode_name.as_str() {
-                "efficient" | "eco" => Color::Green,
-                "thorough" => Color::Cyan,
-                "learning" => Color::Blue,
-                "auto" => Color::Yellow,
-                "code" => Color::Magenta,
-                "review" => Color::Red,
-                _ => Color::DarkGray,
-            };
-            let badge_text = app.mode_name.to_uppercase();
-            left_spans.push(sep.clone());
-            left_spans.push(Span::styled(
-                format!(" {} ", badge_text),
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(badge_color)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-
-        let left_line = Line::from(left_spans);
-
-        frame.render_widget(Paragraph::new(left_line), chunks[0]);
+        frame.render_widget(Paragraph::new(Line::from(left_spans)), chunks[0]);
         frame.render_widget(
             Paragraph::new(Line::from(right_span)).alignment(Alignment::Right),
             chunks[1],
         );
+    }
+}
+
+/// Format a number with thousands separators.
+fn format_number(n: usize) -> String {
+    if n >= 1_000_000 {
+        format!(
+            "{},{:03},{:03}",
+            n / 1_000_000,
+            (n / 1_000) % 1_000,
+            n % 1_000
+        )
+    } else if n >= 1_000 {
+        format!("{},{:03}", n / 1_000, n % 1_000)
+    } else {
+        format!("{}", n)
     }
 }
 

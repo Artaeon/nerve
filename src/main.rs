@@ -716,6 +716,11 @@ async fn event_loop(
             }
         }
 
+        // Execute any pending command (e.g. slash command selected from Nerve Bar).
+        if let Some(cmd) = app.pending_command.take() {
+            submit_message(app, &cmd, &provider).await;
+        }
+
         // Drain any pending stream tokens.
         //
         // We temporarily take the receiver out of `app` so we can mutate
@@ -1183,10 +1188,11 @@ async fn handle_normal_mode(
             match code {
                 KeyCode::Char('i') => app.input_mode = InputMode::Insert,
                 KeyCode::Char('/') => {
-                    app.mode = AppMode::CommandBar;
-                    app.command_bar_input.clear();
-                    app.command_bar_select_index = 0;
-                    app.command_bar_category = 0;
+                    // Switch to Insert mode and insert '/' so the user can
+                    // type slash commands directly (e.g. /help, /agent on).
+                    app.input_mode = InputMode::Insert;
+                    app.insert_char('/');
+                    update_autocomplete(app);
                 }
                 KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
                 KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
@@ -1269,9 +1275,14 @@ async fn handle_normal_mode(
                         }
                         return Ok(());
                     }
-                    KeyCode::Tab | KeyCode::Enter => {
+                    KeyCode::Tab => {
                         accept_autocomplete(app);
                         return Ok(());
+                    }
+                    KeyCode::Enter => {
+                        // Accept the selection, then fall through to the
+                        // normal Enter handler which will submit the message.
+                        accept_autocomplete(app);
                     }
                     KeyCode::Esc => {
                         app.autocomplete_visible = false;
@@ -1345,10 +1356,11 @@ async fn handle_normal_mode(
                         } else {
                             // Existing slash command completion
                             let partial = &app.input[1..]; // strip the /
-                            let commands = get_all_commands_bare();
-                            let matches: Vec<&&str> = commands
+                            let commands = get_all_commands();
+                            let matches: Vec<&str> = commands
                                 .iter()
-                                .filter(|cmd| cmd.starts_with(partial))
+                                .filter(|(cmd, _)| cmd.starts_with(partial))
+                                .map(|(cmd, _)| *cmd)
                                 .collect();
 
                             if matches.len() == 1 {
@@ -1467,15 +1479,22 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             // Use the helper from the UI module to get the selected prompt.
             if let Some(prompt) = ui::command_bar::selected_prompt(app) {
-                let template = if app.input.is_empty() {
-                    prompt.template.replace("{{input}}", "")
+                if prompt.template.starts_with('/') {
+                    // Slash command — queue it for immediate execution.
+                    app.pending_command = Some(prompt.template.clone());
+                    app.set_status(format!("Running: {}", prompt.name));
                 } else {
-                    prompt.template.replace("{{input}}", &app.input)
-                };
-                app.input = template;
-                app.cursor_position = app.input.len();
-                app.input_mode = InputMode::Insert;
-                app.set_status(format!("Loaded prompt: {}", prompt.name));
+                    // SmartPrompt — load the template into the input field.
+                    let template = if app.input.is_empty() {
+                        prompt.template.replace("{{input}}", "")
+                    } else {
+                        prompt.template.replace("{{input}}", &app.input)
+                    };
+                    app.input = template;
+                    app.cursor_position = app.input.len();
+                    app.input_mode = InputMode::Insert;
+                    app.set_status(format!("Loaded prompt: {}", prompt.name));
+                }
             }
             app.mode = AppMode::Normal;
         }
@@ -1930,7 +1949,7 @@ fn update_search_results(app: &mut App) {
 }
 
 /// Find the longest common prefix among a set of string slices.
-fn common_prefix(strings: &[&&str]) -> String {
+fn common_prefix(strings: &[&str]) -> String {
     if strings.is_empty() {
         return String::new();
     }
@@ -1949,92 +1968,145 @@ fn common_prefix(strings: &[&&str]) -> String {
 
 // ─── Inline autocomplete ────────────────────────────────────────────────────
 
-/// All slash command names (without the leading `/`), used both for Tab
-/// completion and for the inline autocomplete popup.
-fn get_all_commands_bare() -> &'static [&'static str] {
+/// All slash commands with descriptions, used for autocomplete.
+/// Each entry is `(command_name, description)`.
+///
+/// Descriptions must match those in `ui::command_bar::command_prompts()`.
+fn get_all_commands() -> &'static [(&'static str, &'static str)] {
     &[
-        "help",
-        "clear",
-        "new",
-        "model",
-        "models",
-        "provider",
-        "providers",
-        "code",
-        "cwd",
-        "ollama",
-        "url",
-        "kb",
-        "auto",
-        "status",
-        "export",
-        "rename",
-        "system",
-        "workspace",
-        "run",
-        "pipe",
-        "diff",
-        "test",
-        "build",
-        "git",
-        "agent",
-        "cd",
-        "summary",
-        "compact",
-        "context",
-        "tokens",
-        "branch",
-        "session",
-        "usage",
-        "cost",
-        "limit",
-        "copy",
-        "file",
-        "files",
-        "theme",
-        "alias",
-        "repeat",
-        "mode",
-        "autocontext",
-        "ac",
-        "delete",
-        "template",
-        "scaffold",
-        "map",
-        "tree",
-        "plugin",
-        "plugins",
+        // Chat
+        ("help", "Show all available commands"),
+        ("clear", "Clear current conversation"),
+        ("new", "Start new conversation"),
+        ("delete", "Delete current conversation"),
+        ("rename", "Rename current conversation"),
+        ("export", "Export conversation to markdown"),
+        ("copy", "Copy last AI response to clipboard"),
+        ("copy code", "Copy last code block from AI response"),
+        ("copy all", "Copy entire conversation"),
+        ("system", "Show or set system prompt"),
+        // AI Provider
+        ("provider", "Switch AI provider"),
+        ("providers", "List available providers"),
+        ("model", "Switch AI model"),
+        ("models", "List available models"),
+        ("ollama", "Manage Ollama models (list/pull/remove)"),
+        (
+            "mode",
+            "Switch mode (efficient/thorough/agent/learning/auto/code/review)",
+        ),
+        ("agent on", "Enable agent mode (AI tool loop)"),
+        ("agent off", "Disable agent mode"),
+        ("agent status", "Show agent mode status"),
+        ("agent undo", "Roll back to pre-agent git checkpoint"),
+        ("agent diff", "Show what the agent changed (git diff)"),
+        ("agent commit", "Commit agent changes"),
+        ("autocontext", "Auto-gather project context (alias: /ac)"),
+        ("ac", "Auto-gather project context"),
+        ("code on", "Enable code mode (Claude Code only)"),
+        ("code off", "Disable code mode"),
+        ("cwd", "Set working directory"),
+        ("cd", "Change working directory"),
+        // Knowledge & Context
+        ("file", "Read file as context"),
+        ("files", "Read multiple files as context"),
+        ("summary", "Summarize current conversation"),
+        ("compact", "Compact conversation (save tokens)"),
+        ("context", "Show current AI context window"),
+        ("tokens", "Show token usage breakdown"),
+        ("kb add", "Add directory to knowledge base"),
+        ("kb search", "Search knowledge base"),
+        ("kb list", "List knowledge bases"),
+        ("kb status", "Show KB statistics"),
+        ("kb clear", "Clear knowledge base"),
+        ("url", "Scrape URL for context"),
+        // Shell & Git
+        ("run", "Run shell command and show output"),
+        ("pipe", "Run command and add output as context"),
+        ("diff", "Show git diff (adds as context)"),
+        ("test", "Auto-detect and run project tests"),
+        ("build", "Auto-detect and run project build"),
+        ("git", "Quick git operations (status/log/diff/branch)"),
+        // Project Scaffolding
+        ("template list", "List available project templates"),
+        ("template", "Create project from template"),
+        ("scaffold", "AI-generate a project from description"),
+        ("map", "Show project map (file tree + symbols)"),
+        ("tree", "Show project file tree (alias)"),
+        // Automation
+        ("auto list", "List automations"),
+        ("auto run", "Run automation"),
+        ("auto create", "Create custom automation"),
+        // Sessions
+        ("session", "Show session info"),
+        ("session save", "Save current session"),
+        ("session list", "List saved sessions"),
+        ("session restore", "Restore last session"),
+        // Branching
+        ("branch save", "Save conversation branch point"),
+        ("branch list", "List saved branches"),
+        ("branch restore", "Restore a saved branch"),
+        ("branch diff", "Compare current with a branch"),
+        // Workspace
+        ("workspace", "Show detected project info"),
+        // Usage & Cost
+        ("usage", "Show session usage stats (estimated)"),
+        ("cost", "Alias for /usage"),
+        ("limit", "Show spending limit info"),
+        ("limit on", "Enable spending limit"),
+        ("limit off", "Disable spending limit"),
+        ("limit set", "Set spending limit amount"),
+        // System
+        ("status", "Show system status"),
+        ("theme", "Switch UI theme"),
+        // Power User
+        ("alias", "List or create aliases"),
+        ("repeat", "Recall last input (same as /!!)"),
+        // Plugins
+        ("plugin list", "List installed plugins"),
+        ("plugin init", "Create example plugin"),
+        ("plugin reload", "Reload all plugins"),
     ]
 }
 
 /// Update the inline autocomplete popup based on current input.
 ///
-/// Shows matching slash commands when input starts with `/`, or matching file
-/// paths when the input contains an `@` mention.
+/// Shows matching slash commands with descriptions when input starts with `/`,
+/// or matching file paths when the input contains an `@` mention.
 fn update_autocomplete(app: &mut App) {
     let input = &app.input;
 
-    if input.starts_with('/') && !input.contains(' ') {
-        // Autocomplete slash commands.
-        let partial = &input[1..];
-        if partial.is_empty() {
-            app.autocomplete_visible = false;
-            return;
-        }
-        let commands = get_all_commands_bare();
-        let mut items: Vec<String> = commands
+    if let Some(partial) = input.strip_prefix('/') {
+        // Autocomplete slash commands — supports subcommands (e.g. "/agent on").
+        let commands = get_all_commands();
+        let max_items = 10;
+
+        let mut scored: Vec<(bool, &str, &str)> = if partial.is_empty() {
+            // Show popular commands when the user just typed '/'.
+            commands
+                .iter()
+                .take(max_items)
+                .map(|(cmd, desc)| (true, *cmd, *desc))
+                .collect()
+        } else {
+            commands
+                .iter()
+                .filter(|(cmd, desc)| {
+                    cmd.starts_with(partial)
+                        || cmd.contains(partial)
+                        || desc.to_lowercase().contains(&partial.to_lowercase())
+                })
+                .take(max_items)
+                .map(|(cmd, desc)| (cmd.starts_with(partial), *cmd, *desc))
+                .collect()
+        };
+        // Prefix matches first.
+        scored.sort_by(|a, b| b.0.cmp(&a.0));
+
+        app.autocomplete_items = scored
             .iter()
-            .filter(|cmd| cmd.starts_with(partial) || cmd.contains(partial))
-            .take(8)
-            .map(|cmd| format!("/{cmd}"))
+            .map(|(_, cmd, desc)| format!("/{cmd}  \u{2500}\u{2500} {desc}"))
             .collect();
-        // Prioritise prefix matches over substring matches.
-        items.sort_by(|a, b| {
-            let a_prefix = a[1..].starts_with(partial);
-            let b_prefix = b[1..].starts_with(partial);
-            b_prefix.cmp(&a_prefix)
-        });
-        app.autocomplete_items = items;
         app.autocomplete_visible = !app.autocomplete_items.is_empty();
         app.autocomplete_index = 0;
     } else if let Some(at_pos) = input.rfind('@') {
@@ -2127,9 +2199,17 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
 /// input buffer.
 fn accept_autocomplete(app: &mut App) {
     if let Some(selected) = app.autocomplete_items.get(app.autocomplete_index).cloned() {
-        if app.input.starts_with('/') && !app.input.contains(' ') {
+        // Strip description suffix ("  ── ...") if present.
+        // Format is always "/command  ── description", so first match is correct.
+        let clean = if let Some(sep) = selected.find("  \u{2500}\u{2500} ") {
+            selected[..sep].to_string()
+        } else {
+            selected
+        };
+
+        if app.input.starts_with('/') {
             // Replace the entire slash command prefix.
-            app.input = format!("{} ", selected);
+            app.input = format!("{} ", clean);
             app.cursor_position = app.input.len();
         } else if let Some(at_pos) = app.input.rfind('@') {
             // Replace the text after `@` with the selected path.
@@ -2144,8 +2224,8 @@ fn accept_autocomplete(app: &mut App) {
             } else {
                 String::new()
             };
-            app.input = format!("{}{}{}", before, selected, after_cursor);
-            app.cursor_position = before.len() + selected.len();
+            app.input = format!("{}{}{}", before, clean, after_cursor);
+            app.cursor_position = before.len() + clean.len();
         }
         app.autocomplete_visible = false;
     }
@@ -2857,28 +2937,25 @@ mod tests {
 
     #[test]
     fn test_common_prefix_single() {
-        let strs = ["hello"];
-        let refs: Vec<&&str> = strs.iter().collect();
+        let refs: Vec<&str> = vec!["hello"];
         assert_eq!(common_prefix(&refs), "hello");
     }
 
     #[test]
     fn test_common_prefix_multiple() {
-        let strs = ["model", "models"];
-        let refs: Vec<&&str> = strs.iter().collect();
+        let refs: Vec<&str> = vec!["model", "models"];
         assert_eq!(common_prefix(&refs), "model");
     }
 
     #[test]
     fn test_common_prefix_none() {
-        let strs = ["abc", "xyz"];
-        let refs: Vec<&&str> = strs.iter().collect();
+        let refs: Vec<&str> = vec!["abc", "xyz"];
         assert_eq!(common_prefix(&refs), "");
     }
 
     #[test]
     fn test_common_prefix_empty() {
-        let refs: Vec<&&str> = vec![];
+        let refs: Vec<&str> = vec![];
         assert_eq!(common_prefix(&refs), "");
     }
 

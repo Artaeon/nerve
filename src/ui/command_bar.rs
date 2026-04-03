@@ -25,7 +25,11 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/rename", "Rename current conversation", "Chat"),
         ("/export", "Export conversation to markdown", "Chat"),
         ("/copy", "Copy last AI response to clipboard", "Chat"),
-        ("/copy code", "Copy last code block from AI response", "Chat"),
+        (
+            "/copy code",
+            "Copy last code block from AI response",
+            "Chat",
+        ),
         ("/copy all", "Copy entire conversation", "Chat"),
         ("/system", "Show or set system prompt", "Chat"),
         // AI Provider
@@ -33,16 +37,44 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/providers", "List available providers", "AI Provider"),
         ("/model", "Switch AI model", "AI Provider"),
         ("/models", "List available models", "AI Provider"),
-        ("/ollama", "Manage Ollama models (list/pull/remove)", "AI Provider"),
-        ("/mode", "Switch mode (efficient/thorough/agent/learning/auto/code/review)", "AI Provider"),
-        ("/agent on", "Enable agent mode (AI tool loop)", "AI Provider"),
+        (
+            "/ollama",
+            "Manage Ollama models (list/pull/remove)",
+            "AI Provider",
+        ),
+        (
+            "/mode",
+            "Switch mode (efficient/thorough/agent/learning/auto/code/review)",
+            "AI Provider",
+        ),
+        (
+            "/agent on",
+            "Enable agent mode (AI tool loop)",
+            "AI Provider",
+        ),
         ("/agent off", "Disable agent mode", "AI Provider"),
         ("/agent status", "Show agent mode status", "AI Provider"),
-        ("/agent undo", "Roll back to pre-agent git checkpoint", "AI Provider"),
-        ("/agent diff", "Show what the agent changed (git diff)", "AI Provider"),
+        (
+            "/agent undo",
+            "Roll back to pre-agent git checkpoint",
+            "AI Provider",
+        ),
+        (
+            "/agent diff",
+            "Show what the agent changed (git diff)",
+            "AI Provider",
+        ),
         ("/agent commit", "Commit agent changes", "AI Provider"),
-        ("/autocontext", "Auto-gather project context (alias: /ac)", "AI Provider"),
-        ("/code on", "Enable code mode (Claude Code only)", "AI Provider"),
+        (
+            "/autocontext",
+            "Auto-gather project context (alias: /ac)",
+            "AI Provider",
+        ),
+        (
+            "/code on",
+            "Enable code mode (Claude Code only)",
+            "AI Provider",
+        ),
         ("/code off", "Disable code mode", "AI Provider"),
         ("/cwd", "Set working directory", "AI Provider"),
         ("/cd", "Change working directory", "AI Provider"),
@@ -50,7 +82,11 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/file", "Read file as context", "Knowledge"),
         ("/files", "Read multiple files as context", "Knowledge"),
         ("/summary", "Summarize current conversation", "Knowledge"),
-        ("/compact", "Compact conversation (save tokens)", "Knowledge"),
+        (
+            "/compact",
+            "Compact conversation (save tokens)",
+            "Knowledge",
+        ),
         ("/context", "Show current AI context window", "Knowledge"),
         ("/tokens", "Show token usage breakdown", "Knowledge"),
         ("/kb add", "Add directory to knowledge base", "Knowledge"),
@@ -61,16 +97,36 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/url", "Scrape URL for context", "Knowledge"),
         // Shell & Git
         ("/run", "Run shell command and show output", "Shell & Git"),
-        ("/pipe", "Run command and add output as context", "Shell & Git"),
+        (
+            "/pipe",
+            "Run command and add output as context",
+            "Shell & Git",
+        ),
         ("/diff", "Show git diff (adds as context)", "Shell & Git"),
         ("/test", "Auto-detect and run project tests", "Shell & Git"),
         ("/build", "Auto-detect and run project build", "Shell & Git"),
-        ("/git", "Quick git operations (status/log/diff/branch)", "Shell & Git"),
+        (
+            "/git",
+            "Quick git operations (status/log/diff/branch)",
+            "Shell & Git",
+        ),
         // Project Scaffolding
-        ("/template list", "List available project templates", "Scaffolding"),
+        (
+            "/template list",
+            "List available project templates",
+            "Scaffolding",
+        ),
         ("/template", "Create project from template", "Scaffolding"),
-        ("/scaffold", "AI-generate a project from description", "Scaffolding"),
-        ("/map", "Show project map (file tree + symbols)", "Scaffolding"),
+        (
+            "/scaffold",
+            "AI-generate a project from description",
+            "Scaffolding",
+        ),
+        (
+            "/map",
+            "Show project map (file tree + symbols)",
+            "Scaffolding",
+        ),
         // Automation
         ("/auto list", "List automations", "Automation"),
         ("/auto run", "Run automation", "Automation"),
@@ -91,7 +147,11 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         ("/session list", "List saved sessions", "Sessions"),
         ("/session restore", "Restore last session", "Sessions"),
         // Branching
-        ("/branch save", "Save conversation branch point", "Branching"),
+        (
+            "/branch save",
+            "Save conversation branch point",
+            "Branching",
+        ),
         ("/branch list", "List saved branches", "Branching"),
         ("/branch restore", "Restore a saved branch", "Branching"),
         ("/branch delete", "Delete a branch", "Branching"),
@@ -99,7 +159,11 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
         // Workspace
         ("/workspace", "Show detected project info", "Workspace"),
         // Usage & Cost
-        ("/usage", "Show session usage stats (estimated)", "Usage & Cost"),
+        (
+            "/usage",
+            "Show session usage stats (estimated)",
+            "Usage & Cost",
+        ),
         ("/cost", "Alias for /usage", "Usage & Cost"),
         ("/limit", "Show spending limit info", "Usage & Cost"),
         ("/limit on", "Enable spending limit", "Usage & Cost"),
@@ -334,8 +398,9 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let match_count = scored.len();
     // Use the cached builtin count + custom prompts + command prompts instead
     // of rebuilding the full list a second time.
-    let total =
-        BUILTIN_CACHE.len() + prompts::custom::load_custom_prompts().len() + command_prompts().len();
+    let total = BUILTIN_CACHE.len()
+        + prompts::custom::load_custom_prompts().len()
+        + command_prompts().len();
 
     // Available width inside the prompt list area (for right-aligning badges).
     let list_width = chunks[2].width as usize;
