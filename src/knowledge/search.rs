@@ -85,7 +85,7 @@ fn calculate_score(chunk: &str, query_words: &[&str], matcher: &SkimMatcherV2) -
     }
 
     // Normalise by chunk length (shorter, more focused chunks rank higher).
-    let word_count = chunk.split_whitespace().count() as f64;
+    let word_count = chunk.split_whitespace().count().max(1) as f64;
     score / (1.0 + word_count.ln())
 }
 
