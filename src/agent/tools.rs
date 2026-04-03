@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static TOOL_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -467,6 +467,49 @@ fn verify_file_syntax(path: &str) -> Option<String> {
     None
 }
 
+/// Resolve a path and check it (and its canonical form) against the protected
+/// list.  Returns the resolved [`PathBuf`] on success, or a blocking
+/// [`ToolResult`] on failure.
+fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {
+    if crate::shell::is_protected_path(path) {
+        return Err(ToolResult {
+            tool: tool.into(),
+            success: false,
+            output: format!("Blocked: cannot write to protected path: {path}"),
+        });
+    }
+
+    let buf = PathBuf::from(path);
+
+    // If the file (or a parent) already exists, canonicalize to defeat
+    // symlink attacks that redirect writes to protected locations.
+    let canonical = if buf.exists() {
+        buf.canonicalize().unwrap_or_else(|_| buf.clone())
+    } else if let Some(parent) = buf.parent() {
+        if parent.exists() {
+            parent
+                .canonicalize()
+                .map(|p| p.join(buf.file_name().unwrap_or_default()))
+                .unwrap_or_else(|_| buf.clone())
+        } else {
+            buf.clone()
+        }
+    } else {
+        buf.clone()
+    };
+
+    let canon_str = canonical.to_string_lossy();
+    if crate::shell::is_protected_path(&canon_str) {
+        return Err(ToolResult {
+            tool: tool.into(),
+            success: false,
+            output: format!("Blocked: resolved path is protected: {canon_str}"),
+        });
+    }
+
+    Ok(buf)
+}
+
 fn execute_write_file(call: &ToolCall) -> ToolResult {
     let path = match require_arg(call, "path") {
         Ok(p) => p,
@@ -474,13 +517,9 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
     };
     let content = call.args.get("content").map(|s| s.as_str()).unwrap_or("");
 
-    // Security: block writing to protected system paths
-    if crate::shell::is_protected_path(path) {
-        return ToolResult {
-            tool: "write_file".into(),
-            success: false,
-            output: format!("Blocked: cannot write to protected path: {path}"),
-        };
+    // Security: block writing to protected system paths (including symlinks).
+    if let Err(blocked) = validate_write_path(path, "write_file") {
+        return blocked;
     }
 
     // Create parent directories
@@ -526,13 +565,9 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
     };
     let new_text = call.args.get("new_text").map(|s| s.as_str()).unwrap_or("");
 
-    // Security: block editing protected system paths
-    if crate::shell::is_protected_path(path) {
-        return ToolResult {
-            tool: "edit_file".into(),
-            success: false,
-            output: format!("Blocked: cannot edit protected path: {path}"),
-        };
+    // Security: block editing protected system paths (including symlinks).
+    if let Err(blocked) = validate_write_path(path, "edit_file") {
+        return blocked;
     }
 
     match std::fs::read_to_string(path) {
