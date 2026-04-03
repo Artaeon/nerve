@@ -18,6 +18,10 @@ pub struct Config {
     /// Default provider key: "openai", "ollama", "openrouter", or the name
     /// of a custom provider.
     pub default_provider: String,
+    /// Timeout in seconds for shell commands executed by `/run` and agent
+    /// tools. Set to `0` to disable the timeout. Defaults to 30.
+    #[serde(default = "default_command_timeout_secs")]
+    pub command_timeout_secs: u64,
     /// Theme colours.
     pub theme: ThemeConfig,
     /// Provider connection settings.
@@ -30,6 +34,10 @@ pub struct Config {
     /// to need tool access (file I/O, shell commands, git, etc.).
     #[serde(default = "Config::default_auto_agent")]
     pub auto_agent: bool,
+}
+
+fn default_command_timeout_secs() -> u64 {
+    crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS
 }
 
 /// Connections for each supported AI provider.
@@ -102,6 +110,7 @@ impl Default for Config {
         Self {
             default_model: "sonnet".into(),
             default_provider: "claude_code".into(),
+            command_timeout_secs: default_command_timeout_secs(),
             theme: ThemeConfig::default(),
             providers: ProvidersConfig::default(),
             keybinds: KeybindsConfig::default(),
@@ -284,6 +293,9 @@ impl Config {
 # auto_agent       : When true, automatically enable agent mode (tool access)
 #                    for messages that appear to need it.  Set to false to
 #                    require manual \"/agent on\".
+# command_timeout_secs  : Max seconds for /run and agent tool commands
+#                          before they are killed. Set to 0 to disable.
+#                          Default: 30.
 #
 # ── Theme ────────────────────────────────────────────────────────────
 # Colours can be any CSS-style hex code (\"#rrggbb\").
@@ -476,6 +488,12 @@ mod tests {
     fn config_default_provider() {
         let cfg = Config::default();
         assert_eq!(cfg.default_provider, "claude_code");
+    }
+
+    #[test]
+    fn config_default_command_timeout() {
+        let cfg = Config::default();
+        assert_eq!(cfg.command_timeout_secs, 30);
     }
 
     #[test]
@@ -904,6 +922,46 @@ default_provider = "openai"
         // Missing sections should use their Default values
         assert_eq!(cfg.theme.user_color, ThemeConfig::default().user_color);
         assert_eq!(cfg.keybinds.quit, KeybindsConfig::default().quit);
+    }
+
+    // ── command_timeout_secs parsing ──────────────────────────────────
+
+    #[test]
+    fn config_parse_custom_timeout() {
+        let toml_str = r#"
+default_model = "sonnet"
+default_provider = "claude_code"
+command_timeout_secs = 120
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.command_timeout_secs, 120);
+    }
+
+    #[test]
+    fn config_parse_timeout_zero() {
+        let toml_str = r#"
+command_timeout_secs = 0
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.command_timeout_secs, 0);
+    }
+
+    #[test]
+    fn config_missing_timeout_gets_default() {
+        let toml_str = r#"
+default_model = "sonnet"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.command_timeout_secs, 30);
+    }
+
+    #[test]
+    fn config_timeout_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.command_timeout_secs = 60;
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(restored.command_timeout_secs, 60);
     }
 
     #[test]
