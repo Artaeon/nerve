@@ -554,6 +554,7 @@ async fn run_tui(
     let mut app = App::new();
     app.selected_model = config.default_model.clone();
     app.selected_provider = config.default_provider.clone();
+    app.auto_agent = config.auto_agent;
 
     // Load last used provider if not specified via CLI.
     if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {

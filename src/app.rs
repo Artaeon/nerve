@@ -170,6 +170,13 @@ pub struct App {
     pub agent_iterations: usize,
     /// Whether a git stash checkpoint was created when agent mode was enabled.
     pub agent_has_stash: bool,
+    /// When `true`, automatically enable agent mode for messages that appear
+    /// to need tool access.  Mirrors `config.auto_agent`.
+    pub auto_agent: bool,
+    /// Set to `true` when agent mode was activated by auto-detection (not by
+    /// the user).  Used to disable agent mode again after the response if no
+    /// tools were actually invoked.
+    pub auto_agent_active: bool,
 
     // -- search overlay --
     pub search_query: String,
@@ -308,6 +315,8 @@ impl App {
             agent_mode: false,
             agent_iterations: 0,
             agent_has_stash: false,
+            auto_agent: true,
+            auto_agent_active: false,
 
             search_query: String::new(),
             search_results: Vec::new(),
