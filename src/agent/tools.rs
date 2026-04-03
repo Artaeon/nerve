@@ -433,24 +433,23 @@ fn verify_file_syntax(path: &str) -> Option<String> {
         .extension()
         .and_then(|e| e.to_str());
 
+    let escaped = crate::shell::shell_escape(path);
     let check_cmd = match ext {
-        Some("rs") => Some(format!("rustfmt --check {} 2>&1 | head -5", path)),
+        Some("rs") => Some(format!("rustfmt --check {escaped} 2>&1 | head -5")),
         Some("py") => Some(format!(
-            "python3 -c \"import ast; ast.parse(open('{}').read())\" 2>&1",
-            path
+            "python3 -c \"import ast; ast.parse(open({escaped}).read())\" 2>&1",
         )),
-        Some("js" | "ts" | "jsx" | "tsx") => Some(format!("node --check {} 2>&1 | head -5", path)),
+        Some("js" | "ts" | "jsx" | "tsx") => {
+            Some(format!("node --check {escaped} 2>&1 | head -5"))
+        }
         Some("json") => Some(format!(
-            "python3 -c \"import json; json.load(open('{}'))\" 2>&1",
-            path
+            "python3 -c \"import json; json.load(open({escaped}))\" 2>&1",
         )),
         Some("yaml" | "yml") => Some(format!(
-            "python3 -c \"import yaml; yaml.safe_load(open('{}'))\" 2>&1",
-            path
+            "python3 -c \"import yaml; yaml.safe_load(open({escaped}))\" 2>&1",
         )),
         Some("toml") => Some(format!(
-            "python3 -c \"import tomllib; tomllib.load(open('{}', 'rb'))\" 2>&1",
-            path
+            "python3 -c \"import tomllib; tomllib.load(open({escaped}, 'rb'))\" 2>&1",
         )),
         _ => None,
     };
@@ -664,9 +663,9 @@ fn execute_search_code(call: &ToolCall) -> ToolResult {
     let cmd = format!(
         "grep -rn --include='*.rs' --include='*.py' --include='*.js' --include='*.ts' \
          --include='*.go' --include='*.java' --include='*.toml' --include='*.json' \
-         --include='*.yaml' --include='*.md' '{}' {} | head -50",
-        pattern.replace('\'', "'\\''"),
-        path
+         --include='*.yaml' --include='*.md' {} {} | head -50",
+        crate::shell::shell_escape(pattern),
+        crate::shell::shell_escape(path)
     );
     match crate::shell::run_command(&cmd) {
         Ok(result) => ToolResult {
@@ -720,9 +719,9 @@ fn execute_find_files(call: &ToolCall) -> ToolResult {
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
 
     let cmd = format!(
-        "find {} -name '{}' -type f | head -100",
-        path.replace('\'', ""),
-        pattern.replace('\'', "")
+        "find {} -name {} -type f | head -100",
+        crate::shell::shell_escape(path),
+        crate::shell::shell_escape(pattern)
     );
     match crate::shell::run_command(&cmd) {
         Ok(result) => ToolResult {
