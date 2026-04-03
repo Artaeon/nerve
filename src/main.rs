@@ -3919,4 +3919,122 @@ mod tests {
             "1000 cached BUILTIN_CACHE accesses should be <10ms, took {hot:?}",
         );
     }
+
+    // ── autocomplete_file_paths tests ────────────────────────────────
+
+    #[test]
+    fn autocomplete_file_paths_empty_returns_cwd_files() {
+        let items = autocomplete_file_paths("");
+        // Should return entries from the current directory (project root).
+        assert!(!items.is_empty(), "empty partial should list cwd files");
+        // Cargo.toml should appear somewhere in the results.
+        assert!(
+            items.iter().any(|i| i.starts_with("Cargo.toml")),
+            "expected Cargo.toml in results: {items:?}"
+        );
+    }
+
+    #[test]
+    fn autocomplete_file_paths_src_dir() {
+        let items = autocomplete_file_paths("src/");
+        assert!(!items.is_empty(), "src/ should list its contents");
+        // All items should start with "src/".
+        assert!(
+            items.iter().all(|i| i.starts_with("src/")),
+            "all items should be under src/: {items:?}"
+        );
+        // The ui/ directory should be in there (it's a directory, sorted first).
+        assert!(
+            items.iter().any(|i| i.starts_with("src/ui/")),
+            "expected src/ui/ in results: {items:?}"
+        );
+    }
+
+    #[test]
+    fn autocomplete_file_paths_directories_sorted_first() {
+        let items = autocomplete_file_paths("");
+        // Find positions of known dir (src/) and file (Cargo.toml).
+        let dir_pos = items.iter().position(|i| i.starts_with("src/"));
+        let file_pos = items.iter().position(|i| i.starts_with("Cargo.toml"));
+        if let (Some(d), Some(f)) = (dir_pos, file_pos) {
+            assert!(
+                d < f,
+                "directories should sort before files: src/ at {d}, Cargo.toml at {f}"
+            );
+        }
+    }
+
+    #[test]
+    fn autocomplete_file_paths_includes_descriptions() {
+        let items = autocomplete_file_paths("");
+        // Every item should have a description suffix.
+        for item in &items {
+            assert!(
+                item.contains("  \u{2500}\u{2500} "),
+                "missing description in: {item}"
+            );
+        }
+        // Directories should say "directory".
+        let dir_item = items.iter().find(|i| i.starts_with("src/"));
+        if let Some(d) = dir_item {
+            assert!(
+                d.contains("directory"),
+                "dir item should say 'directory': {d}"
+            );
+        }
+    }
+
+    #[test]
+    fn autocomplete_file_paths_max_10() {
+        // The current directory likely has more than 10 entries; verify the cap.
+        let items = autocomplete_file_paths("");
+        assert!(items.len() <= 10, "should return at most 10 items");
+    }
+
+    #[test]
+    fn strip_autocomplete_description_strips_suffix() {
+        assert_eq!(
+            strip_autocomplete_description("src/  \u{2500}\u{2500} directory"),
+            "src/"
+        );
+        assert_eq!(
+            strip_autocomplete_description("Cargo.toml  \u{2500}\u{2500} 1.2 KB"),
+            "Cargo.toml"
+        );
+        assert_eq!(
+            strip_autocomplete_description("plain_name"),
+            "plain_name"
+        );
+    }
+
+    #[test]
+    fn accept_autocomplete_directory_keeps_browsing() {
+        let mut app = App::new();
+        app.input = "@".into();
+        app.cursor_position = 1;
+        app.autocomplete_items = vec!["src/  \u{2500}\u{2500} directory".into()];
+        app.autocomplete_index = 0;
+        app.autocomplete_visible = true;
+
+        accept_autocomplete(&mut app);
+
+        // Input should be @src/ with no trailing space.
+        assert_eq!(app.input, "@src/");
+        assert_eq!(app.cursor_position, 5);
+    }
+
+    #[test]
+    fn accept_autocomplete_file_adds_space() {
+        let mut app = App::new();
+        app.input = "@Car".into();
+        app.cursor_position = 4;
+        app.autocomplete_items = vec!["Cargo.toml  \u{2500}\u{2500} 1.2 KB".into()];
+        app.autocomplete_index = 0;
+        app.autocomplete_visible = true;
+
+        accept_autocomplete(&mut app);
+
+        assert_eq!(app.input, "@Cargo.toml ");
+        assert!(!app.autocomplete_visible);
+    }
 }
