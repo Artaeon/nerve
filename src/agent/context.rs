@@ -31,9 +31,13 @@ impl ContextManager {
         Self { max_tokens }
     }
 
-    /// Estimate token count for a message (rough: ~4 chars per token)
+    /// Estimate token count for a message.
+    ///
+    /// Uses ~3 chars per token which is conservative — BPE tokenization
+    /// averages 3-4 chars/token for English, less for code/CJK. Erring
+    /// on the high side prevents context limit overflows.
     pub fn estimate_tokens(text: &str) -> usize {
-        text.len() / 4 + 1
+        text.len() / 3 + 1
     }
 
     /// Estimate total tokens for a conversation
@@ -447,7 +451,7 @@ mod tests {
     fn estimate_tokens_long_text() {
         let text = "x".repeat(4000);
         let tokens = ContextManager::estimate_tokens(&text);
-        assert_eq!(tokens, 1001); // 4000/4 + 1
+        assert_eq!(tokens, 1334); // 4000/3 + 1
     }
 
     #[test]
@@ -526,6 +530,6 @@ mod tests {
             messages.push(("user".into(), "x".repeat(4000)));
         }
         let tokens = ContextManager::conversation_tokens(&messages);
-        assert_eq!(tokens, 100 * 1001); // (4000/4 + 1) * 100
+        assert_eq!(tokens, 100 * 1334); // (4000/3 + 1) * 100
     }
 }

@@ -339,6 +339,19 @@ pub fn reset_tool_counter() {
     TOOL_EXEC_COUNT.store(0, Ordering::Relaxed);
 }
 
+/// Extract a required argument from a tool call, returning an error result
+/// if the argument is missing or empty.
+fn require_arg<'a>(call: &'a ToolCall, name: &str) -> Result<&'a str, ToolResult> {
+    match call.args.get(name).map(|s| s.as_str()) {
+        Some(v) if !v.is_empty() => Ok(v),
+        _ => Err(ToolResult {
+            tool: call.tool.clone(),
+            success: false,
+            output: format!("Missing required argument: {name}"),
+        }),
+    }
+}
+
 /// Execute a tool call and return the result, enforcing a per-session
 /// execution limit. `command_timeout_secs` is applied to the `run_command`
 /// tool (0 = no timeout).
@@ -373,7 +386,10 @@ pub fn execute_tool(call: &ToolCall, command_timeout_secs: u64) -> ToolResult {
 }
 
 fn execute_read_file(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+    let path = match require_arg(call, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
     // Security: block reading sensitive files
     if crate::shell::is_sensitive_file(path) {
@@ -453,7 +469,10 @@ fn verify_file_syntax(path: &str) -> Option<String> {
 }
 
 fn execute_write_file(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+    let path = match require_arg(call, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let content = call.args.get("content").map(|s| s.as_str()).unwrap_or("");
 
     // Security: block writing to protected system paths
@@ -498,8 +517,14 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_edit_file(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
-    let old_text = call.args.get("old_text").map(|s| s.as_str()).unwrap_or("");
+    let path = match require_arg(call, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let old_text = match require_arg(call, "old_text") {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
     let new_text = call.args.get("new_text").map(|s| s.as_str()).unwrap_or("");
 
     // Security: block editing protected system paths
@@ -553,7 +578,10 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_run_command(call: &ToolCall, timeout_secs: u64) -> ToolResult {
-    let cmd = call.args.get("command").map(|s| s.as_str()).unwrap_or("");
+    let cmd = match require_arg(call, "command") {
+        Ok(c) => c,
+        Err(e) => return e,
+    };
 
     // Security: block dangerous commands from agent
     if crate::shell::is_dangerous_command(cmd) {
@@ -627,7 +655,10 @@ fn execute_list_files(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_search_code(call: &ToolCall) -> ToolResult {
-    let pattern = call.args.get("pattern").map(|s| s.as_str()).unwrap_or("");
+    let pattern = match require_arg(call, "pattern") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
 
     let cmd = format!(
@@ -656,7 +687,10 @@ fn execute_search_code(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_create_dir(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+    let path = match require_arg(call, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
     // Security: block creating directories in protected system paths
     if crate::shell::is_protected_path(path) {
@@ -709,7 +743,10 @@ fn execute_find_files(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_read_lines(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or("");
+    let path = match require_arg(call, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let start: usize = call
         .args
         .get("start")
