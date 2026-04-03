@@ -56,7 +56,11 @@ fn conversation_path(id: &str) -> PathBuf {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .take(128)
         .collect();
-    let safe_id = if safe_id.is_empty() { "invalid" } else { &safe_id };
+    let safe_id = if safe_id.is_empty() {
+        "invalid"
+    } else {
+        &safe_id
+    };
     history_dir().join(format!("{safe_id}.json"))
 }
 
@@ -686,5 +690,49 @@ mod tests {
         // Delete again
         let r2 = delete_conversation(&id);
         assert!(r2.is_ok());
+    }
+
+    // ── Conversation ID sanitization ──────────────────────────────────
+
+    #[test]
+    fn conversation_path_normal_id() {
+        let path = conversation_path("abc-123-def");
+        assert!(path.to_string_lossy().ends_with("abc-123-def.json"));
+    }
+
+    #[test]
+    fn conversation_path_strips_slashes() {
+        let path = conversation_path("../../../etc/passwd");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(!name.contains(".."), "should strip path separators: {name}");
+        assert!(!name.contains('/'), "should strip slashes: {name}");
+    }
+
+    #[test]
+    fn conversation_path_strips_dots() {
+        let path = conversation_path("../../evil");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert!(!name.contains(".."));
+    }
+
+    #[test]
+    fn conversation_path_empty_id_handled() {
+        let path = conversation_path("");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "invalid.json");
+    }
+
+    #[test]
+    fn conversation_path_all_special_chars() {
+        let path = conversation_path("../../");
+        let name = path.file_name().unwrap().to_string_lossy();
+        assert_eq!(name, "invalid.json");
+    }
+
+    #[test]
+    fn conversation_path_uuid_preserved() {
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let path = conversation_path(uuid);
+        assert!(path.to_string_lossy().contains(uuid));
     }
 }

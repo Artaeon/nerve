@@ -634,4 +634,30 @@ mod tests {
     fn blocks_data_scheme() {
         assert!(is_private_url("data:text/html,<h1>hi</h1>"));
     }
+
+    // ── IPv6 advanced bypass tests ────────────────────────────────────
+
+    #[test]
+    fn blocks_ipv4_compatible_ipv6_loopback() {
+        // ::127.0.0.1 — deprecated IPv4-compatible format
+        assert!(is_private_url("http://[::127.0.0.1]/"));
+    }
+
+    #[test]
+    fn blocks_ipv4_compatible_ipv6_private() {
+        assert!(is_private_url("http://[::10.0.0.1]/"));
+    }
+
+    #[test]
+    fn blocks_ipv6_ula() {
+        // fc00::/7 — unique local address
+        assert!(is_private_url("http://[fd00::1]/"));
+        assert!(is_private_url("http://[fc00::1]/"));
+    }
+
+    #[test]
+    fn blocks_ipv6_multicast() {
+        assert!(is_private_url("http://[ff00::1]/"));
+        assert!(is_private_url("http://[ff02::1]/"));
+    }
 }

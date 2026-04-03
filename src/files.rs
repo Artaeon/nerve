@@ -30,10 +30,7 @@ pub fn read_file_context(path: &str) -> anyhow::Result<FileContext> {
         use std::os::unix::fs::FileTypeExt;
         let ft = metadata.file_type();
         if ft.is_char_device() || ft.is_block_device() || ft.is_fifo() || ft.is_socket() {
-            anyhow::bail!(
-                "Cannot read special file: {}",
-                path_buf.display()
-            );
+            anyhow::bail!("Cannot read special file: {}", path_buf.display());
         }
     }
 
@@ -778,5 +775,34 @@ mod tests {
             let lang = detect_language(std::path::Path::new(filename));
             assert_eq!(lang, expected, "Wrong language for {filename}");
         }
+    }
+
+    // ── Device file and special file blocking ─────────────────────────
+
+    #[cfg(unix)]
+    #[test]
+    fn read_dev_null_blocked() {
+        let result = read_file_context("/dev/null");
+        assert!(result.is_err(), "Should block char device /dev/null");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_dev_zero_blocked() {
+        let result = read_file_context("/dev/zero");
+        assert!(result.is_err(), "Should block char device /dev/zero");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_dev_random_blocked() {
+        let result = read_file_context("/dev/random");
+        assert!(result.is_err(), "Should block char device /dev/random");
+    }
+
+    #[test]
+    fn read_nonexistent_file_errors() {
+        let result = read_file_context("/tmp/nerve_nonexistent_abc123xyz");
+        assert!(result.is_err());
     }
 }
