@@ -126,11 +126,41 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
                     let _ = child.kill();
                     let _ = child.wait(); // Reap the zombie.
 
+                    // Capture any partial output produced before the timeout.
+                    let partial_stdout = child
+                        .stdout
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = Vec::new();
+                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                            buf
+                        })
+                        .unwrap_or_default();
+                    let partial_stderr = child
+                        .stderr
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = Vec::new();
+                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                            buf
+                        })
+                        .unwrap_or_default();
+
+                    let stdout = truncate_output(
+                        &String::from_utf8_lossy(&partial_stdout),
+                        MAX_OUTPUT_LINES,
+                    );
+                    let mut stderr = String::from_utf8_lossy(&partial_stderr).to_string();
+                    if !stderr.is_empty() {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(&format!("Command timed out after {timeout_secs}s"));
+
                     let elapsed = start.elapsed();
                     return Ok(CommandResult {
                         command: cmd.to_string(),
-                        stdout: String::new(),
-                        stderr: format!("Command timed out after {timeout_secs}s"),
+                        stdout,
+                        stderr,
                         exit_code: -1,
                         success: false,
                         timed_out: true,

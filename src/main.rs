@@ -622,8 +622,13 @@ async fn run_tui(
                     app.conversations.len()
                 ));
             }
-            Err(_) => {
-                app.set_status("No previous session found");
+            Err(e) => {
+                let msg = format!("{e}");
+                if msg.contains("No such file") || msg.contains("not found") {
+                    app.set_status("No previous session found");
+                } else {
+                    app.set_status(format!("Failed to restore session: {e}"));
+                }
             }
         }
     }
@@ -1049,9 +1054,10 @@ async fn handle_key_event(
                     };
                     let _ = history::save_conversation(&record);
                 }
-                // Drop the stream receiver to stop any in-progress generation.
-                app.stream_rx = None;
-                app.is_streaming = false;
+                // Save any in-progress generation before quitting.
+                if app.is_streaming {
+                    app.finish_streaming();
+                }
                 app.should_quit = true;
                 return Ok(());
             }
