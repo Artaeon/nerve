@@ -37,6 +37,15 @@ fn last_session_path() -> PathBuf {
     sessions_dir().join("last_session.json")
 }
 
+/// Write JSON to a file atomically (write to .tmp, then rename).
+/// Prevents corruption if the app crashes mid-write.
+fn atomic_write(path: &std::path::Path, json: &str) -> anyhow::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// Save the current session
 pub fn save_session(session: &Session) -> anyhow::Result<()> {
     let dir = sessions_dir();
@@ -44,14 +53,14 @@ pub fn save_session(session: &Session) -> anyhow::Result<()> {
 
     let path = last_session_path();
     let json = serde_json::to_string_pretty(session)?;
-    fs::write(&path, json)?;
+    atomic_write(&path, &json)?;
 
     // Also save a named copy
     let named_path = dir.join(format!(
         "session_{}.json",
         session.id.chars().take(8).collect::<String>()
     ));
-    fs::write(named_path, serde_json::to_string(session)?)?;
+    atomic_write(&named_path, &serde_json::to_string(session)?)?;
 
     Ok(())
 }

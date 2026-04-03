@@ -11,11 +11,52 @@ pub struct ScrapeResult {
 /// Maximum number of words to keep in scraped content (rough token budget).
 const MAX_WORDS: usize = 4000;
 
+/// Returns true if the URL targets a private/internal network address.
+fn is_private_url(url: &str) -> bool {
+    // Block file:// and other non-HTTP schemes.
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return true;
+    }
+    let lower = url.to_lowercase();
+    // Block common private/internal hostnames and IP ranges.
+    let blocked = [
+        "://localhost",
+        "://127.",
+        "://0.0.0.0",
+        "://10.",
+        "://192.168.",
+        "://172.16.",
+        "://172.17.",
+        "://172.18.",
+        "://172.19.",
+        "://172.20.",
+        "://172.21.",
+        "://172.22.",
+        "://172.23.",
+        "://172.24.",
+        "://172.25.",
+        "://172.26.",
+        "://172.27.",
+        "://172.28.",
+        "://172.29.",
+        "://172.30.",
+        "://172.31.",
+        "://[::1]",
+        "://169.254.",
+    ];
+    blocked.iter().any(|b| lower.contains(b))
+}
+
 /// Fetch a URL and extract readable text content from the HTML.
 pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
+    if is_private_url(url) {
+        anyhow::bail!("Cannot scrape private/internal URLs");
+    }
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .user_agent("Nerve/0.1.0")
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .context("failed to build HTTP client")?;
 
@@ -374,5 +415,52 @@ mod tests {
         let text = "hello&nbsp;world";
         let decoded = decode_html_entities(text);
         assert_eq!(decoded, "hello world");
+    }
+
+    // ── SSRF protection ────────────────────────────────────────────────
+
+    #[test]
+    fn blocks_localhost() {
+        assert!(is_private_url("http://localhost:8080/api"));
+    }
+
+    #[test]
+    fn blocks_loopback_ip() {
+        assert!(is_private_url("http://127.0.0.1/secret"));
+    }
+
+    #[test]
+    fn blocks_private_10() {
+        assert!(is_private_url("http://10.0.0.1/internal"));
+    }
+
+    #[test]
+    fn blocks_private_192() {
+        assert!(is_private_url("http://192.168.1.1/admin"));
+    }
+
+    #[test]
+    fn blocks_private_172() {
+        assert!(is_private_url("http://172.16.0.1/db"));
+    }
+
+    #[test]
+    fn blocks_ipv6_loopback() {
+        assert!(is_private_url("http://[::1]/api"));
+    }
+
+    #[test]
+    fn blocks_file_scheme() {
+        assert!(is_private_url("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn allows_public_url() {
+        assert!(!is_private_url("https://example.com/page"));
+    }
+
+    #[test]
+    fn allows_public_ip() {
+        assert!(!is_private_url("http://8.8.8.8/dns"));
     }
 }

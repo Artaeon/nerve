@@ -49,7 +49,7 @@ impl Plugin {
             fs::set_permissions(&script_path, perms).ok();
         }
 
-        let output = Command::new(&script_path)
+        let mut child = Command::new(&script_path)
             .args(args.split_whitespace())
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
@@ -57,21 +57,68 @@ impl Plugin {
             .current_dir(&self.dir)
             .env("NERVE_PLUGIN_DIR", &self.dir)
             .env("NERVE_ARGS", args)
-            .output()?;
+            .spawn()?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Timeout: plugins get 30 seconds max.
+        let timeout = std::time::Duration::from_secs(30);
+        let start = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let stdout_buf = child
+                        .stdout
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = Vec::new();
+                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                            buf
+                        })
+                        .unwrap_or_default();
+                    let stderr_buf = child
+                        .stderr
+                        .take()
+                        .map(|mut s| {
+                            let mut buf = Vec::new();
+                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                            buf
+                        })
+                        .unwrap_or_default();
+                    let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
+                    let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
 
-        if !output.status.success() {
-            anyhow::bail!(
-                "Plugin '{}' failed (exit {}): {}",
-                self.manifest.name,
-                output.status,
-                stderr
-            );
+                    if !status.success() {
+                        anyhow::bail!(
+                            "Plugin '{}' failed (exit {}): {}",
+                            self.manifest.name,
+                            status,
+                            stderr
+                        );
+                    }
+                    // Strip control characters from output for safety.
+                    let output = if stdout.is_empty() { stderr } else { stdout };
+                    let sanitized: String = output
+                        .chars()
+                        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                        .collect();
+                    return Ok(sanitized);
+                }
+                Ok(None) => {
+                    if start.elapsed() >= timeout {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        anyhow::bail!(
+                            "Plugin '{}' timed out after {}s",
+                            self.manifest.name,
+                            timeout.as_secs()
+                        );
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    anyhow::bail!("Error running plugin '{}': {e}", self.manifest.name);
+                }
+            }
         }
-
-        Ok(if stdout.is_empty() { stderr } else { stdout })
     }
 }
 

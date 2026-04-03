@@ -44,8 +44,19 @@ impl ClipboardManager {
         }
     }
 
+    /// Maximum size of a single clipboard entry (1 MB).
+    const MAX_ENTRY_BYTES: usize = 1_000_000;
+
     /// Add a new entry to the clipboard history.
+    /// Entries larger than 1 MB are truncated.
     pub fn add(&mut self, content: String, source: ClipboardSource) {
+        let content = if content.len() > Self::MAX_ENTRY_BYTES {
+            let mut truncated: String = content.chars().take(Self::MAX_ENTRY_BYTES).collect();
+            truncated.push_str("\n... (truncated)");
+            truncated
+        } else {
+            content
+        };
         let preview = make_preview(&content);
         let entry = ClipboardEntry {
             content,
@@ -113,6 +124,9 @@ impl ClipboardManager {
     }
 
     /// Persist clipboard history to disk.
+    ///
+    /// Uses restrictive file permissions (0600) since clipboard data may
+    /// contain sensitive content like API keys or passwords.
     pub fn save(&self) -> anyhow::Result<()> {
         let path = data_file_path()?;
         if let Some(parent) = path.parent() {
@@ -120,7 +134,16 @@ impl ClipboardManager {
         }
         let json =
             serde_json::to_string_pretty(&self.entries).context("failed to serialize clipboard")?;
-        std::fs::write(&path, json).context("failed to write clipboard file")?;
+        std::fs::write(&path, &json).context("failed to write clipboard file")?;
+
+        // Restrict permissions — clipboard may contain secrets.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&path, perms).ok();
+        }
+
         Ok(())
     }
 
