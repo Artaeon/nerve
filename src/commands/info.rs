@@ -401,3 +401,157 @@ fn handle_context(app: &mut App) -> bool {
     app.scroll_offset = 0;
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── /help ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn help_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/help").await);
+    }
+
+    #[tokio::test]
+    async fn help_contains_key_commands() {
+        let mut app = App::new();
+        handle(&mut app, "/help").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        let text = &last.1;
+        assert!(text.contains("/clear"));
+        assert!(text.contains("/new"));
+        assert!(text.contains("/model"));
+        assert!(text.contains("/export"));
+        assert!(text.contains("/help"));
+        assert!(text.contains("/status"));
+        assert!(text.contains("/agent"));
+        assert!(text.contains("/file"));
+        assert!(text.contains("/kb"));
+        assert!(text.contains("/plugin"));
+    }
+
+    #[tokio::test]
+    async fn help_added_as_assistant_message() {
+        let mut app = App::new();
+        handle(&mut app, "/help").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert_eq!(last.0, "assistant");
+    }
+
+    // ── /status ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn status_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/status").await);
+    }
+
+    #[tokio::test]
+    async fn status_contains_system_info() {
+        let mut app = App::new();
+        handle(&mut app, "/status").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        let text = &last.1;
+        assert!(text.contains("Nerve"));
+        assert!(text.contains("Provider"));
+        assert!(text.contains("Model"));
+        assert!(text.contains("Code Mode"));
+        assert!(text.contains("Agent Mode"));
+    }
+
+    #[tokio::test]
+    async fn status_shows_provider_and_model() {
+        let mut app = App::new();
+        app.selected_provider = "ollama".into();
+        app.selected_model = "llama3".into();
+        handle(&mut app, "/status").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("ollama"));
+        assert!(last.1.contains("llama3"));
+    }
+
+    // ── /summary ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn summary_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/summary").await);
+    }
+
+    #[tokio::test]
+    async fn summary_empty_conversation() {
+        let mut app = App::new();
+        handle(&mut app, "/summary").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("No messages to summarize"));
+    }
+
+    #[tokio::test]
+    async fn summary_with_messages() {
+        let mut app = App::new();
+        app.add_user_message("What is Rust?".into());
+        app.add_assistant_message("Rust is a systems programming language.".into());
+        handle(&mut app, "/summary").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Conversation Summary"));
+        assert!(last.1.contains("user"));
+        assert!(last.1.contains("AI"));
+    }
+
+    // ── /tokens ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn tokens_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/tokens").await);
+    }
+
+    #[tokio::test]
+    async fn tokens_shows_breakdown() {
+        let mut app = App::new();
+        app.add_user_message("hello world".into());
+        handle(&mut app, "/tokens").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Token Usage"));
+        assert!(last.1.contains("Estimated tokens"));
+    }
+
+    // ── /context ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn context_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/context").await);
+    }
+
+    #[tokio::test]
+    async fn context_shows_messages() {
+        let mut app = App::new();
+        app.add_user_message("test".into());
+        handle(&mut app, "/context").await;
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Current AI Context"));
+        assert!(last.1.contains("Total"));
+    }
+
+    // ── /compact ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn compact_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/compact").await);
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/helpx").await);
+        assert!(!handle(&mut app, "/statuses").await);
+        assert!(!handle(&mut app, "/token").await);
+        assert!(!handle(&mut app, "/summarize").await);
+    }
+}
