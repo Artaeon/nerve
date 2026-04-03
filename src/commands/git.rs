@@ -7,8 +7,35 @@ use crate::ai::provider::{AiProvider, ChatMessage};
 use crate::app::App;
 use crate::shell;
 
+/// Returns `true` if the current directory is inside a git repository.
+fn is_git_repo() -> bool {
+    shell::run_command("git rev-parse --git-dir")
+        .map(|r| r.success)
+        .unwrap_or(false)
+}
+
 /// Handle git-related write commands. Returns `true` if the command was handled.
 pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
+    // All commands in this module require a git repository.
+    let is_git_cmd = trimmed == "/commit"
+        || trimmed.starts_with("/commit ")
+        || trimmed == "/stage"
+        || trimmed.starts_with("/stage ")
+        || trimmed == "/unstage"
+        || trimmed.starts_with("/unstage ")
+        || trimmed == "/gitbranch"
+        || trimmed.starts_with("/gitbranch ")
+        || trimmed == "/stash"
+        || trimmed.starts_with("/stash ")
+        || trimmed == "/log"
+        || trimmed.starts_with("/log ")
+        || trimmed == "/gitstatus";
+
+    if is_git_cmd && !is_git_repo() {
+        app.set_status("Error: not a git repository");
+        return true;
+    }
+
     if trimmed == "/commit" || trimmed.starts_with("/commit ") {
         return handle_commit(app, trimmed, provider).await;
     }
@@ -252,9 +279,10 @@ async fn generate_commit_message(
     let diff = shell::run_command("git diff --cached --stat")?;
     let diff_detail = shell::run_command("git diff --cached")?;
 
-    // Truncate large diffs to avoid exceeding context
-    let diff_text = if diff_detail.stdout.len() > 4000 {
-        format!("{}\n\n... (diff truncated)", &diff_detail.stdout[..4000])
+    // Truncate large diffs to avoid exceeding context (char-safe, not byte-based).
+    let diff_text = if diff_detail.stdout.chars().count() > 4000 {
+        let truncated: String = diff_detail.stdout.chars().take(4000).collect();
+        format!("{}\n\n... (diff truncated)", truncated)
     } else {
         diff_detail.stdout.clone()
     };
@@ -277,13 +305,14 @@ async fn generate_commit_message(
     let model = &app.selected_model;
     let response = provider.chat(&messages, model).await?;
 
-    // Clean up the response - remove quotes, trim whitespace
-    let cleaned = response
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim()
-        .to_string();
+    // Clean up the response — strip surrounding quotes, backticks, whitespace.
+    let mut cleaned = response.trim().to_string();
+    for quote in ['"', '\'', '`'] {
+        if cleaned.starts_with(quote) && cleaned.ends_with(quote) && cleaned.len() >= 2 {
+            cleaned = cleaned[1..cleaned.len() - 1].to_string();
+        }
+    }
+    let cleaned = cleaned.trim().to_string();
 
     if cleaned.is_empty() {
         anyhow::bail!("AI returned empty commit message");
