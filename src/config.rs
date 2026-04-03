@@ -34,6 +34,14 @@ pub struct Config {
     /// to need tool access (file I/O, shell commands, git, etc.).
     #[serde(default = "Config::default_auto_agent")]
     pub auto_agent: bool,
+    /// Git commit author name (e.g. "Jane Doe").
+    /// When set, passed as `--author` to `git commit`.
+    #[serde(default)]
+    pub git_user_name: Option<String>,
+    /// Git commit author email (e.g. "jane@example.com").
+    /// When set, passed as `--author` to `git commit`.
+    #[serde(default)]
+    pub git_user_email: Option<String>,
 }
 
 fn default_command_timeout_secs() -> u64 {
@@ -116,6 +124,8 @@ impl Default for Config {
             keybinds: KeybindsConfig::default(),
             retry: RetryConfig::default(),
             auto_agent: true,
+            git_user_name: None,
+            git_user_email: None,
         }
     }
 }
@@ -1074,5 +1084,60 @@ default_model = "sonnet"
     #[test]
     fn exactly_ten_theme_presets() {
         assert_eq!(theme_presets().len(), 10);
+    }
+
+    // ── Git config ──────────────────────────────────────────────────────
+
+    #[test]
+    fn config_default_git_fields_none() {
+        let cfg = Config::default();
+        assert!(cfg.git_user_name.is_none());
+        assert!(cfg.git_user_email.is_none());
+    }
+
+    #[test]
+    fn config_parse_with_git_fields() {
+        let toml_str = r#"
+default_model = "sonnet"
+default_provider = "claude_code"
+git_user_name = "Jane Doe"
+git_user_email = "jane@example.com"
+"#;
+        let cfg: Config = toml::from_str(toml_str).expect("should parse TOML with git fields");
+        assert_eq!(cfg.git_user_name.as_deref(), Some("Jane Doe"));
+        assert_eq!(cfg.git_user_email.as_deref(), Some("jane@example.com"));
+    }
+
+    #[test]
+    fn config_parse_without_git_fields() {
+        let toml_str = r#"
+default_model = "sonnet"
+default_provider = "claude_code"
+"#;
+        let cfg: Config = toml::from_str(toml_str).expect("should parse TOML without git fields");
+        assert!(cfg.git_user_name.is_none());
+        assert!(cfg.git_user_email.is_none());
+    }
+
+    #[test]
+    fn config_roundtrip_with_git_fields() {
+        let mut cfg = Config::default();
+        cfg.git_user_name = Some("Test User".into());
+        cfg.git_user_email = Some("test@example.com".into());
+
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+
+        assert_eq!(restored.git_user_name.as_deref(), Some("Test User"));
+        assert_eq!(restored.git_user_email.as_deref(), Some("test@example.com"));
+    }
+
+    #[test]
+    fn config_roundtrip_git_fields_none() {
+        let cfg = Config::default();
+        let toml_str = toml::to_string(&cfg).unwrap();
+        let restored: Config = toml::from_str(&toml_str).unwrap();
+        assert!(restored.git_user_name.is_none());
+        assert!(restored.git_user_email.is_none());
     }
 }

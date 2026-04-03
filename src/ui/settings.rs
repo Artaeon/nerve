@@ -11,7 +11,7 @@ use crate::config;
 
 // ─── Tab definitions ────────────────────────────────────────────────────────
 
-const TAB_NAMES: &[&str] = &["General", "Providers", "Theme", "Keybinds"];
+const TAB_NAMES: &[&str] = &["General", "Providers", "Theme", "Keybinds", "Git"];
 
 // ─── Public entry point ─────────────────────────────────────────────────────
 
@@ -138,6 +138,7 @@ fn render_tab_content(frame: &mut Frame, app: &App, area: Rect) {
         1 => render_providers_tab(frame, app, area),
         2 => render_theme_tab(frame, app, area),
         3 => render_keybinds_tab(frame, app, area),
+        4 => render_git_tab(frame, app, area),
         _ => {}
     }
 }
@@ -590,4 +591,92 @@ fn render_keybinds_tab(frame: &mut Frame, app: &App, area: Rect) {
 /// Returns the item count for the Keybinds tab.
 pub fn keybinds_item_count() -> usize {
     21
+}
+
+// ─── Git tab ───────────────────────────────────────────────────────────────
+
+fn render_git_tab(frame: &mut Frame, app: &App, area: Rect) {
+    let name_display = if app.git_user_name.is_empty() {
+        "(not set)".to_string()
+    } else {
+        app.git_user_name.clone()
+    };
+
+    let email_display = if app.git_user_email.is_empty() {
+        "(not set)".to_string()
+    } else {
+        app.git_user_email.clone()
+    };
+
+    let items: Vec<(&str, String)> =
+        vec![("User Name", name_display), ("User Email", email_display)];
+
+    let clamped = app.settings_select.min(items.len().saturating_sub(1));
+
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Git Configuration",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Used as --author when committing via /commit",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    for (i, (label, value)) in items.iter().enumerate() {
+        let selected = i == clamped;
+        let marker = if selected { "\u{25ba} " } else { "  " };
+        let label_style = if selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        let value_style = if selected {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                marker.to_string(),
+                if selected {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                },
+            ),
+            Span::styled(format!("{:<20}", label), label_style),
+            Span::styled(value.clone(), value_style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  Set these values in ~/.config/nerve/config.toml:",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "    git_user_name = \"Your Name\"",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "    git_user_email = \"you@example.com\"",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+/// Returns the item count for the Git tab.
+pub fn git_item_count() -> usize {
+    2
 }

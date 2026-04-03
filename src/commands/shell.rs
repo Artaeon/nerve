@@ -29,6 +29,10 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_git(app, trimmed);
     }
 
+    if trimmed == "/commit" || trimmed.starts_with("/commit ") {
+        return handle_commit(app, trimmed);
+    }
+
     false
 }
 
@@ -204,4 +208,98 @@ fn handle_git(app: &mut App, trimmed: &str) -> bool {
         Err(e) => app.set_status(format!("Error: {e}")),
     }
     true
+}
+
+fn handle_commit(app: &mut App, trimmed: &str) -> bool {
+    let rest = trimmed.strip_prefix("/commit").unwrap_or("").trim();
+
+    // First, stage all changes if nothing is staged.
+    let staged_check = shell::run_command("git diff --cached --quiet");
+    let nothing_staged = staged_check.as_ref().map(|r| r.success).unwrap_or(false);
+
+    if nothing_staged {
+        if let Ok(result) = shell::run_command("git add -A") {
+            if !result.success {
+                app.set_status(format!("git add failed: {}", result.stderr));
+                return true;
+            }
+        }
+        // Check again if there's anything to commit.
+        let recheck = shell::run_command("git diff --cached --quiet");
+        if recheck.as_ref().map(|r| r.success).unwrap_or(false) {
+            app.set_status("Nothing to commit (working tree clean)");
+            return true;
+        }
+    }
+
+    let message = if rest.is_empty() {
+        "Changes from Nerve".to_string()
+    } else {
+        rest.to_string()
+    };
+
+    let escaped_msg = message.replace('\'', "'\\''");
+    let author_flag = build_git_author_flag(&app.git_user_name, &app.git_user_email);
+    let cmd = if author_flag.is_empty() {
+        format!("git commit -m '{escaped_msg}'")
+    } else {
+        format!("git commit {author_flag} -m '{escaped_msg}'")
+    };
+
+    match shell::run_command(&cmd) {
+        Ok(result) => {
+            if result.success {
+                app.add_assistant_message(format!(
+                    "Committed: {}\n\n```\n{}\n```",
+                    message,
+                    result.stdout.trim()
+                ));
+                app.set_status("Commit successful");
+            } else {
+                app.set_status(format!("Commit failed: {}", result.stderr));
+            }
+        }
+        Err(e) => app.set_status(format!("Error: {e}")),
+    }
+    app.scroll_offset = 0;
+    true
+}
+
+/// Build a `--author="Name <email>"` flag for git commit.
+///
+/// Returns an empty string if either name or email is empty.
+pub(crate) fn build_git_author_flag(name: &str, email: &str) -> String {
+    if name.is_empty() || email.is_empty() {
+        return String::new();
+    }
+    format!("--author=\"{} <{}>\"", name, email)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_author_flag_both_set() {
+        let flag = build_git_author_flag("Jane Doe", "jane@example.com");
+        assert_eq!(flag, "--author=\"Jane Doe <jane@example.com>\"");
+    }
+
+    #[test]
+    fn git_author_flag_empty_name() {
+        let flag = build_git_author_flag("", "jane@example.com");
+        assert!(flag.is_empty());
+    }
+
+    #[test]
+    fn git_author_flag_empty_email() {
+        let flag = build_git_author_flag("Jane Doe", "");
+        assert!(flag.is_empty());
+    }
+
+    #[test]
+    fn git_author_flag_both_empty() {
+        let flag = build_git_author_flag("", "");
+        assert!(flag.is_empty());
+    }
 }

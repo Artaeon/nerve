@@ -156,6 +156,12 @@ pub struct App {
     /// Working directory for Claude Code file access.
     pub working_dir: Option<String>,
 
+    // -- git config --
+    /// Git commit author name (from config). Used with `--author` flag.
+    pub git_user_name: String,
+    /// Git commit author email (from config). Used with `--author` flag.
+    pub git_user_email: String,
+
     // -- smart mode --
     /// Active behavioural mode (standard, efficient, thorough, agent, learning).
     pub active_mode: NerveMode,
@@ -312,6 +318,9 @@ impl App {
 
             code_mode: false,
             working_dir: None,
+
+            git_user_name: String::new(),
+            git_user_email: String::new(),
 
             active_mode: NerveMode::Standard,
             mode_name: "standard".into(),

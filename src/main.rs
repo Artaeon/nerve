@@ -556,6 +556,8 @@ async fn run_tui(
     app.selected_provider = config.default_provider.clone();
     app.auto_agent = config.auto_agent;
     app.command_timeout_secs = config.command_timeout_secs;
+    app.git_user_name = config.git_user_name.clone().unwrap_or_default();
+    app.git_user_email = config.git_user_email.clone().unwrap_or_default();
 
     // Load last used provider if not specified via CLI.
     if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {
@@ -2671,17 +2673,28 @@ fn handle_settings(app: &mut App, key: crossterm::event::KeyEvent) {
             if let Some((_, theme)) = presets.get(app.theme_index) {
                 cfg.theme = theme.clone();
             }
+            // Persist git author settings
+            cfg.git_user_name = if app.git_user_name.is_empty() {
+                None
+            } else {
+                Some(app.git_user_name.clone())
+            };
+            cfg.git_user_email = if app.git_user_email.is_empty() {
+                None
+            } else {
+                Some(app.git_user_email.clone())
+            };
             let _ = cfg.save();
             app.mode = AppMode::Normal;
             app.set_status("Settings saved");
         }
         KeyCode::Tab => {
-            app.settings_tab = (app.settings_tab + 1) % 4;
+            app.settings_tab = (app.settings_tab + 1) % 5;
             app.settings_select = 0;
         }
         KeyCode::BackTab => {
             app.settings_tab = if app.settings_tab == 0 {
-                3
+                4
             } else {
                 app.settings_tab - 1
             };
@@ -2709,6 +2722,7 @@ fn settings_item_count(tab: usize) -> usize {
         1 => ui::settings::providers_item_count(),
         2 => ui::settings::theme_item_count(),
         3 => ui::settings::keybinds_item_count(),
+        4 => ui::settings::git_item_count(),
         _ => 0,
     }
 }
