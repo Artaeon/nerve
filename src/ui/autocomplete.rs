@@ -35,10 +35,7 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
         .autocomplete_items
         .iter()
         .take(max_items)
-        .map(|item| {
-            // Items may be "command  ── description" or just a path.
-            super::utils::display_width(item)
-        })
+        .map(|item| super::utils::display_width(item))
         .max()
         .unwrap_or(30);
     let popup_width = ((max_item_width + 4) as u16) // +4 for padding/borders
@@ -50,7 +47,6 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
     let popup_y = if enough_above {
         above_y
     } else {
-        // Render below the input area.
         (input_area.y + input_area.height).min(frame.area().height.saturating_sub(popup_height))
     };
 
@@ -98,7 +94,6 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
                     Span::styled(format!("  {desc}"), desc_style),
                 ]))
             } else {
-                // Plain item (file path, etc.)
                 let style = if selected {
                     Style::default()
                         .fg(Color::Black)
@@ -112,6 +107,13 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
         })
         .collect();
 
+    // Dynamic title based on context.
+    let title = if app.input.contains('@') {
+        " Files "
+    } else {
+        " Commands "
+    };
+
     // Footer hint.
     let footer = Line::from(vec![
         Span::styled(
@@ -122,7 +124,7 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
         ),
         Span::styled(": accept  ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            "↑↓",
+            "\u{2191}\u{2193}",
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -148,7 +150,7 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.accent))
             .title_top(Line::from(vec![Span::styled(
-                " Commands ",
+                title,
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
