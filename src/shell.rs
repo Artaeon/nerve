@@ -416,7 +416,7 @@ pub fn git_diff(args: &str) -> anyhow::Result<CommandResult> {
         "git diff".to_string()
     } else {
         // Escape each argument individually to prevent shell injection.
-        let safe_args: Vec<String> = args.split_whitespace().map(|a| shell_escape(a)).collect();
+        let safe_args: Vec<String> = args.split_whitespace().map(shell_escape).collect();
         format!("git diff {}", safe_args.join(" "))
     };
     run_command(&cmd)
