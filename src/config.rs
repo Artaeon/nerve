@@ -26,6 +26,10 @@ pub struct Config {
     pub keybinds: KeybindsConfig,
     /// API retry behaviour (exponential backoff).
     pub retry: RetryConfig,
+    /// When `true`, automatically enable agent mode for messages that appear
+    /// to need tool access (file I/O, shell commands, git, etc.).
+    #[serde(default = "Config::default_auto_agent")]
+    pub auto_agent: bool,
 }
 
 /// Connections for each supported AI provider.
@@ -102,6 +106,7 @@ impl Default for Config {
             providers: ProvidersConfig::default(),
             keybinds: KeybindsConfig::default(),
             retry: RetryConfig::default(),
+            auto_agent: true,
         }
     }
 }
@@ -183,6 +188,11 @@ impl Default for KeybindsConfig {
 // ---------------------------------------------------------------------------
 
 impl Config {
+    /// Default value for the `auto_agent` field (used by serde).
+    fn default_auto_agent() -> bool {
+        true
+    }
+
     /// Return the Nerve configuration directory (`~/.config/nerve/`).
     pub fn config_dir() -> PathBuf {
         dirs::config_dir()
@@ -271,6 +281,9 @@ impl Config {
 # default_provider : Which provider to use by default.
 #                    Built-in options: \"claude_code\", \"openai\", \"ollama\",
 #                    \"openrouter\". Or the name of a [[providers.custom]] entry.
+# auto_agent       : When true, automatically enable agent mode (tool access)
+#                    for messages that appear to need it.  Set to false to
+#                    require manual \"/agent on\".
 #
 # ── Theme ────────────────────────────────────────────────────────────
 # Colours can be any CSS-style hex code (\"#rrggbb\").
