@@ -4001,10 +4001,7 @@ mod tests {
             strip_autocomplete_description("Cargo.toml  \u{2500}\u{2500} 1.2 KB"),
             "Cargo.toml"
         );
-        assert_eq!(
-            strip_autocomplete_description("plain_name"),
-            "plain_name"
-        );
+        assert_eq!(strip_autocomplete_description("plain_name"), "plain_name");
     }
 
     #[test]
