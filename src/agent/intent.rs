@@ -45,9 +45,7 @@ pub fn needs_tools(message: &str) -> bool {
 
     // Single-word action verbs that imply file mutation — but only when
     // followed by a path-like or code-like context.
-    if (contains_word(&lower, "write") || contains_word(&lower, "edit"))
-        && has_path_like(&lower)
-    {
+    if (contains_word(&lower, "write") || contains_word(&lower, "edit")) && has_path_like(&lower) {
         return true;
     }
 
@@ -73,9 +71,7 @@ pub fn needs_tools(message: &str) -> bool {
     }
 
     // "read" / "show me" + a file path
-    if (contains_word(&lower, "read") || lower.contains("show me"))
-        && has_path_like(&lower)
-    {
+    if (contains_word(&lower, "read") || lower.contains("show me")) && has_path_like(&lower) {
         return true;
     }
 
@@ -211,8 +207,7 @@ pub fn needs_tools(message: &str) -> bool {
     }
 
     // "delete" / "remove" + file path
-    if (contains_word(&lower, "delete") || contains_word(&lower, "remove"))
-        && has_path_like(&lower)
+    if (contains_word(&lower, "delete") || contains_word(&lower, "remove")) && has_path_like(&lower)
     {
         return true;
     }
@@ -265,10 +260,9 @@ fn has_path_like(text: &str) -> bool {
         }
         // Has a code-file extension
         let extensions = [
-            ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".c", ".cpp",
-            ".h", ".hpp", ".java", ".rb", ".sh", ".toml", ".yaml", ".yml",
-            ".json", ".html", ".css", ".scss", ".md", ".txt", ".cfg", ".ini",
-            ".xml", ".sql", ".lua", ".zig", ".ex", ".exs", ".kt", ".swift",
+            ".rs", ".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".c", ".cpp", ".h", ".hpp", ".java",
+            ".rb", ".sh", ".toml", ".yaml", ".yml", ".json", ".html", ".css", ".scss", ".md",
+            ".txt", ".cfg", ".ini", ".xml", ".sql", ".lua", ".zig", ".ex", ".exs", ".kt", ".swift",
         ];
         for ext in &extensions {
             if token.ends_with(ext) && token.len() > ext.len() {

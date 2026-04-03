@@ -969,9 +969,7 @@ async fn event_loop(
                                 app.current_conversation_mut().messages.retain(|(r, c)| {
                                     !(r == "system"
                                         && (c.contains("You have access to the following tools")
-                                            || c.contains(
-                                                "You are Nerve, an AI coding assistant",
-                                            )))
+                                            || c.contains("You are Nerve, an AI coding assistant")))
                                 });
                             }
                             app.auto_agent_active = false;
