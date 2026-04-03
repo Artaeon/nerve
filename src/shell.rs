@@ -1,8 +1,12 @@
 use anyhow::Context;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 /// Maximum number of output lines before truncation.
 const MAX_OUTPUT_LINES: usize = 5000;
+
+/// Default timeout for shell commands in seconds.
+pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct CommandResult {
@@ -11,6 +15,10 @@ pub struct CommandResult {
     pub stderr: String,
     pub exit_code: i32,
     pub success: bool,
+    /// Whether the command was killed due to timeout.
+    pub timed_out: bool,
+    /// How long the command took to complete (or until it was killed).
+    pub elapsed: Duration,
 }
 
 /// Truncate text to at most `max_lines` lines, appending a notice if trimmed.
@@ -28,13 +36,15 @@ fn truncate_output(text: &str, max_lines: usize) -> String {
     truncated
 }
 
-/// Run a shell command and capture its output.
+/// Run a shell command and capture its output (no timeout).
 pub fn run_command(cmd: &str) -> anyhow::Result<CommandResult> {
+    let start = Instant::now();
     let output = Command::new("sh")
         .args(["-c", cmd])
         .output()
         .with_context(|| format!("Failed to execute: {cmd}"))?;
 
+    let elapsed = start.elapsed();
     let stdout = truncate_output(&String::from_utf8_lossy(&output.stdout), MAX_OUTPUT_LINES);
     let stderr = truncate_output(&String::from_utf8_lossy(&output.stderr), MAX_OUTPUT_LINES);
 
@@ -44,12 +54,109 @@ pub fn run_command(cmd: &str) -> anyhow::Result<CommandResult> {
         stderr,
         exit_code: output.status.code().unwrap_or(-1),
         success: output.status.success(),
+        timed_out: false,
+        elapsed,
     })
+}
+
+/// Run a shell command with a timeout. If the process doesn't finish within
+/// `timeout_secs`, it is killed and a `CommandResult` with `timed_out = true`
+/// is returned.
+///
+/// A `timeout_secs` of `0` means no timeout (equivalent to `run_command`).
+pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<CommandResult> {
+    // No timeout requested -- fall through to the regular path.
+    if timeout_secs == 0 {
+        return run_command(cmd);
+    }
+
+    let start = Instant::now();
+    let mut child = Command::new("sh")
+        .args(["-c", cmd])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("Failed to spawn: {cmd}"))?;
+
+    let timeout = Duration::from_secs(timeout_secs);
+
+    // Poll the child in a tight loop with short sleeps.
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // Process finished within the timeout.
+                let elapsed = start.elapsed();
+                let stdout_raw = child
+                    .stdout
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+                let stderr_raw = child
+                    .stderr
+                    .take()
+                    .map(|mut s| {
+                        let mut buf = Vec::new();
+                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
+                        buf
+                    })
+                    .unwrap_or_default();
+
+                let stdout =
+                    truncate_output(&String::from_utf8_lossy(&stdout_raw), MAX_OUTPUT_LINES);
+                let stderr =
+                    truncate_output(&String::from_utf8_lossy(&stderr_raw), MAX_OUTPUT_LINES);
+
+                return Ok(CommandResult {
+                    command: cmd.to_string(),
+                    stdout,
+                    stderr,
+                    exit_code: status.code().unwrap_or(-1),
+                    success: status.success(),
+                    timed_out: false,
+                    elapsed,
+                });
+            }
+            Ok(None) => {
+                // Still running -- check timeout.
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait(); // Reap the zombie.
+
+                    let elapsed = start.elapsed();
+                    return Ok(CommandResult {
+                        command: cmd.to_string(),
+                        stdout: String::new(),
+                        stderr: format!("Command timed out after {timeout_secs}s"),
+                        exit_code: -1,
+                        success: false,
+                        timed_out: true,
+                        elapsed,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!("Error waiting for process: {e}"));
+            }
+        }
+    }
 }
 
 /// Format command output for display in conversation.
 pub fn format_command_output(result: &CommandResult) -> String {
     let mut output = format!("$ {}\n", result.command);
+
+    if result.timed_out {
+        output.push_str(&format!(
+            "\nCommand timed out after {:.1}s\n",
+            result.elapsed.as_secs_f64()
+        ));
+        return output;
+    }
 
     if !result.stdout.is_empty() {
         output.push_str(&result.stdout);
@@ -371,6 +478,8 @@ mod tests {
             stderr: "err".into(),
             exit_code: 1,
             success: false,
+            timed_out: false,
+            elapsed: Duration::from_millis(10),
         };
         let output = format_command_output(&result);
         assert!(output.contains("stderr:"));
@@ -386,6 +495,8 @@ mod tests {
             stderr: String::new(),
             exit_code: 0,
             success: true,
+            timed_out: false,
+            elapsed: Duration::from_millis(10),
         };
         let ctx = format_command_for_context(&result);
         assert!(ctx.contains("success"));
@@ -624,5 +735,90 @@ mod tests {
     fn dangerous_command_case_insensitive() {
         assert!(is_dangerous_command("RM -RF /"));
         assert!(is_dangerous_command("Sudo Rm -rf ~"));
+    }
+
+    // ── Timeout tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn timeout_normal_completion() {
+        let result = run_command_with_timeout("echo hello", 5).unwrap();
+        assert!(result.success);
+        assert!(!result.timed_out);
+        assert_eq!(result.stdout.trim(), "hello");
+        assert!(result.elapsed.as_secs() < 5);
+    }
+
+    #[test]
+    fn timeout_triggers_on_slow_command() {
+        let result = run_command_with_timeout("sleep 60", 1).unwrap();
+        assert!(result.timed_out);
+        assert!(!result.success);
+        assert_eq!(result.exit_code, -1);
+        assert!(result.stderr.contains("timed out"));
+        assert!(result.elapsed.as_secs() < 3);
+    }
+
+    #[test]
+    fn timeout_zero_means_no_timeout() {
+        // timeout_secs=0 should behave like run_command (no timeout).
+        let result = run_command_with_timeout("echo no_timeout", 0).unwrap();
+        assert!(result.success);
+        assert!(!result.timed_out);
+        assert_eq!(result.stdout.trim(), "no_timeout");
+    }
+
+    #[test]
+    fn timeout_large_value() {
+        // Very large timeout -- command should complete normally.
+        let result = run_command_with_timeout("echo ok", 86400).unwrap();
+        assert!(result.success);
+        assert!(!result.timed_out);
+        assert_eq!(result.stdout.trim(), "ok");
+    }
+
+    #[test]
+    fn timeout_captures_stderr() {
+        let result = run_command_with_timeout("echo err >&2", 5).unwrap();
+        assert!(result.stderr.contains("err"));
+        assert!(!result.timed_out);
+    }
+
+    #[test]
+    fn timeout_failing_command() {
+        let result = run_command_with_timeout("exit 42", 5).unwrap();
+        assert!(!result.success);
+        assert!(!result.timed_out);
+        assert_eq!(result.exit_code, 42);
+    }
+
+    #[test]
+    fn timeout_result_has_elapsed() {
+        let result = run_command_with_timeout("echo fast", 5).unwrap();
+        // Elapsed should be non-zero but very small.
+        assert!(result.elapsed.as_millis() < 5000);
+    }
+
+    #[test]
+    fn timeout_format_output_shows_timeout() {
+        let result = CommandResult {
+            command: "sleep 60".into(),
+            stdout: String::new(),
+            stderr: "Command timed out after 30s".into(),
+            exit_code: -1,
+            success: false,
+            timed_out: true,
+            elapsed: Duration::from_secs(30),
+        };
+        let output = format_command_output(&result);
+        assert!(output.contains("timed out"));
+        assert!(output.contains("$ sleep 60"));
+    }
+
+    #[test]
+    fn run_command_populates_elapsed() {
+        let result = run_command("echo timing").unwrap();
+        // Regular run_command should also have elapsed set.
+        assert!(!result.timed_out);
+        assert!(result.elapsed.as_millis() < 5000);
     }
 }
