@@ -23,6 +23,25 @@ pub fn read_file_context(path: &str) -> anyhow::Result<FileContext> {
         return read_directory_listing(&path_buf);
     }
 
+    // Block device files, sockets, and FIFOs — reading /dev/zero etc. would
+    // hang or exhaust memory.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let ft = metadata.file_type();
+        if ft.is_char_device() || ft.is_block_device() || ft.is_fifo() || ft.is_socket() {
+            anyhow::bail!(
+                "Cannot read special file: {}",
+                path_buf.display()
+            );
+        }
+    }
+
+    // Block symlinks to prevent reading through symlinks to sensitive files.
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Cannot read symlink: {}", path_buf.display());
+    }
+
     // Reject files over 1MB
     if metadata.len() > 1_048_576 {
         anyhow::bail!("File too large ({} bytes). Max 1MB.", metadata.len());
