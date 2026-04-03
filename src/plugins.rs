@@ -3,6 +3,34 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Strip ANSI escape sequences and control characters from plugin output.
+/// Preserves newlines and tabs.
+fn strip_ansi_and_control(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Consume CSI sequence: ESC [ ... <final byte>
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Read until we hit a letter (0x40..=0x7E)
+                for ch in chars.by_ref() {
+                    if ch.is_ascii_alphabetic() || ch == '~' {
+                        break;
+                    }
+                }
+            }
+            // Also skip OSC (ESC ]) and other short sequences.
+            continue;
+        }
+        if c.is_control() && c != '\n' && c != '\t' {
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -94,12 +122,10 @@ impl Plugin {
                             stderr
                         );
                     }
-                    // Strip control characters from output for safety.
+                    // Strip control characters and ANSI escape sequences
+                    // from output to prevent terminal manipulation.
                     let output = if stdout.is_empty() { stderr } else { stdout };
-                    let sanitized: String = output
-                        .chars()
-                        .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
-                        .collect();
+                    let sanitized = strip_ansi_and_control(&output);
                     return Ok(sanitized);
                 }
                 Ok(None) => {
