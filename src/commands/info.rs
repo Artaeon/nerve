@@ -90,6 +90,16 @@ Shell & Git\n\
   /test               Auto-detect and run project tests\n\
   /build              Auto-detect and run project build\n\
   /git [subcommand]   Quick git operations (status/log/diff/branch)\n\
+  /commit [message]   Stage all and commit (AI-generates message if omitted)\n\
+  /stage [files...]   Stage files (all if no args)\n\
+  /unstage [files...] Unstage files (all if no args)\n\
+  /gitbranch [name]   Create/switch branch, or list branches\n\
+  /gitbranch switch <name>  Switch to existing branch\n\
+  /gitbranch delete <name>  Delete a branch\n\
+  /stash [message]    Stash changes\n\
+  /stash pop|list|show|drop|apply  Manage stashes\n\
+  /log [n]            Show git log (default 10)\n\
+  /gitstatus          Show full git status\n\
 \n\
 Project Scaffolding\n\
   /template list      List available project templates\n\

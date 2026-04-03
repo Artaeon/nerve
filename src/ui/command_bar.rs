@@ -110,6 +110,29 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
             "Quick git operations (status/log/diff/branch)",
             "Shell & Git",
         ),
+        (
+            "/commit",
+            "Stage all and commit (AI message if omitted)",
+            "Shell & Git",
+        ),
+        ("/stage", "Stage files (all if no args)", "Shell & Git"),
+        ("/unstage", "Unstage files (all if no args)", "Shell & Git"),
+        (
+            "/gitbranch",
+            "Create/switch/delete git branches",
+            "Shell & Git",
+        ),
+        (
+            "/gitbranch switch",
+            "Switch to existing branch",
+            "Shell & Git",
+        ),
+        ("/gitbranch delete", "Delete a git branch", "Shell & Git"),
+        ("/stash", "Stash changes", "Shell & Git"),
+        ("/stash pop", "Pop latest stash", "Shell & Git"),
+        ("/stash list", "List stashes", "Shell & Git"),
+        ("/log", "Show git log (default 10)", "Shell & Git"),
+        ("/gitstatus", "Show full git status", "Shell & Git"),
         // Project Scaffolding
         (
             "/template list",

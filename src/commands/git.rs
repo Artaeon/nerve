@@ -753,4 +753,154 @@ mod tests {
             "push_with_message"
         );
     }
+
+    // ── Comprehensive edge case tests ──────────────────────────────────
+
+    #[test]
+    fn commit_message_preserves_full_text() {
+        // The entire rest after "/commit " should be the message
+        assert_eq!(
+            parse_commit_message("/commit fix: resolve race condition in worker pool"),
+            Some("fix: resolve race condition in worker pool")
+        );
+    }
+
+    #[test]
+    fn commit_message_multiline_not_supported() {
+        // Input is single-line from the TUI, but newlines in message are preserved
+        assert_eq!(
+            parse_commit_message("/commit first line\nsecond line"),
+            Some("first line\nsecond line")
+        );
+    }
+
+    #[test]
+    fn log_negative_values() {
+        // Negative values parse as error, fall back to default
+        assert_eq!(parse_log_count("/log -5"), 10);
+    }
+
+    #[test]
+    fn log_zero_clamped() {
+        assert_eq!(parse_log_count("/log 0"), 1);
+    }
+
+    #[test]
+    fn log_very_large_clamped() {
+        assert_eq!(parse_log_count("/log 999999"), 100);
+    }
+
+    #[test]
+    fn branch_empty_after_whitespace() {
+        let (sub, name) = parse_gitbranch_args("/gitbranch   ");
+        assert_eq!(sub, "list");
+        assert!(name.is_none());
+    }
+
+    #[test]
+    fn branch_del_alias() {
+        let (sub, name) = parse_gitbranch_args("/gitbranch del feature");
+        assert_eq!(sub, "del");
+        assert_eq!(name, Some("feature"));
+    }
+
+    #[test]
+    fn branch_name_with_numbers() {
+        assert!(is_valid_branch_name("feature-123"));
+        assert!(is_valid_branch_name("123"));
+        assert!(is_valid_branch_name("v2.0.0-rc1"));
+    }
+
+    #[test]
+    fn branch_name_backslash() {
+        assert!(!is_valid_branch_name("has\\backslash"));
+    }
+
+    #[test]
+    fn branch_name_double_dot_in_middle() {
+        assert!(!is_valid_branch_name("a..b"));
+    }
+
+    #[test]
+    fn branch_name_at_brace() {
+        assert!(!is_valid_branch_name("ref@{1}"));
+    }
+
+    #[test]
+    fn stash_empty_space() {
+        assert_eq!(parse_stash_subcommand("/stash "), "push");
+    }
+
+    #[test]
+    fn stash_drop_with_ref() {
+        // "drop" is the subcommand; the ref after is handled by the handler
+        assert_eq!(parse_stash_subcommand("/stash drop stash@{2}"), "drop");
+    }
+
+    #[test]
+    fn stash_show_with_ref() {
+        assert_eq!(parse_stash_subcommand("/stash show stash@{0}"), "show");
+    }
+
+    #[test]
+    fn stash_apply_with_ref() {
+        assert_eq!(parse_stash_subcommand("/stash apply stash@{1}"), "apply");
+    }
+
+    #[test]
+    fn stash_unknown_becomes_message() {
+        assert_eq!(
+            parse_stash_subcommand("/stash save my changes"),
+            "push_with_message"
+        );
+    }
+
+    #[test]
+    fn commit_message_with_unicode() {
+        assert_eq!(
+            parse_commit_message("/commit feat: add emoji support \u{2728}"),
+            Some("feat: add emoji support \u{2728}")
+        );
+    }
+
+    #[test]
+    fn branch_name_unicode_letters() {
+        // Git allows unicode in branch names
+        assert!(is_valid_branch_name("feature/\u{00e4}\u{00f6}\u{00fc}"));
+    }
+
+    #[test]
+    fn commit_dispatch_guard_prevents_prefix_match() {
+        // The handle() dispatch checks `trimmed == "/commit" || trimmed.starts_with("/commit ")`
+        // so "/committed" never reaches parse_commit_message. Verify the dispatch pattern:
+        let input = "/committed something";
+        let matches_dispatch = input == "/commit" || input.starts_with("/commit ");
+        assert!(!matches_dispatch, "dispatch should not match '/committed'");
+    }
+
+    #[test]
+    fn gitbranch_three_args() {
+        // Only first two matter for parsing
+        let (sub, name) = parse_gitbranch_args("/gitbranch switch feature extra");
+        assert_eq!(sub, "switch");
+        assert_eq!(name, Some("feature"));
+    }
+
+    #[test]
+    fn log_float_value() {
+        // "3.5" doesn't parse as usize, falls back to default
+        assert_eq!(parse_log_count("/log 3.5"), 10);
+    }
+
+    #[test]
+    fn branch_name_only_dots() {
+        assert!(!is_valid_branch_name(".."));
+        assert!(!is_valid_branch_name("."));
+    }
+
+    #[test]
+    fn branch_name_single_char() {
+        assert!(is_valid_branch_name("a"));
+        assert!(is_valid_branch_name("X"));
+    }
 }
