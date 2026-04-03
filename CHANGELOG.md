@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Developer Workflow
+- `/lint` command -- auto-detect and run project linter (clippy, eslint, ruff, golangci-lint, rubocop, credo)
+- `/format` (`/fmt`) command -- auto-detect and run code formatter (cargo fmt, prettier, ruff, gofmt, rubocop, mix format)
+- `/search <pattern>` command -- search codebase with ripgrep, results added as AI context
+- `/commit` now uses `--author` from configured git_user_name/email
+- AI-generated commit messages via `/commit` (no message argument)
+
+#### AI & Prompt Engineering
+- `temperature` config option (0.0-2.0) for controlling response creativity
+- `top_p` config option (0.0-1.0) for nucleus sampling
+- `context_limit` config option to override provider default context window size
+- Mode-specific system prompts: Efficient (concise), Thorough (detailed), Agent (workflow), Learning (Socratic)
+- Ollama default context raised from 8K to 32K tokens
+
+#### UI/UX
+- Color-coded token usage percentage in status bar (green/yellow/red)
+- Vim `G`/`g` keys to jump to bottom/top of conversation
+- `PageUp`/`PageDown` for fast scrolling (30 lines)
+- Context-aware status bar hints (different hints per mode)
+- Working directory display in status bar when code mode is active
+- Auto-agent mode: automatically enables tools when message needs them
+
+### Fixed
+
+#### Security Hardening
+- **SSRF**: Proper URL parsing replaces string-matching blocklist; blocks IPv6 loopback, link-local, ULA (fc00::/7), multicast (ff00::/8), IPv4-mapped IPv6, IPv4-compatible IPv6, CGN range
+- **SSRF**: Final URL re-validated after redirect chain to prevent redirect-based SSRF
+- **Command injection**: All agent tool shell commands use `shell_escape()` (verify_file_syntax, search_code, find_files, git_diff)
+- **Path traversal**: `normalize_path()` resolves `..` segments without filesystem access; blocks `/tmp/x/../../etc/passwd`
+- **Path traversal**: History conversation IDs sanitized to alphanumeric+hyphens
+- **Symlink attacks**: `validate_write_path()` canonicalizes paths before protection check
+- **Device file DoS**: Block char/block devices, FIFOs, sockets, symlinks from file reads
+- **Command filter**: Block poweroff, halt, systemctl reboot, shred, wipe, chpasswd; block pipe to zsh, python, perl, ruby, ksh, dash
+- **ANSI injection**: Strip ANSI escape sequences (CSI, OSC, SS2/SS3) from plugin output
+- **Clipboard**: Propagate permission-setting errors instead of silently ignoring
+- **Knowledge search**: Fix ln(0) edge case when scoring empty chunks
+- **Memory**: `truncate_output()` avoids collecting all lines before truncating
+
+### Changed
+- Removed dead `/commit` handler from shell.rs (git.rs handles it)
+- Moved `build_git_author_flag` to git.rs where it's used
+
+### Quality
+- Tests: 820 -> 1,345 (+525 tests)
+- 0 clippy warnings
+- 0 formatting issues
+- 11 security vulnerabilities fixed
+
 ## [0.1.0] - 2025-04-01
 
 ### Added
@@ -74,14 +124,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin system (executable scripts in ~/.config/nerve/plugins/)
 
 #### Token Management
-- Provider-aware context limits (Claude 200K, OpenAI 60K, OpenRouter 30K, Ollama 8K)
+- Provider-aware context limits (Claude 200K, OpenAI 60K, OpenRouter 30K, Ollama 32K)
 - Auto-compaction with smart summarization
 - Tool result compaction in agent mode
 - Usage tracking (/usage) and spending limits (/limit)
 - max_tokens on OpenAI/OpenRouter requests
 
 #### Security
-- Shell injection blocking (20+ dangerous patterns)
+- Shell injection blocking (30+ dangerous patterns)
 - Protected system paths (agent can't write to /etc, /usr, /bin, etc.)
 - Sensitive file blocking (.env, SSH keys, .aws/credentials)
 - Tool execution rate limiting (100/session)
@@ -96,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Provider/model override: nerve --provider ollama --model llama3
 
 #### Quality
-- 820 tests across 42 source files
+- 820 tests across 42 source files (now 1,345 tests across 55 files)
 - 0 clippy warnings
 - 0 unsafe code
 - 0 panics in production code

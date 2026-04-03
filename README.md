@@ -19,7 +19,7 @@
 
 Chat. Code. Ship. All from your terminal.
 
-28K lines of Rust. 820 tests. 166 prompts. 9 agent tools. 6 providers. 7.3MB binary.
+37K lines of Rust. 1,345 tests. 166 prompts. 9 agent tools. 6 providers. 7.7MB binary.
 
 </div>
 
@@ -38,7 +38,7 @@ Chat. Code. Ship. All from your terminal.
 | **Agent mode** | 9 tools | Yes | Yes | Yes |
 | **Smart prompts** | 166 built-in | No | No | No |
 | **Cost** | Free + API keys | $20/mo | $20/mo | Free + API |
-| **Binary size** | 7.3 MB | ~150 MB | ~500 MB | Python |
+| **Binary size** | 7.7 MB | ~150 MB | ~500 MB | Python |
 | **Vim keybindings** | Native | No | Plugin | No |
 
 ---
@@ -184,7 +184,11 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 /file src/main.rs:10-50        # Specific lines
 /test                          # Auto-detect and run tests
 /build                         # Auto-detect and build
+/lint                          # Auto-detect and run linter
+/format                        # Auto-detect and run formatter
+/search "fn main"              # Search codebase with ripgrep
 /diff                          # Git diff as context
+/commit                        # AI-generated commit message
 /run cargo clippy              # Run any command
 /map                           # Show project structure
 ```
@@ -228,6 +232,8 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 | **Up/Down** (insert) | Input history |
 | **i / Esc** | Insert / normal mode |
 | **j / k** | Scroll (normal mode) |
+| **G / g** | Jump to bottom / top |
+| **PgUp / PgDn** | Fast scroll |
 | **1-9** | Copy message by number |
 
 ---
@@ -246,7 +252,14 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 | `/run <cmd>` | Execute command |
 | `/test` | Run project tests |
 | `/build` | Build project |
+| `/lint` | Run linter (clippy/eslint/ruff) |
+| `/format` | Run formatter (fmt/prettier/ruff) |
+| `/search <pat>` | Search codebase (ripgrep) |
 | `/diff` | Git diff as context |
+| `/commit [msg]` | Stage + commit (AI message) |
+| `/stage [files]` | Stage files for commit |
+| `/stash` | Git stash operations |
+| `/gitbranch` | Branch management |
 | `/git <subcmd>` | Git operations |
 | `/template <name>` | Create from template |
 | `/scaffold <desc>` | AI-generated project |
@@ -261,7 +274,7 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 | `/alias <n> <cmd>` | Create command alias |
 | `/status` | System overview |
 
-See `/help` in the TUI for the complete list of 50+ commands.
+See `/help` in the TUI for the complete list of 70+ commands.
 
 ---
 
@@ -272,6 +285,18 @@ Auto-generated at `~/.config/nerve/config.toml` on first run:
 ```toml
 default_model = "sonnet"
 default_provider = "claude_code"
+
+# Sampling parameters (optional — omit to use provider defaults)
+# temperature = 0.7     # 0.0 = deterministic, 2.0 = very creative
+# top_p = 0.9           # nucleus sampling (0.0-1.0)
+# context_limit = 64000 # override context window size (tokens)
+
+# Auto-agent mode: automatically enables tools when the message needs them
+auto_agent = true
+
+# Git author for /commit (optional)
+# git_user_name = "Your Name"
+# git_user_email = "you@example.com"
 
 [providers.claude_code]
 enabled = true
@@ -321,11 +346,11 @@ enabled = false
 
 | Check | Status |
 |-------|--------|
-| Tests | 820 passing |
-| Clippy | 0 warnings (strict mode) |
+| Tests | 1,345 passing |
+| Clippy | 0 warnings |
 | Format | 0 diffs |
 | Unsafe code | 0 |
-| Binary | 7.3 MB (LTO + stripped) |
+| Binary | 7.7 MB (LTO + stripped) |
 
 ---
 
@@ -337,7 +362,7 @@ Contributions welcome. Please open an issue first to discuss changes.
 git clone https://github.com/Artaeon/nerve.git
 cd nerve
 cargo build
-cargo test          # 820 tests
+cargo test          # 1,345 tests
 cargo clippy        # lint
 cargo fmt --check   # format check
 ```

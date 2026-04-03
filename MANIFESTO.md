@@ -18,7 +18,7 @@ None of them give you everything: terminal-native speed, multi-provider freedom,
 
 ### 1. Terminal-First
 
-The terminal is where developers work. Not a browser tab. Not an Electron wrapper. Nerve is a 7MB Rust binary that starts in 400ms and uses 20MB of memory. It works over SSH, in tmux, on a Raspberry Pi, on a server with no GUI.
+The terminal is where developers work. Not a browser tab. Not an Electron wrapper. Nerve is a 7.7MB Rust binary that starts in 400ms and uses 20MB of memory. It works over SSH, in tmux, on a Raspberry Pi, on a server with no GUI.
 
 ### 2. Provider-Agnostic
 
@@ -34,11 +34,11 @@ Nerve doesn't just suggest the next line of code. It reads your files, understan
 
 ### 5. Batteries Included
 
-166 expert prompts. 8 project templates. 9 agent tools. 10 color themes. Plugin system. Knowledge base. Conversation branching. Clipboard manager. All in one binary. No extensions to install, no marketplace to browse, no configuration hell.
+166 expert prompts. 8 project templates. 9 agent tools. 10 color themes. 70+ commands. Plugin system. Knowledge base. Conversation branching. Clipboard manager. All in one binary. No extensions to install, no marketplace to browse, no configuration hell.
 
 ### 6. Open and Honest
 
-Nerve is MIT-licensed. The code is readable. The tests are comprehensive (820 of them). We don't hide pricing behind "contact sales." We don't collect telemetry. We don't phone home. Your conversations stay on your machine.
+Nerve is MIT-licensed. The code is readable. The tests are comprehensive (1,345 of them). We don't hide pricing behind "contact sales." We don't collect telemetry. We don't phone home. Your conversations stay on your machine.
 
 ## What Nerve Is Not
 

@@ -22,12 +22,18 @@ You will receive an initial response within **48 hours**. We will work with you 
 
 ## Built-in Security Features
 
-Nerve includes several security measures by design:
+Nerve includes defense-in-depth security measures:
 
-- **Shell injection blocking** — User inputs are sanitized before any shell interaction.
-- **Protected system paths** — Critical system directories are shielded from write operations.
-- **Sensitive file detection** — Nerve identifies and warns about sensitive files (credentials, keys, environment files) before processing.
-- **Rate limiting** — API interactions are rate-limited to prevent abuse and runaway costs.
+- **Shell injection blocking** — All user inputs are shell-escaped via POSIX single-quoting before any shell interaction. 30+ dangerous command patterns blocked (rm -rf, mkfs, fork bombs, poweroff, shred, etc.). Pipe-to-exec patterns blocked for 8+ interpreters.
+- **Protected system paths** — Agent tools cannot write to /etc, /usr, /bin, /sbin, /boot, /proc, /sys, /dev. Path traversal via `..` segments is normalized before checking. Symlink attacks defeated via canonicalization.
+- **SSRF protection** — URLs are parsed (not string-matched) to block private IPs, IPv6 loopback, link-local, ULA, multicast, IPv4-mapped/compatible IPv6, and CGN ranges. Final URL re-validated after redirect chains.
+- **Device file protection** — Character devices (/dev/zero, /dev/random), block devices, FIFOs, and sockets are blocked from file read operations to prevent DoS.
+- **Sensitive file detection** — Nerve identifies and warns about credentials, SSH keys, .env files, .aws/credentials before processing.
+- **ANSI sanitization** — Plugin output is stripped of all ANSI escape sequences (CSI, OSC, SS2/SS3) to prevent terminal manipulation.
+- **History ID sanitization** — Conversation IDs are restricted to alphanumeric characters and hyphens to prevent path traversal.
+- **Rate limiting** — Tool executions capped at 100/session. API retries use exponential backoff with jitter.
+- **Clipboard security** — Files written with 0600 permissions on Unix. Entry size capped at 1MB.
+- **Plugin sandboxing** — 30-second timeout, output sanitized, control characters stripped.
 
 ## Disclosure Policy
 

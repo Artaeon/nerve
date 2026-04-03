@@ -939,16 +939,30 @@ linter warnings, or test failures.
 ```
 /test     # Detects and runs the project's test command
 /build    # Detects and runs the project's build command
+/lint     # Detects and runs the project's linter
+/format   # Detects and runs the project's formatter (alias: /fmt)
+/search   # Search codebase with ripgrep (results added as AI context)
 ```
 
 Nerve uses workspace detection to determine the correct command:
 
-| Project Type | `/test` Command | `/build` Command |
-|-------------|----------------|-----------------|
-| Rust (Cargo.toml) | `cargo test` | `cargo build` |
-| Node.js (package.json) | `npm test` | `npm run build` |
-| Python (pyproject.toml) | `pytest` | `python -m build` |
-| Go (go.mod) | `go test ./...` | `go build ./...` |
+| Project Type | `/test` | `/build` | `/lint` | `/format` |
+|-------------|---------|----------|---------|-----------|
+| Rust (Cargo.toml) | `cargo test` | `cargo build` | `cargo clippy` | `cargo fmt` |
+| Node.js (package.json) | `npm test` | `npm run build` | `npx eslint .` | `npx prettier --write .` |
+| Python (pyproject.toml) | `pytest` | `python -m build` | `ruff check .` | `ruff format .` |
+| Go (go.mod) | `go test ./...` | `go build ./...` | `golangci-lint run` | `gofmt -w .` |
+| Ruby (Gemfile) | `bundle exec rspec` | -- | `bundle exec rubocop` | `bundle exec rubocop -A` |
+| Elixir (mix.exs) | `mix test` | -- | `mix credo` | `mix format` |
+
+### Codebase Search
+
+```
+/search "fn main"        # Find all occurrences in project
+/search "TODO|FIXME"     # Regex patterns supported
+```
+
+Results are loaded as AI context so you can ask follow-up questions like "refactor these matches" or "explain this pattern."
 
 ### Git Integration
 
@@ -956,6 +970,14 @@ Nerve uses workspace detection to determine the correct command:
 /diff                    # Show unstaged git diff as AI context
 /diff --staged           # Show staged changes only
 /diff HEAD~3             # Diff against 3 commits ago
+/commit                  # AI-generates commit message from staged changes
+/commit "fix login bug"  # Commit with explicit message
+/stage src/main.rs       # Stage specific files
+/unstage                 # Unstage all
+/stash                   # Git stash operations (pop, list, drop, show, apply)
+/gitbranch feature-x     # Create and switch to branch
+/gitstatus               # Detailed git status
+/log 20                  # Last 20 commits
 /git status              # Quick git status
 /git log 20              # Last 20 commits
 /git branch              # List branches
@@ -1278,6 +1300,10 @@ costs on per-token providers.
 | `/` | Open Nerve Bar |
 | `j` / `Down` | Scroll down |
 | `k` / `Up` | Scroll up |
+| `G` | Jump to bottom (latest message) |
+| `g` | Jump to top (oldest message) |
+| `PageUp` | Scroll up fast (30 lines) |
+| `PageDown` | Scroll down fast (30 lines) |
 | `x` | Delete last exchange |
 | `q` | Quit |
 | `Tab` | Next conversation |
@@ -1396,6 +1422,16 @@ costs on per-token providers.
 | `/diff [args]` | Show git diff (adds as context) |
 | `/test` | Auto-detect and run project tests |
 | `/build` | Auto-detect and build project |
+| `/lint` | Auto-detect and run linter (clippy/eslint/ruff/golangci-lint) |
+| `/format` (`/fmt`) | Auto-detect and run formatter (cargo fmt/prettier/ruff/gofmt) |
+| `/search <pattern>` | Search codebase with ripgrep (results as context) |
+| `/commit [message]` | Stage all and commit (AI-generates message if omitted) |
+| `/stage [files...]` | Stage files for commit (all if no args) |
+| `/unstage [files...]` | Unstage files (all if no args) |
+| `/stash [pop\|list\|drop\|show\|apply]` | Git stash operations |
+| `/gitbranch [name]` | Create/switch branch, or list branches |
+| `/gitstatus` | Detailed git status |
+| `/log [count]` | Show git log (default: 10 entries) |
 | `/git [subcommand]` | Quick git operations (`status`, `log`, `diff`, `branch`) |
 | `/cd <dir>` | Change working directory |
 
@@ -1451,6 +1487,21 @@ The config file is auto-generated on first run with sensible defaults.
 # Default model and provider used on startup
 default_model = "sonnet"
 default_provider = "claude_code"
+
+# Sampling parameters (optional — omit to use provider defaults)
+# temperature = 0.7     # 0.0 = deterministic, 2.0 = very creative
+# top_p = 0.9           # Nucleus sampling (0.0-1.0)
+# context_limit = 64000 # Override context window size (tokens)
+
+# Auto-detect when messages need agent tools
+auto_agent = true
+
+# Shell command timeout in seconds (0 = no timeout)
+command_timeout_secs = 30
+
+# Git author for /commit (optional)
+# git_user_name = "Your Name"
+# git_user_email = "you@example.com"
 
 # Theme colors (hex codes)
 [theme]
