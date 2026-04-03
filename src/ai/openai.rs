@@ -20,6 +20,10 @@ struct ChatCompletionRequest<'a> {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
 }
 
 // -- Non-streaming response --
@@ -98,6 +102,8 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_name: String,
     max_tokens: Option<usize>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
     retry_config: RetryConfig,
 }
 
@@ -111,6 +117,8 @@ impl OpenAiProvider {
             base_url: base_url.trim_end_matches('/').to_string(),
             provider_name,
             max_tokens: Some(4096),
+            temperature: None,
+            top_p: None,
             retry_config: RetryConfig::default(),
         }
     }
@@ -119,6 +127,20 @@ impl OpenAiProvider {
     #[allow(dead_code)]
     pub fn with_max_tokens(mut self, tokens: usize) -> Self {
         self.max_tokens = Some(tokens);
+        self
+    }
+
+    /// Set the sampling temperature (0.0 = deterministic, 2.0 = very creative).
+    #[allow(dead_code)]
+    pub fn with_temperature(mut self, temp: f32) -> Self {
+        self.temperature = Some(temp.clamp(0.0, 2.0));
+        self
+    }
+
+    /// Set top-p (nucleus sampling). 0.1 = only top 10% probability mass.
+    #[allow(dead_code)]
+    pub fn with_top_p(mut self, top_p: f32) -> Self {
+        self.top_p = Some(top_p.clamp(0.0, 1.0));
         self
     }
 
@@ -217,6 +239,8 @@ impl AiProvider for OpenAiProvider {
                         messages: &messages,
                         stream: true,
                         max_tokens: self.max_tokens,
+                        temperature: self.temperature,
+                        top_p: self.top_p,
                     };
 
                     let response = self
@@ -334,6 +358,8 @@ impl AiProvider for OpenAiProvider {
                         messages: &messages,
                         stream: false,
                         max_tokens: self.max_tokens,
+                        temperature: self.temperature,
+                        top_p: self.top_p,
                     };
 
                     let response = self

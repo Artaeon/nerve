@@ -42,6 +42,18 @@ pub struct Config {
     /// When set, passed as `--author` to `git commit`.
     #[serde(default)]
     pub git_user_email: Option<String>,
+    /// Sampling temperature for AI responses (0.0 = deterministic, 2.0 = very
+    /// creative). Leave unset to use the provider's default.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    /// Top-p (nucleus sampling). 0.1 keeps only the top 10% probability mass.
+    /// Leave unset to use the provider's default.
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    /// Override the maximum context window size (in tokens) for the active
+    /// provider. Useful for local models with non-standard context lengths.
+    #[serde(default)]
+    pub context_limit: Option<usize>,
 }
 
 fn default_command_timeout_secs() -> u64 {
@@ -126,6 +138,9 @@ impl Default for Config {
             auto_agent: true,
             git_user_name: None,
             git_user_email: None,
+            temperature: None,
+            top_p: None,
+            context_limit: None,
         }
     }
 }

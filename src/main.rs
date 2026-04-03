@@ -201,6 +201,17 @@ async fn main() -> anyhow::Result<()> {
 
 // ─── Provider creation ──────────────────────────────────────────────────────
 
+/// Apply config-level sampling parameters to an OpenAI-compatible provider.
+fn apply_sampling(mut provider: OpenAiProvider, config: &Config) -> OpenAiProvider {
+    if let Some(t) = config.temperature {
+        provider = provider.with_temperature(t);
+    }
+    if let Some(p) = config.top_p {
+        provider = provider.with_top_p(p);
+    }
+    provider
+}
+
 fn create_provider(
     config: &Config,
     provider_override: Option<&str>,
@@ -214,20 +225,18 @@ fn create_provider(
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            Ok(Box::new(
-                OpenAiProvider::new(key, base_url, "OpenAI".into())
-                    .with_retry_config(config.retry.clone()),
-            ))
+            let p = OpenAiProvider::new(key, base_url, "OpenAI".into())
+                .with_retry_config(config.retry.clone());
+            Ok(Box::new(apply_sampling(p, config)))
         }
         "ollama" => {
             let pc = config.providers.ollama.as_ref();
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "http://localhost:11434/v1".into());
-            Ok(Box::new(
-                OpenAiProvider::new("ollama".into(), base_url, "Ollama".into())
-                    .with_retry_config(config.retry.clone()),
-            ))
+            let p = OpenAiProvider::new("ollama".into(), base_url, "Ollama".into())
+                .with_retry_config(config.retry.clone());
+            Ok(Box::new(apply_sampling(p, config)))
         }
         "openrouter" => {
             let pc = config.providers.openrouter.as_ref();
@@ -235,23 +244,21 @@ fn create_provider(
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://openrouter.ai/api/v1".into());
-            Ok(Box::new(
-                OpenAiProvider::new(key, base_url, "OpenRouter".into())
-                    .with_retry_config(config.retry.clone()),
-            ))
+            let p = OpenAiProvider::new(key, base_url, "OpenRouter".into())
+                .with_retry_config(config.retry.clone());
+            Ok(Box::new(apply_sampling(p, config)))
         }
         "copilot" | "gh" => Ok(Box::new(CopilotProvider::new())),
         other => {
             // Check custom providers.
             if let Some(custom) = config.providers.custom.iter().find(|c| c.name == other) {
-                return Ok(Box::new(
-                    OpenAiProvider::new(
-                        custom.api_key.clone(),
-                        custom.base_url.clone(),
-                        custom.name.clone(),
-                    )
-                    .with_retry_config(config.retry.clone()),
-                ));
+                let p = OpenAiProvider::new(
+                    custom.api_key.clone(),
+                    custom.base_url.clone(),
+                    custom.name.clone(),
+                )
+                .with_retry_config(config.retry.clone());
+                return Ok(Box::new(apply_sampling(p, config)));
             }
             let help = provider_help_message(other);
             anyhow::bail!("{help}")
