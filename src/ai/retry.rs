@@ -287,6 +287,11 @@ mod tests {
     // ── is_retryable_error / is_retryable_message ───────────────────────
 
     #[test]
+    fn retryable_408() {
+        assert!(is_retryable_message("API error (408): request timeout"));
+    }
+
+    #[test]
     fn retryable_429() {
         assert!(is_retryable_message("API error (429): rate limited"));
     }

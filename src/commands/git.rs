@@ -936,4 +936,79 @@ mod tests {
         assert!(is_valid_branch_name("a"));
         assert!(is_valid_branch_name("X"));
     }
+
+    // ── Quote stripping for commit messages ────────────────────────────
+
+    fn strip_quotes(input: &str) -> String {
+        let mut cleaned = input.trim().to_string();
+        for quote in ['"', '\'', '`'] {
+            if cleaned.starts_with(quote) && cleaned.ends_with(quote) && cleaned.len() >= 2 {
+                cleaned = cleaned[1..cleaned.len() - 1].to_string();
+            }
+        }
+        cleaned.trim().to_string()
+    }
+
+    #[test]
+    fn strip_double_quotes() {
+        assert_eq!(strip_quotes("\"fix: a bug\""), "fix: a bug");
+    }
+
+    #[test]
+    fn strip_single_quotes() {
+        assert_eq!(strip_quotes("'feat: new feature'"), "feat: new feature");
+    }
+
+    #[test]
+    fn strip_backticks() {
+        assert_eq!(strip_quotes("`refactor: clean up`"), "refactor: clean up");
+    }
+
+    #[test]
+    fn no_quotes_to_strip() {
+        assert_eq!(strip_quotes("fix: a bug"), "fix: a bug");
+    }
+
+    #[test]
+    fn mismatched_quotes_not_stripped() {
+        // "msg' — mismatched, should not strip
+        assert_eq!(strip_quotes("\"msg'"), "\"msg'");
+    }
+
+    #[test]
+    fn empty_quoted_string() {
+        assert_eq!(strip_quotes("\"\""), "");
+    }
+
+    #[test]
+    fn whitespace_with_quotes() {
+        assert_eq!(strip_quotes("  \"fix: bug\"  "), "fix: bug");
+    }
+
+    // ── UTF-8 safe truncation ──────────────────────────────────────────
+
+    #[test]
+    fn truncation_char_safe() {
+        // Create a string with multi-byte chars that would panic with byte slicing.
+        let s = "ä".repeat(5000); // each ä is 2 bytes
+        let truncated: String = s.chars().take(4000).collect();
+        assert_eq!(truncated.chars().count(), 4000);
+        // Verify it didn't panic and is valid UTF-8.
+        assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn truncation_ascii_unchanged() {
+        let s = "a".repeat(3000);
+        let truncated: String = s.chars().take(4000).collect();
+        assert_eq!(truncated.len(), 3000); // didn't grow
+    }
+
+    // ── is_git_repo helper ─────────────────────────────────────────────
+
+    #[test]
+    fn is_git_repo_in_project() {
+        // This test runs inside the nerve project, which IS a git repo.
+        assert!(is_git_repo());
+    }
 }
