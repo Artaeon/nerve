@@ -65,6 +65,9 @@ chrono = { version = "0.4", features = ["serde"] }
 # Async streams
 futures = "0.3"
 
+# Fast random number generation (used for retry jitter)
+fastrand = "2"
+
 # Syntax highlighting
 syntect = "5"
 

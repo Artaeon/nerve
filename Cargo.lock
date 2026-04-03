@@ -1256,6 +1256,7 @@ dependencies = [
  "clap_complete",
  "crossterm",
  "dirs",
+ "fastrand",
  "futures",
  "fuzzy-matcher",
  "ratatui",
