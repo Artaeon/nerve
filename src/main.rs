@@ -565,6 +565,7 @@ async fn run_tui(
     app.command_timeout_secs = config.command_timeout_secs;
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
+    app.context_limit_override = config.context_limit;
 
     // Load last used provider if not specified via CLI.
     if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {
@@ -925,8 +926,9 @@ async fn event_loop(
 
                                     // Apply context management based on provider (halved in Efficient mode)
                                     let base_limit =
-                                        crate::agent::context::ContextManager::recommended_limit(
+                                        crate::agent::context::ContextManager::effective_limit(
                                             &app.selected_provider,
+                                            app.context_limit_override,
                                         );
                                     let limit = if app.active_mode == app::NerveMode::Efficient {
                                         base_limit / 2
@@ -2886,8 +2888,10 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
         .unwrap_or_default();
 
     // Apply context management based on provider (halved in Efficient mode)
-    let base_limit =
-        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let base_limit = crate::agent::context::ContextManager::effective_limit(
+        &app.selected_provider,
+        app.context_limit_override,
+    );
     let limit = if app.active_mode == app::NerveMode::Efficient {
         base_limit / 2
     } else {
@@ -2986,8 +2990,10 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
     }
 
     // Apply context management based on provider (halved in Efficient mode)
-    let base_limit =
-        crate::agent::context::ContextManager::recommended_limit(&app.selected_provider);
+    let base_limit = crate::agent::context::ContextManager::effective_limit(
+        &app.selected_provider,
+        app.context_limit_override,
+    );
     let limit = if app.active_mode == app::NerveMode::Efficient {
         base_limit / 2
     } else {

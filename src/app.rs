@@ -184,6 +184,9 @@ pub struct App {
     /// tools were actually invoked.
     pub auto_agent_active: bool,
 
+    /// User-configured context window override (from `config.context_limit`).
+    pub context_limit_override: Option<usize>,
+
     // -- search overlay --
     pub search_query: String,
     pub search_results: Vec<usize>,
@@ -330,6 +333,7 @@ impl App {
             agent_has_stash: false,
             auto_agent: true,
             auto_agent_active: false,
+            context_limit_override: None,
 
             search_query: String::new(),
             search_results: Vec::new(),

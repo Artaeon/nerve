@@ -49,14 +49,20 @@ impl ContextManager {
     }
 
     /// Return a recommended context token limit for a given provider name.
+    /// If the user has set `context_limit` in config, that takes precedence.
     pub fn recommended_limit(provider: &str) -> usize {
         match provider {
             "claude_code" | "claude" => 200_000, // Claude has huge context
             "openai" => 60_000,                  // GPT-4o has 128K but we want headroom
             "openrouter" => 30_000,              // Be conservative — depends on model
-            "ollama" => 8_000,                   // Local models often have small context
+            "ollama" => 32_000,                  // Many local models support 32K+ now
             _ => 30_000,
         }
+    }
+
+    /// Return the effective context limit, respecting a user override.
+    pub fn effective_limit(provider: &str, user_override: Option<usize>) -> usize {
+        user_override.unwrap_or_else(|| Self::recommended_limit(provider))
     }
 
     /// Check whether the conversation exceeds the token budget.
@@ -330,7 +336,7 @@ mod tests {
         assert_eq!(ContextManager::recommended_limit("claude"), 200_000);
         assert_eq!(ContextManager::recommended_limit("openai"), 60_000);
         assert_eq!(ContextManager::recommended_limit("openrouter"), 30_000);
-        assert_eq!(ContextManager::recommended_limit("ollama"), 8_000);
+        assert_eq!(ContextManager::recommended_limit("ollama"), 32_000);
         assert_eq!(ContextManager::recommended_limit("unknown"), 30_000);
     }
 
