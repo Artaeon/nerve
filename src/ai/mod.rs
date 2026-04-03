@@ -9,4 +9,5 @@ pub use copilot::CopilotProvider;
 pub use openai::OpenAiProvider;
 #[allow(unused_imports)]
 pub use provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+#[allow(unused_imports)]
 pub use retry::RetryConfig;
