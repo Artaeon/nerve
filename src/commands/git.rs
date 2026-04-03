@@ -163,7 +163,11 @@ fn handle_stage(app: &mut App, trimmed: &str) -> bool {
         match shell::run_command(&cmd) {
             Ok(result) => {
                 if result.success {
-                    app.set_status(format!("Staged {} file(s)", files.len()));
+                    if files.len() == 1 {
+                        app.set_status(format!("Staged {}", files[0]));
+                    } else {
+                        app.set_status(format!("Staged {} files", files.len()));
+                    }
                 } else {
                     app.set_status(format!("git add failed: {}", result.stderr));
                 }
@@ -194,10 +198,13 @@ fn handle_unstage(app: &mut App, trimmed: &str) -> bool {
     match shell::run_command(&cmd) {
         Ok(result) => {
             if result.success {
-                if rest.is_empty() {
+                let files: Vec<&str> = rest.split_whitespace().collect();
+                if files.is_empty() {
                     app.set_status("All files unstaged");
+                } else if files.len() == 1 {
+                    app.set_status(format!("Unstaged {}", files[0]));
                 } else {
-                    app.set_status("File(s) unstaged");
+                    app.set_status(format!("Unstaged {} files", files.len()));
                 }
             } else {
                 app.set_status(format!("git reset failed: {}", result.stderr));

@@ -2058,6 +2058,9 @@ fn get_all_commands() -> &'static [(&'static str, &'static str)] {
         ("stash", "Stash changes"),
         ("stash pop", "Pop latest stash"),
         ("stash list", "List stashes"),
+        ("stash drop", "Drop a stash entry"),
+        ("stash show", "Show stash contents"),
+        ("stash apply", "Apply stash without removing"),
         ("log", "Show git log (default 10)"),
         ("gitstatus", "Show full git status"),
         // Project Scaffolding
@@ -2069,7 +2072,9 @@ fn get_all_commands() -> &'static [(&'static str, &'static str)] {
         // Automation
         ("auto list", "List automations"),
         ("auto run", "Run automation"),
+        ("auto info", "Show automation details"),
         ("auto create", "Create custom automation"),
+        ("auto delete", "Delete custom automation"),
         // Sessions
         ("session", "Show session info"),
         ("session save", "Save current session"),
@@ -2080,6 +2085,7 @@ fn get_all_commands() -> &'static [(&'static str, &'static str)] {
         ("branch list", "List saved branches"),
         ("branch restore", "Restore a saved branch"),
         ("branch diff", "Compare current with a branch"),
+        ("branch delete", "Delete a branch"),
         // Workspace
         ("workspace", "Show detected project info"),
         // Usage & Cost
@@ -2094,6 +2100,7 @@ fn get_all_commands() -> &'static [(&'static str, &'static str)] {
         ("theme", "Switch UI theme"),
         // Power User
         ("alias", "List or create aliases"),
+        ("!!", "Recall last input"),
         ("repeat", "Recall last input (same as /!!)"),
         // Plugins
         ("plugin list", "List installed plugins"),
