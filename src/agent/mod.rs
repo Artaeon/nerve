@@ -1,4 +1,5 @@
 pub mod context;
+pub mod intent;
 pub mod tools;
 
 #[allow(unused_imports)]
