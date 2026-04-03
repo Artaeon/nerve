@@ -23,23 +23,23 @@ pub async fn handle(app: &mut App, trimmed: &str, _provider: &Arc<dyn AiProvider
         return handle_export(app);
     }
 
-    if trimmed == "/system" || trimmed.starts_with("/system ") {
+    if crate::shell::matches_command(trimmed, "/system") {
         return handle_system(app, trimmed);
     }
 
-    if trimmed == "/rename" || trimmed.starts_with("/rename ") {
+    if crate::shell::matches_command(trimmed, "/rename") {
         return handle_rename(app, trimmed);
     }
 
-    if trimmed == "/delete" || trimmed.starts_with("/delete ") {
+    if crate::shell::matches_command(trimmed, "/delete") {
         return handle_delete(app, trimmed);
     }
 
-    if trimmed == "/copy" || trimmed.starts_with("/copy ") {
+    if crate::shell::matches_command(trimmed, "/copy") {
         return handle_copy(app, trimmed);
     }
 
-    if trimmed == "/session" || trimmed.starts_with("/session ") {
+    if crate::shell::matches_command(trimmed, "/session") {
         return handle_session(app, trimmed);
     }
 

@@ -6,11 +6,11 @@ use crate::plugins;
 
 /// Handle settings-related commands. Returns `true` if the command was handled.
 pub async fn handle(app: &mut App, trimmed: &str) -> bool {
-    if trimmed == "/theme" || trimmed.starts_with("/theme ") {
+    if crate::shell::matches_command(trimmed, "/theme") {
         return handle_theme(app, trimmed);
     }
 
-    if trimmed == "/alias" || trimmed.starts_with("/alias ") {
+    if crate::shell::matches_command(trimmed, "/alias") {
         return handle_alias(app, trimmed);
     }
 
@@ -18,7 +18,7 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_usage(app);
     }
 
-    if trimmed == "/limit" || trimmed.starts_with("/limit ") {
+    if crate::shell::matches_command(trimmed, "/limit") {
         return handle_limit(app, trimmed);
     }
 

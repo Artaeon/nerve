@@ -25,27 +25,27 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_provider_switch(app, rest);
     }
 
-    if trimmed == "/ollama" || trimmed.starts_with("/ollama ") {
+    if crate::shell::matches_command(trimmed, "/ollama") {
         return handle_ollama(app, trimmed);
     }
 
-    if trimmed == "/agent" || trimmed.starts_with("/agent ") {
+    if crate::shell::matches_command(trimmed, "/agent") {
         return handle_agent(app, trimmed);
     }
 
-    if trimmed == "/cd" || trimmed.starts_with("/cd ") {
+    if crate::shell::matches_command(trimmed, "/cd") {
         return handle_cd(app, trimmed);
     }
 
-    if trimmed == "/code" || trimmed.starts_with("/code ") {
+    if crate::shell::matches_command(trimmed, "/code") {
         return handle_code(app, trimmed);
     }
 
-    if trimmed == "/cwd" || trimmed.starts_with("/cwd ") {
+    if crate::shell::matches_command(trimmed, "/cwd") {
         return handle_cwd(app, trimmed);
     }
 
-    if trimmed == "/mode" || trimmed.starts_with("/mode ") {
+    if crate::shell::matches_command(trimmed, "/mode") {
         return handle_mode(app, trimmed);
     }
 

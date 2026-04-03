@@ -16,12 +16,12 @@ pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>
         return handle_url(app, rest, provider).await;
     }
 
-    if trimmed == "/auto" || trimmed.starts_with("/auto ") {
+    if crate::shell::matches_command(trimmed, "/auto") {
         handle_auto(app, trimmed, provider).await;
         return true;
     }
 
-    if trimmed == "/kb" || trimmed.starts_with("/kb ") {
+    if crate::shell::matches_command(trimmed, "/kb") {
         handle_kb(app, trimmed);
         return true;
     }

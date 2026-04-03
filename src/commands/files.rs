@@ -10,19 +10,19 @@ use crate::workspace;
 
 /// Handle file-related commands. Returns `true` if the command was handled.
 pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
-    if trimmed == "/file" || trimmed.starts_with("/file ") {
+    if crate::shell::matches_command(trimmed, "/file") {
         return handle_file(app, trimmed);
     }
 
-    if trimmed == "/files" || trimmed.starts_with("/files ") {
+    if crate::shell::matches_command(trimmed, "/files") {
         return handle_files(app, trimmed);
     }
 
-    if trimmed == "/template" || trimmed.starts_with("/template ") {
+    if crate::shell::matches_command(trimmed, "/template") {
         return handle_template(app, trimmed);
     }
 
-    if trimmed == "/scaffold" || trimmed.starts_with("/scaffold ") {
+    if crate::shell::matches_command(trimmed, "/scaffold") {
         return handle_scaffold(app, trimmed, provider).await;
     }
 

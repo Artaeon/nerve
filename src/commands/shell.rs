@@ -13,7 +13,7 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_pipe(app, trimmed);
     }
 
-    if trimmed == "/diff" || trimmed.starts_with("/diff ") {
+    if crate::shell::matches_command(trimmed, "/diff") {
         return handle_diff(app, trimmed);
     }
 
@@ -25,11 +25,11 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_build(app);
     }
 
-    if trimmed == "/git" || trimmed.starts_with("/git ") {
+    if crate::shell::matches_command(trimmed, "/git") {
         return handle_git(app, trimmed);
     }
 
-    if trimmed == "/commit" || trimmed.starts_with("/commit ") {
+    if crate::shell::matches_command(trimmed, "/commit") {
         return handle_commit(app, trimmed);
     }
 
