@@ -103,4 +103,22 @@ mod tests {
         let result = stop_daemon();
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn socket_path_is_absolute() {
+        let path = socket_path();
+        assert!(path.is_absolute());
+    }
+
+    #[test]
+    fn socket_path_is_in_tmp_directory() {
+        let path = socket_path();
+        assert!(path.starts_with("/tmp"), "socket should be in /tmp");
+    }
+
+    #[test]
+    fn socket_path_has_sock_extension() {
+        let path = socket_path();
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("sock"));
+    }
 }

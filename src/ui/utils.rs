@@ -59,3 +59,103 @@ pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── display_width ─────────────────────────────────────────────────
+
+    #[test]
+    fn display_width_ascii() {
+        assert_eq!(display_width("hello"), 5);
+    }
+
+    #[test]
+    fn display_width_empty() {
+        assert_eq!(display_width(""), 0);
+    }
+
+    #[test]
+    fn display_width_cjk() {
+        // CJK ideographs are 2 columns wide
+        assert_eq!(display_width("漢字"), 4);
+    }
+
+    #[test]
+    fn display_width_mixed() {
+        assert_eq!(display_width("hi漢"), 4); // 2 + 2
+    }
+
+    // ── truncate_with_ellipsis ────────────────────────────────────────
+
+    #[test]
+    fn truncate_short_string_unchanged() {
+        assert_eq!(truncate_with_ellipsis("abc", 10), "abc");
+    }
+
+    #[test]
+    fn truncate_exact_fit() {
+        assert_eq!(truncate_with_ellipsis("abcde", 5), "abcde");
+    }
+
+    #[test]
+    fn truncate_adds_ellipsis() {
+        let result = truncate_with_ellipsis("hello world", 6);
+        assert!(result.ends_with('\u{2026}'));
+        assert!(display_width(&result) <= 6);
+    }
+
+    #[test]
+    fn truncate_very_small_width() {
+        assert_eq!(truncate_with_ellipsis("hello", 1), ".");
+        assert_eq!(truncate_with_ellipsis("hello", 2), "..");
+        assert_eq!(truncate_with_ellipsis("hello", 3), "...");
+    }
+
+    #[test]
+    fn truncate_zero_width() {
+        assert_eq!(truncate_with_ellipsis("hello", 0), "");
+    }
+
+    #[test]
+    fn truncate_wide_chars() {
+        // "漢字テスト" = 10 columns, truncating to 6 should cut correctly.
+        let result = truncate_with_ellipsis("漢字テスト", 6);
+        assert!(display_width(&result) <= 6);
+        assert!(result.ends_with('\u{2026}'));
+    }
+
+    #[test]
+    fn truncate_empty_string() {
+        assert_eq!(truncate_with_ellipsis("", 5), "");
+    }
+
+    // ── centered_rect_fixed ───────────────────────────────────────────
+
+    #[test]
+    fn centered_rect_fixed_basic() {
+        let area = Rect::new(0, 0, 80, 24);
+        let r = centered_rect_fixed(40, 10, area);
+        assert_eq!(r.x, 20);
+        assert_eq!(r.y, 7);
+        assert_eq!(r.width, 40);
+        assert_eq!(r.height, 10);
+    }
+
+    #[test]
+    fn centered_rect_fixed_clamps_to_area() {
+        let area = Rect::new(0, 0, 20, 10);
+        let r = centered_rect_fixed(40, 20, area);
+        assert_eq!(r.width, 20); // clamped to area width
+        assert_eq!(r.height, 10); // clamped to area height
+    }
+
+    #[test]
+    fn centered_rect_fixed_zero_area() {
+        let area = Rect::new(5, 5, 0, 0);
+        let r = centered_rect_fixed(10, 10, area);
+        assert_eq!(r.width, 0);
+        assert_eq!(r.height, 0);
+    }
+}
