@@ -721,8 +721,25 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme.dim),
             )
         } else if app.input_mode == InputMode::Normal {
+            let cwd_hint = if app.code_mode {
+                let dir = app.working_dir.as_deref().unwrap_or(".");
+                let short = std::path::Path::new(dir)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(dir);
+                format!(" [{short}]")
+            } else {
+                String::new()
+            };
             Span::styled(
-                " /: commands | Ctrl+K: Nerve Bar | Ctrl+,: settings | i: insert | ?: help",
+                format!(
+                    "{cwd_hint} j/k: scroll | g/G: top/bottom | /: commands | i: insert | ?: help"
+                ),
+                Style::default().fg(theme.dim),
+            )
+        } else if app.agent_mode {
+            Span::styled(
+                " Agent mode \u{2500} describe what to build, fix, or change",
                 Style::default().fg(theme.dim),
             )
         } else {
