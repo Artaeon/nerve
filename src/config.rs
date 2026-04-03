@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai::retry::RetryConfig;
+
 // ---------------------------------------------------------------------------
 // Configuration types
 // ---------------------------------------------------------------------------
@@ -22,6 +24,8 @@ pub struct Config {
     pub providers: ProvidersConfig,
     /// Keyboard shortcuts.
     pub keybinds: KeybindsConfig,
+    /// API retry behaviour (exponential backoff).
+    pub retry: RetryConfig,
 }
 
 /// Connections for each supported AI provider.
@@ -97,6 +101,7 @@ impl Default for Config {
             theme: ThemeConfig::default(),
             providers: ProvidersConfig::default(),
             keybinds: KeybindsConfig::default(),
+            retry: RetryConfig::default(),
         }
     }
 }
@@ -289,6 +294,12 @@ impl Config {
 # Special keys: f1-f12, esc, enter, tab, backspace, delete, up, down,
 #               left, right, home, end, pageup, pagedown.
 #
+# ── Retry ────────────────────────────────────────────────────────────
+# Controls exponential backoff for transient API errors (429, 5xx,
+# connection failures).  Delay formula:
+#   delay = min(initial_delay_ms * backoff_factor^attempt + jitter,
+#               max_delay_ms)
+#
 # ───────────────────────────────────────────────────────────────────────
 
 ";
@@ -477,6 +488,15 @@ mod tests {
         assert!(!cfg.keybinds.quit.is_empty());
     }
 
+    #[test]
+    fn config_default_has_retry() {
+        let cfg = Config::default();
+        assert_eq!(cfg.retry.max_retries, 3);
+        assert_eq!(cfg.retry.initial_delay_ms, 1000);
+        assert_eq!(cfg.retry.max_delay_ms, 30_000);
+        assert!((cfg.retry.backoff_factor - 2.0).abs() < f64::EPSILON);
+    }
+
     // ── ProvidersConfig::default() ──────────────────────────────────────
 
     #[test]
@@ -630,6 +650,11 @@ mod tests {
         );
         assert_eq!(deserialized.keybinds.quit, original.keybinds.quit);
         assert_eq!(deserialized.keybinds.help, original.keybinds.help);
+        assert_eq!(deserialized.retry.max_retries, original.retry.max_retries);
+        assert_eq!(
+            deserialized.retry.initial_delay_ms,
+            original.retry.initial_delay_ms
+        );
     }
 
     #[test]
@@ -780,6 +805,7 @@ mod tests {
         assert!(output.contains("[theme]"));
         assert!(output.contains("[keybinds]"));
         assert!(output.contains("[providers"));
+        assert!(output.contains("[retry]"));
     }
 
     #[test]
@@ -805,6 +831,7 @@ mod tests {
         assert!(output.contains("Theme"));
         assert!(output.contains("Providers"));
         assert!(output.contains("Keybinds"));
+        assert!(output.contains("Retry"));
     }
 
     #[test]
