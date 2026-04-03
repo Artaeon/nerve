@@ -76,6 +76,12 @@ pub fn available_tools() -> Vec<Tool> {
             description: "Read specific line range from a file".into(),
             parameters: "path: string, start: number (1-indexed), end: number".into(),
         },
+        Tool {
+            name: "web_search".into(),
+            description: "Search the web for current information, documentation, or answers"
+                .into(),
+            parameters: "query: string (search query)".into(),
+        },
     ]
 }
 
@@ -377,6 +383,7 @@ pub fn execute_tool(call: &ToolCall, command_timeout_secs: u64) -> ToolResult {
         "create_directory" => execute_create_dir(call),
         "find_files" => execute_find_files(call),
         "read_lines" => execute_read_lines(call),
+        "web_search" => execute_web_search(call),
         _ => ToolResult {
             tool: call.tool.clone(),
             success: false,
@@ -871,6 +878,53 @@ fn execute_read_lines(call: &ToolCall) -> ToolResult {
             tool: "read_lines".into(),
             success: false,
             output: format!("Error: {e}"),
+        },
+    }
+}
+
+fn execute_web_search(call: &ToolCall) -> ToolResult {
+    let query = match require_arg(call, "query") {
+        Ok(q) => q,
+        Err(e) => return e,
+    };
+
+    // Run the async search on the current tokio runtime.
+    let handle = match tokio::runtime::Handle::try_current() {
+        Ok(h) => h,
+        Err(_) => {
+            return ToolResult {
+                tool: "web_search".into(),
+                success: false,
+                output: "Web search requires an async runtime".into(),
+            };
+        }
+    };
+
+    // Use spawn_blocking + block_on to avoid blocking the async runtime.
+    let query_owned = query.to_string();
+    let result = std::thread::spawn(move || {
+        handle.block_on(crate::scraper::search::web_search(&query_owned))
+    })
+    .join();
+
+    match result {
+        Ok(Ok(results)) => {
+            let output = crate::scraper::search::format_search_results(query, &results);
+            ToolResult {
+                tool: "web_search".into(),
+                success: true,
+                output,
+            }
+        }
+        Ok(Err(e)) => ToolResult {
+            tool: "web_search".into(),
+            success: false,
+            output: format!("Search error: {e}"),
+        },
+        Err(_) => ToolResult {
+            tool: "web_search".into(),
+            success: false,
+            output: "Web search thread panicked".into(),
         },
     }
 }
@@ -1845,8 +1899,8 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
     }
 
     #[test]
-    fn exactly_nine_tools() {
-        assert_eq!(available_tools().len(), 9);
+    fn exactly_ten_tools() {
+        assert_eq!(available_tools().len(), 10);
     }
 
     // ── normalize_path ────────────────────────────────────────────────

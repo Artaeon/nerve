@@ -37,6 +37,10 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_search(app, trimmed);
     }
 
+    if crate::shell::matches_command(trimmed, "/web") {
+        return handle_web_search(app, trimmed).await;
+    }
+
     if crate::shell::matches_command(trimmed, "/git") {
         return handle_git(app, trimmed);
     }
@@ -287,6 +291,35 @@ fn handle_search(app: &mut App, trimmed: &str) -> bool {
                 ));
             }
             app.set_status(format!("Search: {pattern}"));
+        }
+        Err(e) => app.report_error(e),
+    }
+    true
+}
+
+async fn handle_web_search(app: &mut App, trimmed: &str) -> bool {
+    let query = trimmed.strip_prefix("/web").unwrap_or("").trim();
+    if query.is_empty() {
+        app.set_status("Usage: /web <search query>");
+        return true;
+    }
+
+    app.set_status(format!("Searching: {query}"));
+    match crate::scraper::search::web_search(query).await {
+        Ok(results) => {
+            let formatted = crate::scraper::search::format_search_results(query, &results);
+            app.current_conversation_mut()
+                .messages
+                .push(("system".into(), formatted.clone()));
+            if results.is_empty() {
+                app.add_assistant_message(format!("No web results found for: `{query}`"));
+            } else {
+                app.add_assistant_message(format!(
+                    "Found {} web results for `{query}`. Ask me to analyze them.",
+                    results.len()
+                ));
+            }
+            app.set_status(format!("Web: {query}"));
         }
         Err(e) => app.report_error(e),
     }

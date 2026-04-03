@@ -173,6 +173,11 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
             "Shell & Git",
         ),
         (
+            "/web",
+            "Search the web (DuckDuckGo, adds results as context)",
+            "Shell & Git",
+        ),
+        (
             "/git",
             "Quick git operations (status/log/diff/branch)",
             "Shell & Git",
