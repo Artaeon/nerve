@@ -141,7 +141,8 @@ impl ClipboardManager {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&path, perms).ok();
+            std::fs::set_permissions(&path, perms)
+                .context("failed to set restrictive permissions on clipboard file")?;
         }
 
         Ok(())
