@@ -257,3 +257,203 @@ fn handle_map(app: &mut App, trimmed: &str) -> bool {
     app.scroll_offset = 0;
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    struct MockProvider;
+
+    impl AiProvider for MockProvider {
+        fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+            _tx: mpsc::UnboundedSender<StreamEvent>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+            Box::pin(async { Ok(String::new()) })
+        }
+
+        fn list_models(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    fn mock_provider() -> Arc<dyn AiProvider> {
+        Arc::new(MockProvider)
+    }
+
+    // ── /file ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn file_bare_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/file", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn file_with_path_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        // The file doesn't need to exist; we just verify the command is handled
+        assert!(handle(&mut app, "/file src/main.rs", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn file_with_line_range_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/file src/main.rs:10-50", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn file_does_not_match_files() {
+        // /file should not accidentally match when the input is /files
+        let mut app = App::new();
+        let provider = mock_provider();
+        // /files starts with "/file " false — it's "/files" which starts_with("/file") but
+        // the dispatch checks /file first with exact match or "/file " prefix
+        // /files should be handled by handle_files, not handle_file
+        // Both are handled by this module, so the test just verifies /files routes correctly
+        assert!(handle(&mut app, "/files", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage: /files"));
+    }
+
+    // ── /files ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn files_bare_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/files", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage: /files"));
+    }
+
+    #[tokio::test]
+    async fn files_with_multiple_paths_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/files src/main.rs src/app.rs", &provider).await);
+    }
+
+    // ── /template ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn template_bare_lists_templates() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/template", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available templates"));
+    }
+
+    #[tokio::test]
+    async fn template_list_lists_templates() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/template list", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available templates"));
+    }
+
+    #[tokio::test]
+    async fn template_unknown_name() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/template nonexistent_xyz", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("not found"));
+    }
+
+    // ── /map and /tree ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn map_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/map", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn tree_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/tree", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn map_with_depth_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/map 2", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn tree_with_depth_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/tree 5", &provider).await);
+    }
+
+    // ── /workspace ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn workspace_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/workspace", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn ws_shorthand_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/ws", &provider).await);
+    }
+
+    // ── /scaffold ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn scaffold_bare_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/scaffold", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(!handle(&mut app, "/filex", &provider).await);
+        assert!(!handle(&mut app, "/mappy", &provider).await);
+        assert!(!handle(&mut app, "/treehouse", &provider).await);
+    }
+}
