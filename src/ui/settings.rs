@@ -613,19 +613,20 @@ fn render_git_tab(frame: &mut Frame, app: &App, area: Rect) {
 
     let clamped = app.settings_select.min(items.len().saturating_sub(1));
 
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "Git Configuration",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::styled(
-        "Used as --author when committing via /commit",
-        Style::default().fg(Color::DarkGray),
-    )));
-    lines.push(Line::from(""));
+    let mut lines: Vec<Line<'_>> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Git Configuration",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Used as --author when committing via /commit",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+    ];
 
     for (i, (label, value)) in items.iter().enumerate() {
         let selected = i == clamped;
