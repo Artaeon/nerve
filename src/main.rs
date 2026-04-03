@@ -1579,7 +1579,7 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
             app.mode = AppMode::Normal;
         }
         KeyCode::Tab => {
-            let cat_count = prompts::categories().len() + 1; // +1 for "All"
+            let cat_count = ui::command_bar::category_tabs().len();
             if key.modifiers.contains(KeyModifiers::SHIFT) {
                 app.command_bar_category = if app.command_bar_category == 0 {
                     cat_count - 1
@@ -1593,7 +1593,7 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::BackTab => {
             // Shift+Tab also reported as BackTab on some terminals.
-            let cat_count = prompts::categories().len() + 1;
+            let cat_count = ui::command_bar::category_tabs().len();
             app.command_bar_category = if app.command_bar_category == 0 {
                 cat_count - 1
             } else {

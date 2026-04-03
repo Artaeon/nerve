@@ -265,14 +265,18 @@ fn handle_commit(app: &mut App, trimmed: &str) -> bool {
     true
 }
 
-/// Build a `--author="Name <email>"` flag for git commit.
+/// Build a `--author='Name <email>'` flag for git commit.
 ///
 /// Returns an empty string if either name or email is empty.
+/// Both fields are required — git requires `Name <email>` format.
 pub(crate) fn build_git_author_flag(name: &str, email: &str) -> String {
     if name.is_empty() || email.is_empty() {
         return String::new();
     }
-    format!("--author=\"{} <{}>\"", name, email)
+    // Single-quote wrapping with proper escaping prevents shell injection.
+    let safe_name = name.replace('\'', "'\\''");
+    let safe_email = email.replace('\'', "'\\''");
+    format!("--author='{} <{}>'", safe_name, safe_email)
 }
 
 #[cfg(test)]
@@ -282,7 +286,13 @@ mod tests {
     #[test]
     fn git_author_flag_both_set() {
         let flag = build_git_author_flag("Jane Doe", "jane@example.com");
-        assert_eq!(flag, "--author=\"Jane Doe <jane@example.com>\"");
+        assert_eq!(flag, "--author='Jane Doe <jane@example.com>'");
+    }
+
+    #[test]
+    fn git_author_flag_escapes_quotes() {
+        let flag = build_git_author_flag("O'Brien", "ob@test.com");
+        assert_eq!(flag, "--author='O'\\''Brien <ob@test.com>'");
     }
 
     #[test]
