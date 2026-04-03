@@ -7,6 +7,7 @@
 pub mod ai;
 pub mod chat;
 pub mod files;
+pub mod git;
 pub mod info;
 pub mod knowledge;
 pub mod settings;
@@ -37,6 +38,10 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
     }
 
     if shell::handle(app, trimmed).await {
+        return true;
+    }
+
+    if git::handle(app, trimmed, provider).await {
         return true;
     }
 
