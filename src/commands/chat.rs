@@ -444,3 +444,310 @@ fn handle_repeat(app: &mut App) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    /// Minimal mock provider that does nothing (we only test parsing/routing).
+    struct MockProvider;
+
+    impl AiProvider for MockProvider {
+        fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+            _tx: mpsc::UnboundedSender<StreamEvent>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _model: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+            Box::pin(async { Ok(String::new()) })
+        }
+
+        fn list_models(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+
+        fn name(&self) -> &str {
+            "mock"
+        }
+    }
+
+    fn mock_provider() -> Arc<dyn AiProvider> {
+        Arc::new(MockProvider)
+    }
+
+    // ── /clear ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn clear_is_handled() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("user".into(), "hello".into()));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/clear", &provider).await);
+        assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn clearall_does_not_match_clear() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        // /clearall should NOT be handled by this module
+        assert!(!handle(&mut app, "/clearall", &provider).await);
+    }
+
+    // ── /new ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn new_creates_conversation() {
+        let mut app = App::new();
+        assert_eq!(app.conversations.len(), 1);
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/new", &provider).await);
+        assert_eq!(app.conversations.len(), 2);
+    }
+
+    // ── /copy ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn copy_bare_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn copy_all_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy all", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn copy_code_is_handled() {
+        let mut app = App::new();
+        app.current_conversation_mut().messages.push((
+            "assistant".into(),
+            "Here:\n```rust\nfn main() {}\n```".into(),
+        ));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy code", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn copy_last_is_handled() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("assistant".into(), "hi".into()));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy last", &provider).await);
+    }
+
+    // ── /session ────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn session_bare_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/session", &provider).await);
+        // Bare /session shows info — should add an assistant message
+        let last = app.current_conversation().messages.last().unwrap();
+        assert_eq!(last.0, "assistant");
+        assert!(last.1.contains("Session Info"));
+    }
+
+    #[tokio::test]
+    async fn session_save_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/session save", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn session_list_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/session list", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn session_restore_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        // This will likely fail to find a session, but should still return true
+        assert!(handle(&mut app, "/session restore", &provider).await);
+    }
+
+    // ── /branch ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn branch_list_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch list", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn branch_save_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch save my branch", &provider).await);
+        assert_eq!(app.branches.len(), 1);
+        assert_eq!(app.branches[0].name, "my branch");
+    }
+
+    #[tokio::test]
+    async fn branch_restore_is_handled() {
+        let mut app = App::new();
+        app.create_branch("test".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch restore 1", &provider).await);
+    }
+
+    #[tokio::test]
+    async fn br_shorthand_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/br", &provider).await);
+        assert!(handle(&mut app, "/br save shorthand", &provider).await);
+        assert_eq!(app.branches.len(), 1);
+        assert_eq!(app.branches[0].name, "shorthand");
+    }
+
+    // ── /rename ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn rename_extracts_new_title() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/rename new name here", &provider).await);
+        assert_eq!(app.current_conversation().title, "new name here");
+    }
+
+    #[tokio::test]
+    async fn rename_bare_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/rename", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    // ── /system ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn system_set_extracts_prompt() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/system set You are a pirate", &provider).await);
+        let sys = app
+            .current_conversation()
+            .messages
+            .iter()
+            .find(|(r, _)| r == "system");
+        assert!(sys.is_some());
+        assert_eq!(sys.unwrap().1, "set You are a pirate");
+    }
+
+    #[tokio::test]
+    async fn system_bare_shows_current() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/system", &provider).await);
+        // Should add an assistant message about no system prompt
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("No system prompt set"));
+    }
+
+    #[tokio::test]
+    async fn system_clear_removes_prompt() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("system".into(), "old prompt".into()));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/system clear", &provider).await);
+        assert!(
+            app.current_conversation()
+                .messages
+                .iter()
+                .all(|(r, _)| r != "system")
+        );
+    }
+
+    // ── /delete ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn delete_all_clears_conversations() {
+        let mut app = App::new();
+        app.new_conversation();
+        assert_eq!(app.conversations.len(), 2);
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/delete all", &provider).await);
+        assert_eq!(app.conversations.len(), 1);
+    }
+
+    // ── /export ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn export_is_handled() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/export", &provider).await);
+    }
+
+    // ── /!! and /repeat ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn repeat_with_history() {
+        let mut app = App::new();
+        app.input_history.push("hello world".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/!!", &provider).await);
+        assert_eq!(app.input, "hello world");
+    }
+
+    #[tokio::test]
+    async fn repeat_alias_works() {
+        let mut app = App::new();
+        app.input_history.push("test".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/repeat", &provider).await);
+        assert_eq!(app.input, "test");
+    }
+
+    #[tokio::test]
+    async fn repeat_no_history() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/!!", &provider).await);
+        assert_eq!(app.status_message.as_deref(), Some("No previous input"));
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(!handle(&mut app, "/unknown", &provider).await);
+        assert!(!handle(&mut app, "/copying", &provider).await);
+        assert!(!handle(&mut app, "/newx", &provider).await);
+    }
+}
