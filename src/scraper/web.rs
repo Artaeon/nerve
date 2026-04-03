@@ -71,6 +71,14 @@ fn is_private_ipv6(ip: std::net::Ipv6Addr) -> bool {
     if segs[0] & 0xffc0 == 0xfe80 {
         return true;
     }
+    // fc00::/7 — unique local address (ULA)
+    if segs[0] & 0xfe00 == 0xfc00 {
+        return true;
+    }
+    // ff00::/8 — multicast
+    if segs[0] & 0xff00 == 0xff00 {
+        return true;
+    }
     // ::ffff:x.x.x.x — IPv4-mapped
     if segs[..5] == [0, 0, 0, 0, 0] && segs[5] == 0xffff {
         let mapped = std::net::Ipv4Addr::new(
@@ -80,6 +88,16 @@ fn is_private_ipv6(ip: std::net::Ipv6Addr) -> bool {
             segs[7] as u8,
         );
         return is_private_ipv4(mapped);
+    }
+    // ::x.x.x.x — IPv4-compatible (deprecated but still valid)
+    if segs[..6] == [0, 0, 0, 0, 0, 0] {
+        let compat = std::net::Ipv4Addr::new(
+            (segs[6] >> 8) as u8,
+            segs[6] as u8,
+            (segs[7] >> 8) as u8,
+            segs[7] as u8,
+        );
+        return is_private_ipv4(compat);
     }
     false
 }
@@ -102,6 +120,11 @@ pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
         .send()
         .await
         .with_context(|| format!("failed to fetch {url}"))?;
+
+    // Re-validate the final URL after redirects to prevent SSRF via redirect.
+    if is_private_url(response.url().as_str()) {
+        anyhow::bail!("Redirect target is a private/internal URL");
+    }
 
     if !response.status().is_success() {
         anyhow::bail!("HTTP {} when fetching {url}", response.status());
