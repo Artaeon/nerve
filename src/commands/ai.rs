@@ -744,3 +744,227 @@ fn handle_autocontext(app: &mut App) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── /models vs /model ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn models_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/models").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available models"));
+    }
+
+    #[tokio::test]
+    async fn model_with_name_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/model gpt-4o").await);
+        assert_eq!(app.selected_model, "gpt-4o");
+    }
+
+    #[tokio::test]
+    async fn model_bare_is_not_handled() {
+        // "/model" (no space after) should NOT match "/model <name>"
+        // and should NOT match "/models"
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/model").await);
+    }
+
+    #[tokio::test]
+    async fn models_does_not_match_model_space() {
+        // Ensure /models and /model are distinct
+        let mut app = App::new();
+        let old_model = app.selected_model.clone();
+        assert!(handle(&mut app, "/models").await);
+        // /models should NOT change the model
+        assert_eq!(app.selected_model, old_model);
+    }
+
+    #[tokio::test]
+    async fn model_prefix_match() {
+        let mut app = App::new();
+        // "gpt" should prefix-match "gpt-4o"
+        assert!(handle(&mut app, "/model gpt").await);
+        assert!(app.selected_model.starts_with("gpt"));
+    }
+
+    #[tokio::test]
+    async fn model_unknown_shows_error() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/model nonexistent-model-xyz").await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Unknown model"));
+    }
+
+    // ── /mode ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mode_efficient_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/mode efficient").await);
+        assert_eq!(app.mode_name, "efficient");
+        assert!(matches!(app.active_mode, app::NerveMode::Efficient));
+    }
+
+    #[tokio::test]
+    async fn mode_thorough_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/mode thorough").await);
+        assert_eq!(app.mode_name, "thorough");
+    }
+
+    #[tokio::test]
+    async fn mode_bare_shows_list() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/mode").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available modes"));
+    }
+
+    #[tokio::test]
+    async fn mode_standard_resets() {
+        let mut app = App::new();
+        // Set a non-standard mode first
+        handle(&mut app, "/mode efficient").await;
+        assert!(handle(&mut app, "/mode standard").await);
+        assert_eq!(app.mode_name, "standard");
+        assert!(matches!(app.active_mode, app::NerveMode::Standard));
+    }
+
+    #[tokio::test]
+    async fn mode_code_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/mode code").await);
+        assert_eq!(app.mode_name, "code");
+    }
+
+    #[tokio::test]
+    async fn mode_review_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/mode review").await);
+        assert_eq!(app.mode_name, "review");
+    }
+
+    // ── /agent ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn agent_off_is_handled() {
+        let mut app = App::new();
+        app.agent_mode = true;
+        assert!(handle(&mut app, "/agent off").await);
+        assert!(!app.agent_mode);
+    }
+
+    #[tokio::test]
+    async fn agent_status_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/agent status").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Agent Mode"));
+    }
+
+    #[tokio::test]
+    async fn agent_bare_shows_info() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/agent").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Agent mode"));
+    }
+
+    // ── /code ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn code_on_requires_claude_provider() {
+        let mut app = App::new();
+        app.selected_provider = "claude_code".into();
+        assert!(handle(&mut app, "/code on").await);
+        assert!(app.code_mode);
+    }
+
+    #[tokio::test]
+    async fn code_off_is_handled() {
+        let mut app = App::new();
+        app.code_mode = true;
+        assert!(handle(&mut app, "/code off").await);
+        assert!(!app.code_mode);
+    }
+
+    #[tokio::test]
+    async fn code_on_rejected_for_non_claude() {
+        let mut app = App::new();
+        app.selected_provider = "ollama".into();
+        assert!(handle(&mut app, "/code on").await);
+        assert!(!app.code_mode);
+    }
+
+    // ── /cd ─────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cd_bare_shows_cwd() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/cd").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Current directory"));
+    }
+
+    #[tokio::test]
+    async fn cd_tmp_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/cd /tmp").await);
+        // Restore cwd so we don't break other tests
+        let _ = std::env::set_current_dir(env!("CARGO_MANIFEST_DIR"));
+    }
+
+    // ── /provider ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn providers_lists_all() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/providers").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available providers"));
+    }
+
+    #[tokio::test]
+    async fn provider_bare_shows_current() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/provider").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Current provider"));
+    }
+
+    #[tokio::test]
+    async fn provider_switch_ollama() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/provider ollama").await);
+        assert_eq!(app.selected_provider, "ollama");
+    }
+
+    // ── /autocontext ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn autocontext_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/autocontext").await);
+    }
+
+    #[tokio::test]
+    async fn ac_shorthand_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/ac").await);
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/modelling").await);
+        assert!(!handle(&mut app, "/coding").await);
+        assert!(!handle(&mut app, "/agentx").await);
+    }
+}
