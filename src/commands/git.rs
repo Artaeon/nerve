@@ -25,6 +25,10 @@ pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>
         return handle_gitbranch(app, trimmed);
     }
 
+    if trimmed == "/stash" || trimmed.starts_with("/stash ") {
+        return handle_stash(app, trimmed);
+    }
+
     if trimmed == "/log" || trimmed.starts_with("/log ") {
         return handle_log(app, trimmed);
     }
@@ -408,6 +412,133 @@ fn is_valid_branch_name(name: &str) -> bool {
     true
 }
 
+// ── /stash ─────────────────────────────────────────────────────────────────
+
+fn handle_stash(app: &mut App, trimmed: &str) -> bool {
+    let rest = trimmed.strip_prefix("/stash").unwrap_or("").trim();
+    let args: Vec<&str> = rest.split_whitespace().collect();
+    let subcmd = args.first().copied().unwrap_or("");
+
+    match subcmd {
+        "pop" => match shell::run_command("git stash pop") {
+            Ok(result) => {
+                if result.success {
+                    app.add_assistant_message(format!(
+                        "Stash popped:\n\n```\n{}\n```",
+                        result.stdout.trim()
+                    ));
+                    app.set_status("Stash popped");
+                } else {
+                    app.set_status(format!("Stash pop failed: {}", result.stderr));
+                }
+            }
+            Err(e) => app.set_status(format!("Error: {e}")),
+        },
+        "list" => match shell::run_command("git stash list") {
+            Ok(result) => {
+                if result.success {
+                    if result.stdout.trim().is_empty() {
+                        app.add_assistant_message("No stashes saved.".into());
+                    } else {
+                        app.add_assistant_message(format!(
+                            "Git Stashes\n{}\n\n```\n{}\n```",
+                            "=".repeat(25),
+                            result.stdout.trim()
+                        ));
+                    }
+                } else {
+                    app.set_status(format!("git stash list failed: {}", result.stderr));
+                }
+            }
+            Err(e) => app.set_status(format!("Error: {e}")),
+        },
+        "drop" => {
+            let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
+            let cmd = format!("git stash drop '{}'", stash_ref.replace('\'', "'\\''"));
+            match shell::run_command(&cmd) {
+                Ok(result) => {
+                    if result.success {
+                        app.set_status(format!("Dropped {stash_ref}"));
+                    } else {
+                        app.set_status(format!("Stash drop failed: {}", result.stderr));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+        "show" => {
+            let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
+            let cmd = format!("git stash show -p '{}'", stash_ref.replace('\'', "'\\''"));
+            match shell::run_command(&cmd) {
+                Ok(result) => {
+                    if result.success {
+                        app.add_assistant_message(format!(
+                            "Stash {stash_ref}:\n\n```diff\n{}\n```",
+                            result.stdout.trim()
+                        ));
+                    } else {
+                        app.set_status(format!("Stash show failed: {}", result.stderr));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+        "apply" => {
+            let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
+            let cmd = format!("git stash apply '{}'", stash_ref.replace('\'', "'\\''"));
+            match shell::run_command(&cmd) {
+                Ok(result) => {
+                    if result.success {
+                        app.set_status(format!("Applied {stash_ref}"));
+                    } else {
+                        app.set_status(format!("Stash apply failed: {}", result.stderr));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+        "" => {
+            // Default: stash with no message
+            match shell::run_command("git stash push --include-untracked") {
+                Ok(result) => {
+                    if result.success {
+                        if result.stdout.contains("No local changes") {
+                            app.set_status("Nothing to stash");
+                        } else {
+                            app.set_status("Changes stashed");
+                        }
+                    } else {
+                        app.set_status(format!("Stash failed: {}", result.stderr));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+        _ => {
+            // Treat everything else as a stash message
+            let message = rest;
+            let escaped = message.replace('\'', "'\\''");
+            let cmd = format!("git stash push --include-untracked -m '{escaped}'");
+            match shell::run_command(&cmd) {
+                Ok(result) => {
+                    if result.success {
+                        if result.stdout.contains("No local changes") {
+                            app.set_status("Nothing to stash");
+                        } else {
+                            app.set_status(format!("Stashed: {message}"));
+                        }
+                    } else {
+                        app.set_status(format!("Stash failed: {}", result.stderr));
+                    }
+                }
+                Err(e) => app.set_status(format!("Error: {e}")),
+            }
+        }
+    }
+    app.scroll_offset = 0;
+    true
+}
+
 // ── Argument parsing helpers (used by tests) ───────────────────────────────
 
 /// Extract the commit message from a `/commit ...` input.
@@ -434,6 +565,17 @@ pub(crate) fn parse_gitbranch_args(input: &str) -> (&str, Option<&str>) {
             _ => ("create", Some(args[0])),
         },
         _ => (args[0], Some(args[1])),
+    }
+}
+
+/// Parse `/stash ...` input into the subcommand.
+pub(crate) fn parse_stash_subcommand(input: &str) -> &str {
+    let rest = input.strip_prefix("/stash").unwrap_or("").trim();
+    let first = rest.split_whitespace().next().unwrap_or("");
+    match first {
+        "pop" | "list" | "drop" | "show" | "apply" => first,
+        "" => "push",
+        _ => "push_with_message",
     }
 }
 
@@ -586,5 +728,29 @@ mod tests {
         let (sub, name) = parse_gitbranch_args("/gitbranch   switch   main");
         assert_eq!(sub, "switch");
         assert_eq!(name, Some("main"));
+    }
+
+    // ── Stash parsing ──────────────────────────────────────────────────
+
+    #[test]
+    fn stash_subcommand_parsing() {
+        assert_eq!(parse_stash_subcommand("/stash"), "push");
+        assert_eq!(parse_stash_subcommand("/stash pop"), "pop");
+        assert_eq!(parse_stash_subcommand("/stash list"), "list");
+        assert_eq!(parse_stash_subcommand("/stash drop"), "drop");
+        assert_eq!(parse_stash_subcommand("/stash show"), "show");
+        assert_eq!(parse_stash_subcommand("/stash apply"), "apply");
+        assert_eq!(
+            parse_stash_subcommand("/stash my work in progress"),
+            "push_with_message"
+        );
+    }
+
+    #[test]
+    fn stash_with_multiword_message() {
+        assert_eq!(
+            parse_stash_subcommand("/stash WIP: fixing auth flow"),
+            "push_with_message"
+        );
     }
 }
