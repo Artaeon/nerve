@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+use super::retry::{RetryConfig, is_retryable_error, retry_async};
 
 // ---------------------------------------------------------------------------
 // Request / response types for the OpenAI-compatible API
@@ -97,6 +98,7 @@ pub struct OpenAiProvider {
     base_url: String,
     provider_name: String,
     max_tokens: Option<usize>,
+    retry_config: RetryConfig,
 }
 
 impl OpenAiProvider {
@@ -109,6 +111,7 @@ impl OpenAiProvider {
             base_url: base_url.trim_end_matches('/').to_string(),
             provider_name,
             max_tokens: Some(4096),
+            retry_config: RetryConfig::default(),
         }
     }
 
@@ -116,6 +119,13 @@ impl OpenAiProvider {
     #[allow(dead_code)]
     pub fn with_max_tokens(mut self, tokens: usize) -> Self {
         self.max_tokens = Some(tokens);
+        self
+    }
+
+    /// Override the retry configuration.
+    #[allow(dead_code)]
+    pub fn with_retry_config(mut self, config: RetryConfig) -> Self {
+        self.retry_config = config;
         self
     }
 
@@ -192,25 +202,43 @@ impl AiProvider for OpenAiProvider {
         let model = model.to_string();
         Box::pin(async move {
             let url = format!("{}/chat/completions", self.base_url);
-            let body = ChatCompletionRequest {
-                model: &model,
-                messages: &messages,
-                stream: true,
-                max_tokens: self.max_tokens,
-            };
 
-            let response = self
-                .auth_request(reqwest::Method::POST, &url)
-                .json(&body)
-                .send()
-                .await
-                .context("failed to send streaming request")?;
+            // Retry only the initial connection. Once we have a successful
+            // response and start reading the stream, mid-stream failures are
+            // not retried (the partial tokens have already been sent to the
+            // UI and replaying them would produce duplicates).
+            let response = retry_async(&self.retry_config, is_retryable_error, || {
+                let url = url.clone();
+                let messages = messages.clone();
+                let model = model.clone();
+                async move {
+                    let body = ChatCompletionRequest {
+                        model: &model,
+                        messages: &messages,
+                        stream: true,
+                        max_tokens: self.max_tokens,
+                    };
 
-            if !response.status().is_success() {
-                let msg = Self::extract_api_error(response).await;
-                let _ = tx.send(StreamEvent::Error(msg.clone()));
-                return Err(anyhow!(msg));
-            }
+                    let response = self
+                        .auth_request(reqwest::Method::POST, &url)
+                        .json(&body)
+                        .send()
+                        .await
+                        .context("failed to send streaming request")?;
+
+                    if !response.status().is_success() {
+                        let msg = Self::extract_api_error(response).await;
+                        return Err(anyhow!(msg));
+                    }
+
+                    Ok(response)
+                }
+            })
+            .await
+            .map_err(|e| {
+                let _ = tx.send(StreamEvent::Error(format!("{e}")));
+                e
+            })?;
 
             // Read the byte stream and parse SSE lines.
             let mut byte_stream = response.bytes_stream();
@@ -295,38 +323,47 @@ impl AiProvider for OpenAiProvider {
         let model = model.to_string();
         Box::pin(async move {
             let url = format!("{}/chat/completions", self.base_url);
-            let body = ChatCompletionRequest {
-                model: &model,
-                messages: &messages,
-                stream: false,
-                max_tokens: self.max_tokens,
-            };
 
-            let response = self
-                .auth_request(reqwest::Method::POST, &url)
-                .json(&body)
-                .send()
-                .await
-                .context("failed to send chat request")?;
+            retry_async(&self.retry_config, is_retryable_error, || {
+                let url = url.clone();
+                let messages = messages.clone();
+                let model = model.clone();
+                async move {
+                    let body = ChatCompletionRequest {
+                        model: &model,
+                        messages: &messages,
+                        stream: false,
+                        max_tokens: self.max_tokens,
+                    };
 
-            if !response.status().is_success() {
-                let msg = Self::extract_api_error(response).await;
-                return Err(anyhow!(msg));
-            }
+                    let response = self
+                        .auth_request(reqwest::Method::POST, &url)
+                        .json(&body)
+                        .send()
+                        .await
+                        .context("failed to send chat request")?;
 
-            let resp: ChatCompletionResponse = response
-                .json()
-                .await
-                .context("failed to parse chat completion response")?;
+                    if !response.status().is_success() {
+                        let msg = Self::extract_api_error(response).await;
+                        return Err(anyhow!(msg));
+                    }
 
-            let content = resp
-                .choices
-                .into_iter()
-                .next()
-                .and_then(|c| c.message.content)
-                .unwrap_or_default();
+                    let resp: ChatCompletionResponse = response
+                        .json()
+                        .await
+                        .context("failed to parse chat completion response")?;
 
-            Ok(content)
+                    let content = resp
+                        .choices
+                        .into_iter()
+                        .next()
+                        .and_then(|c| c.message.content)
+                        .unwrap_or_default();
+
+                    Ok(content)
+                }
+            })
+            .await
         })
     }
 
