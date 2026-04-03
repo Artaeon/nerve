@@ -267,10 +267,18 @@ const BLOCKED_PATTERNS: &[&str] = &[
     "sudo mkfs",
     "tee /etc/",
     "passwd",
+    "chpasswd",
     "shutdown",
     "reboot",
+    "poweroff",
+    "halt",
     "init 0",
     "init 6",
+    "systemctl poweroff",
+    "systemctl reboot",
+    "systemctl halt",
+    "shred",
+    "wipe",
 ];
 
 /// Piped download-to-execution patterns: (prefix, pipe target).
@@ -278,8 +286,17 @@ const BLOCKED_PATTERNS: &[&str] = &[
 const BLOCKED_PIPE_PATTERNS: &[(&str, &str)] = &[
     ("curl", "| sh"),
     ("curl", "| bash"),
+    ("curl", "| zsh"),
+    ("curl", "| ksh"),
+    ("curl", "| dash"),
+    ("curl", "| python"),
+    ("curl", "| perl"),
+    ("curl", "| ruby"),
     ("wget", "| sh"),
     ("wget", "| bash"),
+    ("wget", "| zsh"),
+    ("wget", "| python"),
+    ("wget", "| perl"),
 ];
 
 /// Returns `true` if the command matches a well-known destructive pattern
