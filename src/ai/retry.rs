@@ -121,7 +121,7 @@ pub fn is_retryable_error(err: &anyhow::Error) -> bool {
 /// Inner helper that operates on the stringified error message.
 fn is_retryable_message(msg: &str) -> bool {
     // HTTP status codes embedded in error messages (e.g. "API error (429)")
-    let retryable_statuses = ["429", "500", "502", "503", "504"];
+    let retryable_statuses = ["408", "429", "500", "502", "503", "504"];
     let non_retryable_statuses = ["400", "401", "403", "404"];
 
     // Check for non-retryable status codes first (more specific match)
