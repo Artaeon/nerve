@@ -214,22 +214,20 @@ fn create_provider(
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            Ok(Box::new(OpenAiProvider::new(
-                key,
-                base_url,
-                "OpenAI".into(),
-            )))
+            Ok(Box::new(
+                OpenAiProvider::new(key, base_url, "OpenAI".into())
+                    .with_retry_config(config.retry.clone()),
+            ))
         }
         "ollama" => {
             let pc = config.providers.ollama.as_ref();
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "http://localhost:11434/v1".into());
-            Ok(Box::new(OpenAiProvider::new(
-                "ollama".into(),
-                base_url,
-                "Ollama".into(),
-            )))
+            Ok(Box::new(
+                OpenAiProvider::new("ollama".into(), base_url, "Ollama".into())
+                    .with_retry_config(config.retry.clone()),
+            ))
         }
         "openrouter" => {
             let pc = config.providers.openrouter.as_ref();
@@ -237,21 +235,23 @@ fn create_provider(
             let base_url = pc
                 .and_then(|p| p.base_url.clone())
                 .unwrap_or_else(|| "https://openrouter.ai/api/v1".into());
-            Ok(Box::new(OpenAiProvider::new(
-                key,
-                base_url,
-                "OpenRouter".into(),
-            )))
+            Ok(Box::new(
+                OpenAiProvider::new(key, base_url, "OpenRouter".into())
+                    .with_retry_config(config.retry.clone()),
+            ))
         }
         "copilot" | "gh" => Ok(Box::new(CopilotProvider::new())),
         other => {
             // Check custom providers.
             if let Some(custom) = config.providers.custom.iter().find(|c| c.name == other) {
-                return Ok(Box::new(OpenAiProvider::new(
-                    custom.api_key.clone(),
-                    custom.base_url.clone(),
-                    custom.name.clone(),
-                )));
+                return Ok(Box::new(
+                    OpenAiProvider::new(
+                        custom.api_key.clone(),
+                        custom.base_url.clone(),
+                        custom.name.clone(),
+                    )
+                    .with_retry_config(config.retry.clone()),
+                ));
             }
             let help = provider_help_message(other);
             anyhow::bail!("{help}")
