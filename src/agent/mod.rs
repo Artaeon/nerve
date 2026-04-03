@@ -1,3 +1,4 @@
+pub mod auto_context;
 pub mod context;
 pub mod intent;
 pub mod tools;

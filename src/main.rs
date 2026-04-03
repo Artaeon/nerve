@@ -2961,6 +2961,16 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
         }
     }
 
+    // Auto-context: gather relevant files when NOT in agent mode
+    // (agent mode reads files on demand via tools).
+    if !app.agent_mode && app.auto_agent {
+        let ws_root = crate::workspace::detect_workspace().map(|w| w.root);
+        let ctx = crate::agent::auto_context::gather_context(&user_message, ws_root.as_deref());
+        if let Some(context_msg) = crate::agent::auto_context::format_context(&ctx) {
+            messages.insert(0, ChatMessage::system(context_msg));
+        }
+    }
+
     // Inject mode-specific system prompt at position 0 so it shapes the
     // entire conversation.
     if let Some(mode_prompt) = app.active_mode.system_prompt() {
