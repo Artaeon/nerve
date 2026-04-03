@@ -958,6 +958,25 @@ async fn event_loop(
                                 }
                             }
                         }
+
+                        // Auto-agent cleanup: if agent mode was activated by
+                        // intent detection and no tools were actually invoked,
+                        // turn it back off so the next message starts clean.
+                        if app.auto_agent_active {
+                            if app.agent_iterations == 0 {
+                                // No tool calls happened — revert to chat-only.
+                                app.agent_mode = false;
+                                app.current_conversation_mut().messages.retain(|(r, c)| {
+                                    !(r == "system"
+                                        && (c.contains("You have access to the following tools")
+                                            || c.contains(
+                                                "You are Nerve, an AI coding assistant",
+                                            )))
+                                });
+                            }
+                            app.auto_agent_active = false;
+                        }
+
                         finished = true;
                         break;
                     }
@@ -2616,6 +2635,46 @@ async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider
     if text.starts_with('/') && commands::handle(app, text, provider).await {
         return;
         // Not a recognised command — treat as a normal message.
+    }
+
+    // ── Auto-agent: detect intent and temporarily enable tools ────────
+    if app.auto_agent && !app.agent_mode && crate::agent::intent::needs_tools(text) {
+        app.agent_mode = true;
+        app.auto_agent_active = true;
+
+        // Inject the tools system prompt (same as `/agent on`).
+        let tools_prompt = crate::agent::tools::tools_system_prompt();
+        app.current_conversation_mut().messages.retain(|(r, c)| {
+            !(r == "system"
+                && (c.contains("You have access to the following tools")
+                    || c.contains("You are Nerve, an AI coding assistant")))
+        });
+        app.current_conversation_mut()
+            .messages
+            .insert(0, ("system".into(), tools_prompt));
+
+        // Inject workspace context if available.
+        let ws_for_agent = app
+            .cached_workspace
+            .clone()
+            .or_else(crate::workspace::detect_workspace);
+        if let Some(ws) = ws_for_agent {
+            let project_map = crate::workspace::generate_project_map(&ws.root, 3);
+            let map_context = if project_map.len() > 2000 {
+                format!("{}...\n[Project map truncated]", &project_map[..2000])
+            } else {
+                project_map
+            };
+            app.current_conversation_mut().messages.insert(
+                1,
+                (
+                    "system".into(),
+                    format!("Current project context:\n\n{map_context}"),
+                ),
+            );
+        }
+
+        app.set_status("Auto-agent: tool access enabled for this request");
     }
 
     send_to_ai(app, text, provider).await;
