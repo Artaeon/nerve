@@ -698,6 +698,11 @@ async fn event_loop(
             app.provider_changed = false;
         }
 
+        // Drain any pending command queued by the Nerve Bar.
+        if let Some(cmd) = app.pending_command.take() {
+            submit_message(app, &cmd, &provider).await;
+        }
+
         // Adaptive poll: fast during streaming for smooth updates, slow when idle to save CPU.
         let poll_duration = if app.is_streaming {
             std::time::Duration::from_millis(16) // ~60fps for smooth streaming
@@ -1507,7 +1512,52 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             // Use the helper from the UI module to get the selected prompt.
             if let Some(prompt) = ui::command_bar::selected_prompt(app) {
-                if prompt.template.starts_with('/') {
+                if prompt.template.starts_with("@action:") {
+                    // Quick action — perform immediately.
+                    match prompt.template.as_str() {
+                        "@action:settings" => {
+                            app.mode = AppMode::Settings;
+                            app.set_status("Opened settings");
+                            return;
+                        }
+                        "@action:theme" => {
+                            let presets = config::theme_presets();
+                            app.theme_index = (app.theme_index + 1) % presets.len();
+                            if let Some((name, theme)) = presets.get(app.theme_index) {
+                                let mut cfg = Config::load().unwrap_or_default();
+                                cfg.theme = theme.clone();
+                                let _ = cfg.save();
+                                app.set_status(format!("Theme: {}", name));
+                            }
+                        }
+                        "@action:agent_toggle" => {
+                            app.agent_mode = !app.agent_mode;
+                            let state = if app.agent_mode { "ON" } else { "OFF" };
+                            app.set_status(format!("Agent mode: {}", state));
+                        }
+                        "@action:code_toggle" => {
+                            app.code_mode = !app.code_mode;
+                            let state = if app.code_mode { "ON" } else { "OFF" };
+                            app.set_status(format!("Code mode: {}", state));
+                        }
+                        "@action:help" => {
+                            app.mode = AppMode::Help;
+                            app.set_status("Opened help");
+                            return;
+                        }
+                        "@action:history" => {
+                            app.mode = AppMode::HistoryBrowser;
+                            app.set_status("Opened history browser");
+                            return;
+                        }
+                        "@action:clipboard" => {
+                            app.mode = AppMode::ClipboardManager;
+                            app.set_status("Opened clipboard manager");
+                            return;
+                        }
+                        _ => {}
+                    }
+                } else if prompt.template.starts_with('/') {
                     // Slash command — queue it for immediate execution.
                     app.pending_command = Some(prompt.template.clone());
                     app.set_status(format!("Running: {}", prompt.name));

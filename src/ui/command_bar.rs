@@ -14,6 +14,58 @@ use crate::prompts::{self, BUILTIN_CACHE};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+/// Return quick action entries for the Nerve Bar.
+///
+/// Quick actions use the `@action:<id>` prefix in their template field so the
+/// command-bar Enter handler can distinguish them from slash commands and
+/// SmartPrompts.
+fn quick_action_prompts() -> Vec<prompts::SmartPrompt> {
+    let actions: Vec<(&str, &str, &str)> = vec![
+        (
+            "Open Settings",
+            "Open the settings overlay",
+            "@action:settings",
+        ),
+        (
+            "Switch Theme",
+            "Cycle through available themes",
+            "@action:theme",
+        ),
+        (
+            "Toggle Agent Mode",
+            "Enable or disable agent mode",
+            "@action:agent_toggle",
+        ),
+        (
+            "Toggle Code Mode",
+            "Enable or disable code mode",
+            "@action:code_toggle",
+        ),
+        ("Show Help", "Open the help overlay", "@action:help"),
+        (
+            "Browse History",
+            "Open conversation history browser",
+            "@action:history",
+        ),
+        (
+            "Clipboard Manager",
+            "Open the clipboard manager",
+            "@action:clipboard",
+        ),
+    ];
+
+    actions
+        .into_iter()
+        .map(|(name, desc, template)| prompts::SmartPrompt {
+            name: name.into(),
+            description: desc.into(),
+            template: template.into(),
+            category: "Quick Actions".into(),
+            tags: vec!["action".into()],
+        })
+        .collect()
+}
+
 /// Return all slash commands as SmartPrompt entries for the Nerve Bar.
 fn command_prompts() -> Vec<prompts::SmartPrompt> {
     let commands: Vec<(&str, &str, &str)> = vec![
@@ -211,11 +263,14 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
 }
 
 /// Build the list of category tab labels: "All" followed by every real category,
-/// plus a "Commands" group.
+/// plus "Quick Actions" and "Commands" groups.
 pub(crate) fn category_tabs() -> Vec<String> {
     let mut tabs: Vec<String> = std::iter::once("All".to_string())
         .chain(prompts::categories())
         .collect();
+
+    // Quick Actions tab (always present).
+    tabs.push("Quick Actions".to_string());
 
     // Collect unique command categories and append them.
     let cmd_cats: Vec<String> = command_prompts()
@@ -230,9 +285,10 @@ pub(crate) fn category_tabs() -> Vec<String> {
 }
 
 /// Apply both category and fuzzy-search filters, returning scored results.
-/// Includes both SmartPrompts and slash commands.
+/// Includes SmartPrompts, quick actions, and slash commands.
 pub(crate) fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
     let mut all_prompts = prompts::all_prompts();
+    all_prompts.extend(quick_action_prompts());
     all_prompts.extend(command_prompts());
 
     let tabs = category_tabs();
@@ -419,10 +475,11 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     // ── 3. Prompt list ──────────────────────────────────────────────────
     let scored = filtered_prompts(app);
     let match_count = scored.len();
-    // Use the cached builtin count + custom prompts + command prompts instead
-    // of rebuilding the full list a second time.
+    // Use the cached builtin count + custom prompts + quick actions + command
+    // prompts instead of rebuilding the full list a second time.
     let total = BUILTIN_CACHE.len()
         + prompts::custom::load_custom_prompts().len()
+        + quick_action_prompts().len()
         + command_prompts().len();
 
     // Available width inside the prompt list area (for right-aligning badges).
@@ -575,10 +632,10 @@ mod tests {
         app.command_bar_category = 0; // "All"
         app.command_bar_input.clear();
         let results = filtered_prompts(&app);
-        // 166+ builtin prompts + ~90 command entries
+        // 166+ builtin prompts + 7 quick actions + ~90 command entries
         assert!(
-            results.len() >= 220,
-            "expected >= 220 prompts+commands, got {}",
+            results.len() >= 225,
+            "expected >= 225 prompts+actions+commands, got {}",
             results.len()
         );
     }
@@ -641,7 +698,7 @@ mod tests {
         let mut app = App::new();
         app.command_bar_input.clear();
         let count = matched_prompt_count(&app);
-        assert!(count >= 220, "expected >= 220, got {}", count);
+        assert!(count >= 225, "expected >= 225, got {}", count);
     }
 
     #[test]
@@ -718,5 +775,85 @@ mod tests {
             !results.is_empty(),
             "should find Security Audit by template content"
         );
+    }
+
+    // ── Quick action tests ──────────────────────────────────────────────
+
+    #[test]
+    fn quick_action_prompts_have_action_prefix() {
+        let actions = quick_action_prompts();
+        assert!(!actions.is_empty(), "should have at least one quick action");
+        for action in &actions {
+            assert!(
+                action.template.starts_with("@action:"),
+                "quick action template should start with @action: but got: {}",
+                action.template
+            );
+        }
+    }
+
+    #[test]
+    fn quick_action_prompts_all_quick_actions_category() {
+        let actions = quick_action_prompts();
+        for action in &actions {
+            assert_eq!(
+                action.category, "Quick Actions",
+                "quick action category should be 'Quick Actions'"
+            );
+        }
+    }
+
+    #[test]
+    fn quick_action_settings_in_filtered_results() {
+        let mut app = App::new();
+        app.command_bar_category = 0;
+        app.command_bar_input = "Open Settings".into();
+        let results = filtered_prompts(&app);
+        assert!(
+            results
+                .iter()
+                .any(|(_, p)| p.template == "@action:settings"),
+            "should find settings quick action"
+        );
+    }
+
+    #[test]
+    fn quick_actions_category_tab_present() {
+        let tabs = category_tabs();
+        assert!(
+            tabs.iter().any(|t| t == "Quick Actions"),
+            "expected a 'Quick Actions' category tab"
+        );
+    }
+
+    #[test]
+    fn quick_actions_filter_by_category() {
+        let mut app = App::new();
+        let tabs = category_tabs();
+        let qa_idx = tabs
+            .iter()
+            .position(|t| t == "Quick Actions")
+            .expect("Quick Actions tab should exist");
+        app.command_bar_category = qa_idx;
+        app.command_bar_input.clear();
+        let results = filtered_prompts(&app);
+        assert!(
+            !results.is_empty(),
+            "Quick Actions category should have entries"
+        );
+        for (_, p) in &results {
+            assert_eq!(p.category, "Quick Actions");
+        }
+    }
+
+    #[test]
+    fn quick_action_template_detection() {
+        // Verify that @action: templates are distinct from / commands and SmartPrompts
+        let actions = quick_action_prompts();
+        for action in &actions {
+            assert!(!action.template.starts_with('/'));
+            assert!(!action.template.contains("{{input}}"));
+            assert!(action.template.starts_with("@action:"));
+        }
     }
 }
