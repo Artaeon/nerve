@@ -1240,6 +1240,18 @@ async fn handle_normal_mode(
                 }
                 KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
                 KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
+                KeyCode::Char('G') => app.scroll_to_bottom(),
+                KeyCode::Char('g') => app.scroll_to_top(),
+                KeyCode::PageUp => {
+                    for _ in 0..10 {
+                        app.scroll_up();
+                    }
+                }
+                KeyCode::PageDown => {
+                    for _ in 0..10 {
+                        app.scroll_down();
+                    }
+                }
                 KeyCode::Tab => cycle_conversation(app),
                 KeyCode::BackTab => cycle_conversation_back(app),
                 KeyCode::Char('q') => app.should_quit = true,

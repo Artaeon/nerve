@@ -588,6 +588,17 @@ impl App {
         self.scroll_offset = self.scroll_offset.saturating_sub(3);
     }
 
+    /// Jump to the latest message (bottom of conversation).
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+    }
+
+    /// Jump to the oldest message (top of conversation).
+    pub fn scroll_to_top(&mut self) {
+        // Set a very large offset — rendering will clamp it naturally.
+        self.scroll_offset = u16::MAX / 2;
+    }
+
     // ── Branching ───────────────────────────────────────────────────────
 
     /// Create a branch from the current conversation state
