@@ -235,3 +235,193 @@ fn handle_plugin(app: &mut App, trimmed: &str) -> bool {
     app.scroll_offset = 0;
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── /theme ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn theme_bare_lists_themes() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available themes"));
+    }
+
+    #[tokio::test]
+    async fn theme_list_lists_themes() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme list").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Available themes"));
+    }
+
+    #[tokio::test]
+    async fn theme_by_number_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme 1").await);
+        assert_eq!(app.theme_index, 0); // 1-indexed -> 0-indexed
+    }
+
+    #[tokio::test]
+    async fn theme_not_found() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme nonexistent_theme_xyz").await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("not found"));
+    }
+
+    // ── /alias ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn alias_bare_shows_list() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/alias").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("No aliases set"));
+    }
+
+    #[tokio::test]
+    async fn alias_creates_mapping() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/alias t /run cargo test").await);
+        assert_eq!(app.aliases.get("t").unwrap(), "/run cargo test");
+    }
+
+    #[tokio::test]
+    async fn alias_name_equals_value_parse() {
+        let mut app = App::new();
+        // The alias parser uses splitn(2, whitespace), so "name=value" is the name
+        assert!(handle(&mut app, "/alias r /run cargo run").await);
+        assert_eq!(app.aliases.get("r").unwrap(), "/run cargo run");
+    }
+
+    #[tokio::test]
+    async fn alias_without_command_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/alias justname").await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn alias_list_after_creation() {
+        let mut app = App::new();
+        app.aliases.insert("t".into(), "/run cargo test".into());
+        assert!(handle(&mut app, "/alias").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Aliases"));
+        assert!(last.1.contains("/t"));
+    }
+
+    // ── /usage and /cost ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn usage_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/usage").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Session Usage"));
+    }
+
+    #[tokio::test]
+    async fn cost_alias_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/cost").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Session Usage"));
+    }
+
+    // ── /limit ──────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn limit_bare_shows_info() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/limit").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Spending Limits"));
+    }
+
+    #[tokio::test]
+    async fn limit_on_enables() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/limit on").await);
+        assert!(app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_off_disables() {
+        let mut app = App::new();
+        app.spending_limit.enabled = true;
+        assert!(handle(&mut app, "/limit off").await);
+        assert!(!app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_set_extracts_amount() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/limit set 10").await);
+        assert!((app.spending_limit.max_cost_usd - 10.0).abs() < f64::EPSILON);
+        assert!(app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_set_invalid_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/limit set abc").await);
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Usage"));
+    }
+
+    // ── /plugin ─────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn plugin_list_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugin list").await);
+    }
+
+    #[tokio::test]
+    async fn plugin_bare_defaults_to_list() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugin").await);
+    }
+
+    #[tokio::test]
+    async fn plugin_init_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugin init").await);
+    }
+
+    #[tokio::test]
+    async fn plugin_reload_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugin reload").await);
+    }
+
+    #[tokio::test]
+    async fn plugins_plural_is_handled() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugins").await);
+    }
+
+    #[tokio::test]
+    async fn plugin_unknown_subcommand() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/plugin foobar").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    // ── Unrecognised commands ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognised_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/themes").await);
+        assert!(!handle(&mut app, "/aliasing").await);
+        assert!(!handle(&mut app, "/limiter").await);
+    }
+}
