@@ -7,6 +7,18 @@ use crate::ai::provider::{AiProvider, ChatMessage};
 use crate::app::App;
 use crate::shell;
 
+/// Build a `--author='Name <email>'` flag for git commit.
+///
+/// Returns an empty string if either name or email is empty.
+/// Both fields are required — git requires `Name <email>` format.
+fn build_git_author_flag(name: &str, email: &str) -> String {
+    if name.is_empty() || email.is_empty() {
+        return String::new();
+    }
+    let author = format!("{} <{}>", name, email);
+    format!("--author={}", shell::shell_escape(&author))
+}
+
 /// Returns `true` if the current directory is inside a git repository.
 fn is_git_repo() -> bool {
     shell::run_command("git rev-parse --git-dir")
@@ -241,7 +253,13 @@ async fn handle_commit(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvid
     };
 
     // Perform the commit
-    let cmd = format!("git commit -m {}", shell::shell_escape(&message));
+    let author_flag = build_git_author_flag(&app.git_user_name, &app.git_user_email);
+    let escaped_msg = shell::shell_escape(&message);
+    let cmd = if author_flag.is_empty() {
+        format!("git commit -m {escaped_msg}")
+    } else {
+        format!("git commit {author_flag} -m {escaped_msg}")
+    };
 
     match shell::run_command(&cmd) {
         Ok(result) => {
@@ -1002,5 +1020,34 @@ mod tests {
     fn is_git_repo_in_project() {
         // This test runs inside the nerve project, which IS a git repo.
         assert!(is_git_repo());
+    }
+
+    // ── build_git_author_flag ─────────────────────────────────────────
+
+    #[test]
+    fn git_author_flag_both_set() {
+        let flag = build_git_author_flag("Jane Doe", "jane@example.com");
+        assert_eq!(flag, "--author='Jane Doe <jane@example.com>'");
+    }
+
+    #[test]
+    fn git_author_flag_escapes_quotes() {
+        let flag = build_git_author_flag("O'Brien", "ob@test.com");
+        assert_eq!(flag, "--author='O'\\''Brien <ob@test.com>'");
+    }
+
+    #[test]
+    fn git_author_flag_empty_name() {
+        assert!(build_git_author_flag("", "jane@example.com").is_empty());
+    }
+
+    #[test]
+    fn git_author_flag_empty_email() {
+        assert!(build_git_author_flag("Jane Doe", "").is_empty());
+    }
+
+    #[test]
+    fn git_author_flag_both_empty() {
+        assert!(build_git_author_flag("", "").is_empty());
     }
 }
