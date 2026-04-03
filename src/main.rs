@@ -555,6 +555,7 @@ async fn run_tui(
     app.selected_model = config.default_model.clone();
     app.selected_provider = config.default_provider.clone();
     app.auto_agent = config.auto_agent;
+    app.command_timeout_secs = config.command_timeout_secs;
 
     // Load last used provider if not specified via CLI.
     if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {
@@ -867,7 +868,10 @@ async fn event_loop(
                                     let mut all_success = true;
 
                                     for (idx, call) in tool_calls.iter().enumerate() {
-                                        let result = crate::agent::tools::execute_tool(call);
+                                        let result = crate::agent::tools::execute_tool(
+                                            call,
+                                            config.command_timeout_secs,
+                                        );
                                         if !result.success {
                                             all_success = false;
                                         }

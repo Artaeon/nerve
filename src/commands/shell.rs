@@ -54,7 +54,7 @@ fn handle_run(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
     app.set_status(format!("Running: {cmd}"));
-    match shell::run_command(&cmd) {
+    match shell::run_command_with_timeout(&cmd, app.command_timeout_secs) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);
@@ -80,7 +80,7 @@ fn handle_pipe(app: &mut App, trimmed: &str) -> bool {
         return true;
     }
     app.set_status(format!("Running: {cmd}"));
-    match shell::run_command(&cmd) {
+    match shell::run_command_with_timeout(&cmd, app.command_timeout_secs) {
         Ok(result) => {
             let context = shell::format_command_for_context(&result);
             app.current_conversation_mut()
@@ -133,7 +133,7 @@ fn handle_diff(app: &mut App, trimmed: &str) -> bool {
 fn handle_test(app: &mut App) -> bool {
     let cmd = shell::detect_test_command();
     app.set_status(format!("Running: {cmd}"));
-    match shell::run_command(cmd) {
+    match shell::run_command_with_timeout(cmd, app.command_timeout_secs) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             let context = shell::format_command_for_context(&result);
@@ -155,7 +155,7 @@ fn handle_test(app: &mut App) -> bool {
 fn handle_build(app: &mut App) -> bool {
     let cmd = shell::detect_build_command();
     app.set_status(format!("Running: {cmd}"));
-    match shell::run_command(cmd) {
+    match shell::run_command_with_timeout(cmd, app.command_timeout_secs) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             if !result.success {
@@ -196,7 +196,7 @@ fn handle_git(app: &mut App, trimmed: &str) -> bool {
         app.set_status("Blocked: this command looks dangerous. Use your terminal directly.");
         return true;
     }
-    match shell::run_command(&cmd) {
+    match shell::run_command_with_timeout(&cmd, app.command_timeout_secs) {
         Ok(result) => {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);

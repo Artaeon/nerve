@@ -234,6 +234,10 @@ pub struct App {
     /// Checked and drained at the top of the event loop.
     pub pending_command: Option<String>,
 
+    // -- shell --
+    /// Timeout in seconds for shell commands (0 = no timeout).
+    pub command_timeout_secs: u64,
+
     // -- misc --
     pub status_message: Option<String>,
     /// Timestamp of when `status_message` was last set (for auto-clear).
@@ -351,6 +355,8 @@ impl App {
             autocomplete_visible: false,
 
             pending_command: None,
+
+            command_timeout_secs: crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS,
 
             status_message: None,
             status_time: None,
