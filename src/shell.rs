@@ -409,12 +409,15 @@ pub fn detect_build_command() -> &'static str {
     "echo 'No build command detected'"
 }
 
-/// Get the git diff.
+/// Get the git diff.  Arguments are passed through shell escaping to prevent
+/// injection via metacharacters like `$(...)`, backticks, pipes, etc.
 pub fn git_diff(args: &str) -> anyhow::Result<CommandResult> {
     let cmd = if args.is_empty() {
         "git diff".to_string()
     } else {
-        format!("git diff {args}")
+        // Escape each argument individually to prevent shell injection.
+        let safe_args: Vec<String> = args.split_whitespace().map(|a| shell_escape(a)).collect();
+        format!("git diff {}", safe_args.join(" "))
     };
     run_command(&cmd)
 }
