@@ -740,15 +740,30 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             .map(|(_, content)| content.len() / 4 + 1)
             .sum();
         let tokens_display = format_number(total_tokens);
+        let context_limit = crate::agent::context::ContextManager::effective_limit(
+            &app.selected_provider,
+            app.context_limit_override,
+        );
+        let pct = if context_limit > 0 {
+            (total_tokens as f64 / context_limit as f64 * 100.0).min(100.0) as u8
+        } else {
+            0
+        };
+        let token_color = match pct {
+            0..=49 => Color::Green,
+            50..=74 => Color::Yellow,
+            _ => Color::Red,
+        };
 
-        // Right section: conversation position.
+        // Right section: conversation position + token usage.
         let right_text = format!(
-            " ~{} tokens \u{2502} Conv {}/{} ",
+            " ~{} tokens ({}%) \u{2502} Conv {}/{} ",
             tokens_display,
+            pct,
             app.active_conversation + 1,
             app.conversations.len(),
         );
-        let right_span = Span::styled(right_text.clone(), Style::default().fg(Color::DarkGray));
+        let right_span = Span::styled(right_text.clone(), Style::default().fg(token_color));
         let right_width = display_width(&right_text) as u16;
 
         let chunks = Layout::default()
