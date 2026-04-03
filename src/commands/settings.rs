@@ -222,7 +222,7 @@ fn handle_plugin(app: &mut App, trimmed: &str) -> bool {
                     path.display()
                 ));
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         "reload" => {
             app.plugins = plugins::load_plugins();

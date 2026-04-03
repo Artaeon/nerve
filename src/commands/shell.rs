@@ -64,7 +64,7 @@ fn handle_run(app: &mut App, trimmed: &str) -> bool {
             app.add_assistant_message(output);
         }
         Err(e) => {
-            app.set_status(format!("Error: {e}"));
+            app.report_error(e);
         }
     }
     true
@@ -97,7 +97,7 @@ fn handle_pipe(app: &mut App, trimmed: &str) -> bool {
             ));
         }
         Err(e) => {
-            app.set_status(format!("Error: {e}"));
+            app.report_error(e);
         }
     }
     true
@@ -129,7 +129,7 @@ fn handle_diff(app: &mut App, trimmed: &str) -> bool {
                 ));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     true
 }
@@ -151,7 +151,7 @@ fn handle_test(app: &mut App) -> bool {
                 app.set_status("Tests passed");
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     true
 }
@@ -174,7 +174,7 @@ fn handle_build(app: &mut App) -> bool {
                 app.set_status("Build succeeded");
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     true
 }
@@ -205,7 +205,7 @@ fn handle_git(app: &mut App, trimmed: &str) -> bool {
             let output = shell::format_command_output(&result);
             app.add_assistant_message(output);
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     true
 }
@@ -238,12 +238,12 @@ fn handle_commit(app: &mut App, trimmed: &str) -> bool {
         rest.to_string()
     };
 
-    let escaped_msg = message.replace('\'', "'\\''");
+    let escaped_msg = shell::shell_escape(&message);
     let author_flag = build_git_author_flag(&app.git_user_name, &app.git_user_email);
     let cmd = if author_flag.is_empty() {
-        format!("git commit -m '{escaped_msg}'")
+        format!("git commit -m {escaped_msg}")
     } else {
-        format!("git commit {author_flag} -m '{escaped_msg}'")
+        format!("git commit {author_flag} -m {escaped_msg}")
     };
 
     match shell::run_command(&cmd) {
@@ -259,7 +259,7 @@ fn handle_commit(app: &mut App, trimmed: &str) -> bool {
                 app.set_status(format!("Commit failed: {}", result.stderr));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     app.scroll_offset = 0;
     true
@@ -273,10 +273,9 @@ pub(crate) fn build_git_author_flag(name: &str, email: &str) -> String {
     if name.is_empty() || email.is_empty() {
         return String::new();
     }
-    // Single-quote wrapping with proper escaping prevents shell injection.
-    let safe_name = name.replace('\'', "'\\''");
-    let safe_email = email.replace('\'', "'\\''");
-    format!("--author='{} <{}>'", safe_name, safe_email)
+    // Use shell_escape for the combined author string.
+    let author = format!("{} <{}>", name, email);
+    format!("--author={}", shell::shell_escape(&author))
 }
 
 #[cfg(test)]

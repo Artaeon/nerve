@@ -260,7 +260,7 @@ fn handle_session(app: &mut App, trimmed: &str) -> bool {
             let sess = session::session_from_app(app);
             match session::save_session(&sess) {
                 Ok(()) => app.set_status("Session saved"),
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         "list" => match session::list_sessions() {
@@ -281,7 +281,7 @@ fn handle_session(app: &mut App, trimmed: &str) -> bool {
                     app.add_assistant_message(msg);
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         "restore" => match session::load_last_session() {
             Ok(sess) => {
@@ -291,7 +291,7 @@ fn handle_session(app: &mut App, trimmed: &str) -> bool {
                     app.conversations.len()
                 ));
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         _ => {
             let sess_info = format!(

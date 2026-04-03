@@ -16,50 +16,40 @@ fn is_git_repo() -> bool {
 
 /// Handle git-related write commands. Returns `true` if the command was handled.
 pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
+    use shell::matches_command;
+
     // All commands in this module require a git repository.
-    let is_git_cmd = trimmed == "/commit"
-        || trimmed.starts_with("/commit ")
-        || trimmed == "/stage"
-        || trimmed.starts_with("/stage ")
-        || trimmed == "/unstage"
-        || trimmed.starts_with("/unstage ")
-        || trimmed == "/gitbranch"
-        || trimmed.starts_with("/gitbranch ")
-        || trimmed == "/stash"
-        || trimmed.starts_with("/stash ")
-        || trimmed == "/log"
-        || trimmed.starts_with("/log ")
+    let is_git_cmd = matches_command(trimmed, "/commit")
+        || matches_command(trimmed, "/stage")
+        || matches_command(trimmed, "/unstage")
+        || matches_command(trimmed, "/gitbranch")
+        || matches_command(trimmed, "/stash")
+        || matches_command(trimmed, "/log")
         || trimmed == "/gitstatus";
 
     if is_git_cmd && !is_git_repo() {
-        app.set_status("Error: not a git repository");
+        app.report_error("not a git repository");
         return true;
     }
 
-    if trimmed == "/commit" || trimmed.starts_with("/commit ") {
+    if matches_command(trimmed, "/commit") {
         return handle_commit(app, trimmed, provider).await;
     }
-
-    if trimmed == "/stage" || trimmed.starts_with("/stage ") {
+    if matches_command(trimmed, "/stage") {
         return handle_stage(app, trimmed);
     }
-
-    if trimmed == "/unstage" || trimmed.starts_with("/unstage ") {
+    if matches_command(trimmed, "/unstage") {
         return handle_unstage(app, trimmed);
     }
-
-    if trimmed == "/gitbranch" || trimmed.starts_with("/gitbranch ") {
+    if matches_command(trimmed, "/gitbranch") {
         return handle_gitbranch(app, trimmed);
     }
-
-    if trimmed == "/stash" || trimmed.starts_with("/stash ") {
+    if matches_command(trimmed, "/stash") {
         return handle_stash(app, trimmed);
     }
-
-    if trimmed == "/log" || trimmed.starts_with("/log ") {
+    if matches_command(trimmed, "/log") {
         return handle_log(app, trimmed);
     }
-
     if trimmed == "/gitstatus" {
         return handle_gitstatus(app);
     }
@@ -82,7 +72,7 @@ fn handle_gitstatus(app: &mut App) -> bool {
                 app.set_status(format!("git status failed: {}", result.stderr));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     app.scroll_offset = 0;
     true
@@ -114,7 +104,7 @@ fn handle_log(app: &mut App, trimmed: &str) -> bool {
                 app.set_status(format!("git log failed: {}", result.stderr));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     app.scroll_offset = 0;
     true
@@ -149,15 +139,12 @@ fn handle_stage(app: &mut App, trimmed: &str) -> bool {
                     app.set_status(format!("git add failed: {}", result.stderr));
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         }
     } else {
         // Stage specific files
         let files: Vec<&str> = rest.split_whitespace().collect();
-        let escaped: Vec<String> = files
-            .iter()
-            .map(|f| format!("'{}'", f.replace('\'', "'\\''")))
-            .collect();
+        let escaped: Vec<String> = files.iter().map(|f| shell::shell_escape(f)).collect();
         let cmd = format!("git add {}", escaped.join(" "));
 
         match shell::run_command(&cmd) {
@@ -172,7 +159,7 @@ fn handle_stage(app: &mut App, trimmed: &str) -> bool {
                     app.set_status(format!("git add failed: {}", result.stderr));
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         }
     }
     app.scroll_offset = 0;
@@ -188,10 +175,7 @@ fn handle_unstage(app: &mut App, trimmed: &str) -> bool {
         "git reset HEAD".to_string()
     } else {
         let files: Vec<&str> = rest.split_whitespace().collect();
-        let escaped: Vec<String> = files
-            .iter()
-            .map(|f| format!("'{}'", f.replace('\'', "'\\''")))
-            .collect();
+        let escaped: Vec<String> = files.iter().map(|f| shell::shell_escape(f)).collect();
         format!("git reset HEAD {}", escaped.join(" "))
     };
 
@@ -210,7 +194,7 @@ fn handle_unstage(app: &mut App, trimmed: &str) -> bool {
                 app.set_status(format!("git reset failed: {}", result.stderr));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     app.scroll_offset = 0;
     true
@@ -257,8 +241,7 @@ async fn handle_commit(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvid
     };
 
     // Perform the commit
-    let escaped_msg = message.replace('\'', "'\\''");
-    let cmd = format!("git commit -m '{escaped_msg}'");
+    let cmd = format!("git commit -m {}", shell::shell_escape(&message));
 
     match shell::run_command(&cmd) {
         Ok(result) => {
@@ -273,7 +256,7 @@ async fn handle_commit(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvid
                 app.set_status(format!("Commit failed: {}", result.stderr));
             }
         }
-        Err(e) => app.set_status(format!("Error: {e}")),
+        Err(e) => app.report_error(e),
     }
     app.scroll_offset = 0;
     true
@@ -350,7 +333,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                     app.set_status(format!("git branch failed: {}", result.stderr));
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         }
         app.scroll_offset = 0;
         return true;
@@ -363,7 +346,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
             let name = args[1];
-            let cmd = format!("git switch '{}'", name.replace('\'', "'\\''"));
+            let cmd = format!("git switch {}", shell::shell_escape(name));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -372,7 +355,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Switch failed: {}", result.stderr.trim()));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         "delete" | "rm" | "del" => {
@@ -381,7 +364,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                 return true;
             }
             let name = args[1];
-            let cmd = format!("git branch -d '{}'", name.replace('\'', "'\\''"));
+            let cmd = format!("git branch -d {}", shell::shell_escape(name));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -399,7 +382,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                         }
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         _ => {
@@ -409,7 +392,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                 app.set_status(format!("Invalid branch name: {name}"));
                 return true;
             }
-            let cmd = format!("git switch -c '{}'", name.replace('\'', "'\\''"));
+            let cmd = format!("git switch -c {}", shell::shell_escape(name));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -418,7 +401,7 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Branch creation failed: {}", result.stderr.trim()));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
     }
@@ -468,7 +451,7 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                     app.set_status(format!("Stash pop failed: {}", result.stderr));
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         "list" => match shell::run_command("git stash list") {
             Ok(result) => {
@@ -486,11 +469,11 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                     app.set_status(format!("git stash list failed: {}", result.stderr));
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         "drop" => {
             let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
-            let cmd = format!("git stash drop '{}'", stash_ref.replace('\'', "'\\''"));
+            let cmd = format!("git stash drop {}", shell::shell_escape(stash_ref));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -499,12 +482,12 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Stash drop failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         "show" => {
             let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
-            let cmd = format!("git stash show -p '{}'", stash_ref.replace('\'', "'\\''"));
+            let cmd = format!("git stash show -p {}", shell::shell_escape(stash_ref));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -516,12 +499,12 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Stash show failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         "apply" => {
             let stash_ref = args.get(1).copied().unwrap_or("stash@{0}");
-            let cmd = format!("git stash apply '{}'", stash_ref.replace('\'', "'\\''"));
+            let cmd = format!("git stash apply {}", shell::shell_escape(stash_ref));
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -530,7 +513,7 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Stash apply failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         "" => {
@@ -547,14 +530,16 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Stash failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         _ => {
             // Treat everything else as a stash message
             let message = rest;
-            let escaped = message.replace('\'', "'\\''");
-            let cmd = format!("git stash push --include-untracked -m '{escaped}'");
+            let cmd = format!(
+                "git stash push --include-untracked -m {}",
+                shell::shell_escape(message)
+            );
             match shell::run_command(&cmd) {
                 Ok(result) => {
                     if result.success {
@@ -567,7 +552,7 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Stash failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
     }

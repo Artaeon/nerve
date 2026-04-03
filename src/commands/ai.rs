@@ -232,7 +232,7 @@ fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
                         let stderr = String::from_utf8_lossy(&output.stderr);
                         app.set_status(format!("Failed: {stderr}"));
                     }
-                    Err(e) => app.set_status(format!("Error: {e}")),
+                    Err(e) => app.report_error(e),
                 }
             } else {
                 app.set_status("Usage: /ollama remove <model_name>".to_string());
@@ -375,7 +375,7 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                     app.add_assistant_message(diff);
                 }
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         },
         _ if rest.starts_with("commit") => {
             let commit_rest = rest.strip_prefix("commit").unwrap_or("").trim();
@@ -397,7 +397,7 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                         app.set_status(format!("Commit failed: {}", result.stderr));
                     }
                 }
-                Err(e) => app.set_status(format!("Error: {e}")),
+                Err(e) => app.report_error(e),
             }
         }
         _ => {
@@ -444,7 +444,7 @@ fn handle_cd(app: &mut App, trimmed: &str) -> bool {
                 }
                 app.cached_workspace = ws;
             }
-            Err(e) => app.set_status(format!("Error: {e}")),
+            Err(e) => app.report_error(e),
         }
     }
     app.scroll_offset = 0;

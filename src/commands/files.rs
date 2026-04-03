@@ -75,7 +75,7 @@ fn handle_file(app: &mut App, trimmed: &str) -> bool {
             app.set_status(format!("Added {} ({} lines)", fc.path, fc.line_count));
         }
         Err(e) => {
-            app.set_status(format!("Error: {e}"));
+            app.report_error(e);
         }
     }
     app.scroll_offset = 0;
@@ -165,7 +165,7 @@ fn handle_template(app: &mut App, trimmed: &str) -> bool {
                     ));
                 }
                 Err(e) => {
-                    app.set_status(format!("Error: {e}"));
+                    app.report_error(e);
                 }
             }
         }

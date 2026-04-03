@@ -8,6 +8,22 @@ const MAX_OUTPUT_LINES: usize = 5000;
 /// Default timeout for shell commands in seconds.
 pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 30;
 
+/// Wrap a value in single quotes with proper escaping for safe shell usage.
+///
+/// This is the standard POSIX approach: replace `'` with `'\''` and wrap
+/// the whole string in single quotes.
+pub fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Check if user input matches a slash command (exact or with arguments).
+///
+/// Returns `true` for `/cmd` (exact) or `/cmd args...` (with space separator).
+/// Returns `false` for `/cmdx` (different command that shares a prefix).
+pub fn matches_command(input: &str, cmd: &str) -> bool {
+    input == cmd || input.starts_with(&format!("{} ", cmd))
+}
+
 #[derive(Debug, Clone)]
 pub struct CommandResult {
     pub command: String,
@@ -403,21 +419,56 @@ pub fn git_diff(args: &str) -> anyhow::Result<CommandResult> {
     run_command(&cmd)
 }
 
-/// Get git status.
-#[allow(dead_code)]
-pub fn git_status() -> anyhow::Result<CommandResult> {
-    run_command("git status --short")
-}
-
-/// Get git log.
-#[allow(dead_code)]
-pub fn git_log(count: usize) -> anyhow::Result<CommandResult> {
-    run_command(&format!("git log --oneline -{count}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── shell_escape ───────────────────────────────────────────────────
+
+    #[test]
+    fn shell_escape_plain() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+    }
+
+    #[test]
+    fn shell_escape_with_quotes() {
+        assert_eq!(shell_escape("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn shell_escape_empty() {
+        assert_eq!(shell_escape(""), "''");
+    }
+
+    #[test]
+    fn shell_escape_spaces() {
+        assert_eq!(shell_escape("hello world"), "'hello world'");
+    }
+
+    // ── matches_command ────────────────────────────────────────────────
+
+    #[test]
+    fn matches_command_exact() {
+        assert!(matches_command("/commit", "/commit"));
+    }
+
+    #[test]
+    fn matches_command_with_args() {
+        assert!(matches_command("/commit fix bug", "/commit"));
+    }
+
+    #[test]
+    fn matches_command_prefix_no_space() {
+        // "/committed" should NOT match "/commit"
+        assert!(!matches_command("/committed", "/commit"));
+    }
+
+    #[test]
+    fn matches_command_different() {
+        assert!(!matches_command("/stage", "/commit"));
+    }
+
+    // ── run_command ────────────────────────────────────────────────────
 
     #[test]
     fn run_echo() {

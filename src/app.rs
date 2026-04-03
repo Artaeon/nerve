@@ -416,6 +416,11 @@ impl App {
         self.status_time = Some(std::time::Instant::now());
     }
 
+    /// Set an error status message (`"Error: {e}"`).
+    pub fn report_error(&mut self, e: impl std::fmt::Display) {
+        self.set_status(format!("Error: {e}"));
+    }
+
     // ── Messages ────────────────────────────────────────────────────────
 
     /// Append a user message to the active conversation.
