@@ -17,34 +17,71 @@ fn is_private_url(url: &str) -> bool {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return true;
     }
-    let lower = url.to_lowercase();
-    // Block common private/internal hostnames and IP ranges.
-    let blocked = [
-        "://localhost",
-        "://127.",
-        "://0.0.0.0",
-        "://10.",
-        "://192.168.",
-        "://172.16.",
-        "://172.17.",
-        "://172.18.",
-        "://172.19.",
-        "://172.20.",
-        "://172.21.",
-        "://172.22.",
-        "://172.23.",
-        "://172.24.",
-        "://172.25.",
-        "://172.26.",
-        "://172.27.",
-        "://172.28.",
-        "://172.29.",
-        "://172.30.",
-        "://172.31.",
-        "://[::1]",
-        "://169.254.",
-    ];
-    blocked.iter().any(|b| lower.contains(b))
+
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return true, // invalid URL — block it
+    };
+
+    let host_str = match parsed.host_str() {
+        Some(h) => h.to_lowercase(),
+        None => return true,
+    };
+
+    // Check domain-based names.
+    if host_str == "localhost"
+        || host_str.ends_with(".local")
+        || host_str.ends_with(".internal")
+        || host_str.ends_with(".localhost")
+    {
+        return true;
+    }
+
+    // Try parsing as IPv4 — handles dotted, integer, hex, and octal formats.
+    if let Ok(ip) = host_str.parse::<std::net::Ipv4Addr>() {
+        return is_private_ipv4(ip);
+    }
+
+    // Try parsing as IPv6 (strip brackets if present).
+    let bare = host_str.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<std::net::Ipv6Addr>() {
+        return is_private_ipv6(ip);
+    }
+
+    false
+}
+
+fn is_private_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_unspecified()
+        || ip.is_link_local()
+        // 100.64.0.0/10 — shared address space (CGN)
+        || (ip.octets()[0] == 100 && (ip.octets()[1] & 0xC0) == 64)
+        // 169.254.0.0/16 — link-local
+        || ip.octets()[0] == 169 && ip.octets()[1] == 254
+}
+
+fn is_private_ipv6(ip: std::net::Ipv6Addr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() {
+        return true;
+    }
+    let segs = ip.segments();
+    // fe80::/10 — link-local
+    if segs[0] & 0xffc0 == 0xfe80 {
+        return true;
+    }
+    // ::ffff:x.x.x.x — IPv4-mapped
+    if segs[..5] == [0, 0, 0, 0, 0] && segs[5] == 0xffff {
+        let mapped = std::net::Ipv4Addr::new(
+            (segs[6] >> 8) as u8,
+            segs[6] as u8,
+            (segs[7] >> 8) as u8,
+            segs[7] as u8,
+        );
+        return is_private_ipv4(mapped);
+    }
+    false
 }
 
 /// Fetch a URL and extract readable text content from the HTML.
