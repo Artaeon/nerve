@@ -53,6 +53,45 @@ pub enum NerveMode {
     Learning,
 }
 
+impl NerveMode {
+    /// Return a mode-specific system prompt that shapes the AI's behaviour.
+    /// Returns `None` for Standard mode (no extra instructions).
+    pub fn system_prompt(&self) -> Option<&'static str> {
+        match self {
+            Self::Standard => None,
+            Self::Efficient => Some(
+                "You are in Efficient mode. Be extremely concise. \
+                 Use short sentences. Omit pleasantries. Skip explanations \
+                 unless asked. Prefer code over prose. Use bullet points. \
+                 Never repeat the question back."
+            ),
+            Self::Thorough => Some(
+                "You are in Thorough mode. Provide detailed, comprehensive responses. \
+                 Explain your reasoning step by step. Consider edge cases. \
+                 Show alternative approaches when relevant. Include examples. \
+                 Cite file paths and line numbers when discussing code."
+            ),
+            Self::Agent => Some(
+                "You are in Agent mode with tool access. Follow this workflow: \
+                 1) UNDERSTAND the request fully before acting. \
+                 2) PLAN your approach — list the steps. \
+                 3) IMPLEMENT using the available tools (read, write, edit, run). \
+                 4) VERIFY your changes compile and work. \
+                 5) REPORT what you did and any issues found. \
+                 Always read files before modifying them. Run tests after changes."
+            ),
+            Self::Learning => Some(
+                "You are in Learning mode. The user wants to understand, not just get answers. \
+                 Explain concepts using analogies to things they already know. \
+                 Ask Socratic questions to check understanding. \
+                 Break complex topics into digestible pieces. \
+                 Provide small exercises or challenges when appropriate. \
+                 Use progressive disclosure — start simple, add detail on follow-up."
+            ),
+        }
+    }
+}
+
 // ─── Conversation ────────────────────────────────────────────────────────────
 
 /// A single chat conversation.

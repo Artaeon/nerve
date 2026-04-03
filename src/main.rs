@@ -2949,6 +2949,12 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
         }
     }
 
+    // Inject mode-specific system prompt at position 0 so it shapes the
+    // entire conversation.
+    if let Some(mode_prompt) = app.active_mode.system_prompt() {
+        messages.insert(0, ChatMessage::system(mode_prompt.to_string()));
+    }
+
     // Update total_tokens_used tracker
     app.total_tokens_used = crate::agent::context::ContextManager::conversation_tokens(
         &app.current_conversation().messages,
