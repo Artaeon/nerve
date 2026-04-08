@@ -15,18 +15,16 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Get version
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       - name: Generate changelog
         id: changelog
         run: |
-          # Get commits since last tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -z "$PREV_TAG" ]; then
             CHANGES=$(git log --pretty=format:"- %s" HEAD)
@@ -37,7 +35,6 @@ jobs:
           echo "$CHANGES" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
@@ -50,11 +47,22 @@ jobs:
 
             ### Installation
 
-            Download the binary for your platform below, or build from source:
+            Download the binary for your platform below, extract, and place in your PATH.
+
+            | Platform | Archive |
+            |----------|---------|
+            | Linux x86_64 | `nerve-linux-x86_64.tar.gz` |
+            | macOS Apple Silicon | `nerve-macos-arm64.tar.gz` |
+            | macOS Intel | `nerve-macos-x86_64.tar.gz` |
+            | Windows x86_64 | `nerve-windows-x86_64.zip` |
+
+            Or build from source:
             ```bash
             git clone https://github.com/Artaeon/nerve.git
             cd nerve && cargo build --release
             ```
+
+            SHA256 checksums are included for each binary.
           draft: false
           prerelease: false
 
@@ -68,15 +76,19 @@ jobs:
           - os: ubuntu-latest
             artifact: nerve-linux-x86_64
             binary: nerve
+            archive_ext: tar.gz
           - os: macos-latest
             artifact: nerve-macos-arm64
             binary: nerve
+            archive_ext: tar.gz
           - os: macos-13
             artifact: nerve-macos-x86_64
             binary: nerve
+            archive_ext: tar.gz
           - os: windows-latest
             artifact: nerve-windows-x86_64
             binary: nerve.exe
+            archive_ext: zip
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -84,28 +96,24 @@ jobs:
         with:
           key: release-${{ matrix.os }}
       - run: cargo build --release
-      - name: Package
+      - name: Package (Unix)
+        if: matrix.archive_ext == 'tar.gz'
         run: |
           cd target/release
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a ../../../${{ matrix.artifact }}.zip ${{ matrix.binary }}
-          else
-            tar czf ../../../${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
-          fi
+          tar czf ../../${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
+      - name: Package (Windows)
+        if: matrix.archive_ext == 'zip'
+        run: |
+          cd target/release
+          7z a ../../${{ matrix.artifact }}.zip ${{ matrix.binary }}
         shell: bash
       - name: Generate checksum
-        run: |
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            sha256sum ${{ matrix.artifact }}.zip > ${{ matrix.artifact }}.sha256
-          else
-            sha256sum ${{ matrix.artifact }}.tar.gz > ${{ matrix.artifact }}.sha256
-          fi
+        run: sha256sum ${{ matrix.artifact }}.${{ matrix.archive_ext }} > ${{ matrix.artifact }}.${{ matrix.archive_ext }}.sha256
         shell: bash
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            ${{ matrix.artifact }}.tar.gz
-            ${{ matrix.artifact }}.zip
-            ${{ matrix.artifact }}.sha256
+            ${{ matrix.artifact }}.${{ matrix.archive_ext }}
+            ${{ matrix.artifact }}.${{ matrix.archive_ext }}.sha256
