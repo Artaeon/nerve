@@ -167,6 +167,11 @@ pub fn restore_session_to_app(session: &Session, app: &mut crate::app::App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Tests that read/write `last_session.json` must hold this lock to avoid
+    /// racing each other (Rust runs tests in parallel by default).
+    static FS_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn session_serialization_roundtrip() {
@@ -196,8 +201,7 @@ mod tests {
 
     #[test]
     fn save_and_load_session() {
-        // This test writes to last_session.json — use a unique session
-        // and verify by the named copy to avoid races with other tests.
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![SessionConversation {
@@ -330,6 +334,7 @@ mod tests {
 
     #[test]
     fn session_save_load_preserves_messages() {
+        let _lock = FS_LOCK.lock().unwrap();
         let mut app = crate::app::App::new();
         app.add_user_message("test message 123".into());
         app.add_assistant_message("response 456".into());
@@ -366,7 +371,7 @@ mod tests {
 
     #[test]
     fn save_session_creates_both_files() {
-        // save_session writes last_session.json AND a named copy
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![],
@@ -398,6 +403,7 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_all_fields() {
+        let _lock = FS_LOCK.lock().unwrap();
         let now = chrono::Utc::now();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
@@ -450,7 +456,7 @@ mod tests {
 
     #[test]
     fn load_corrupted_json_returns_err() {
-        // Write garbage to last_session.json, then try to load
+        let _lock = FS_LOCK.lock().unwrap();
         let dir = sessions_dir();
         std::fs::create_dir_all(&dir).unwrap();
         let path = last_session_path();
@@ -472,7 +478,7 @@ mod tests {
 
     #[test]
     fn load_missing_file_returns_err() {
-        // Temporarily rename last_session.json if it exists
+        let _lock = FS_LOCK.lock().unwrap();
         let path = last_session_path();
         let backup = path.with_extension("json.bak_test");
         let had_file = path.exists();
@@ -491,6 +497,7 @@ mod tests {
 
     #[test]
     fn load_partial_json_returns_err() {
+        let _lock = FS_LOCK.lock().unwrap();
         let dir = sessions_dir();
         std::fs::create_dir_all(&dir).unwrap();
         let path = last_session_path();
@@ -514,6 +521,7 @@ mod tests {
 
     #[test]
     fn session_with_unicode_content() {
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![SessionConversation {
@@ -659,6 +667,7 @@ mod tests {
 
     #[test]
     fn delete_session_removes_named_copy() {
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![],
@@ -720,7 +729,7 @@ mod tests {
 
     #[test]
     fn list_sessions_skips_last_session_file() {
-        // Save a session (creates both last_session.json and named copy)
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![],
@@ -752,6 +761,7 @@ mod tests {
 
     #[test]
     fn session_with_empty_messages() {
+        let _lock = FS_LOCK.lock().unwrap();
         let session = Session {
             id: uuid::Uuid::new_v4().to_string(),
             conversations: vec![SessionConversation {
