@@ -982,8 +982,10 @@ default_model = "sonnet"
 
     #[test]
     fn config_timeout_roundtrip() {
-        let mut cfg = Config::default();
-        cfg.command_timeout_secs = 60;
+        let cfg = Config {
+            command_timeout_secs: 60,
+            ..Config::default()
+        };
         let toml_str = toml::to_string(&cfg).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.command_timeout_secs, 60);
@@ -1136,9 +1138,11 @@ default_provider = "claude_code"
 
     #[test]
     fn config_roundtrip_with_git_fields() {
-        let mut cfg = Config::default();
-        cfg.git_user_name = Some("Test User".into());
-        cfg.git_user_email = Some("test@example.com".into());
+        let cfg = Config {
+            git_user_name: Some("Test User".into()),
+            git_user_email: Some("test@example.com".into()),
+            ..Config::default()
+        };
 
         let toml_str = toml::to_string(&cfg).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
@@ -1168,8 +1172,10 @@ default_provider = "claude_code"
 
     #[test]
     fn config_roundtrip_temperature() {
-        let mut cfg = Config::default();
-        cfg.temperature = Some(0.7);
+        let cfg = Config {
+            temperature: Some(0.7),
+            ..Config::default()
+        };
         let toml_str = toml::to_string(&cfg).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.temperature, Some(0.7));
@@ -1177,8 +1183,10 @@ default_provider = "claude_code"
 
     #[test]
     fn config_roundtrip_top_p() {
-        let mut cfg = Config::default();
-        cfg.top_p = Some(0.9);
+        let cfg = Config {
+            top_p: Some(0.9),
+            ..Config::default()
+        };
         let toml_str = toml::to_string(&cfg).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.top_p, Some(0.9));
@@ -1186,8 +1194,10 @@ default_provider = "claude_code"
 
     #[test]
     fn config_roundtrip_context_limit() {
-        let mut cfg = Config::default();
-        cfg.context_limit = Some(128_000);
+        let cfg = Config {
+            context_limit: Some(128_000),
+            ..Config::default()
+        };
         let toml_str = toml::to_string(&cfg).unwrap();
         let restored: Config = toml::from_str(&toml_str).unwrap();
         assert_eq!(restored.context_limit, Some(128_000));
