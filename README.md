@@ -2,12 +2,12 @@
 
 # Nerve
 
-**Open-source AI coding assistant for the terminal.**
+### The AI coding assistant that lives in your terminal.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-2563EB.svg)](LICENSE)
-[![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-F74C00.svg)](https://www.rust-lang.org/)
 [![CI](https://github.com/Artaeon/nerve/actions/workflows/ci.yml/badge.svg)](https://github.com/Artaeon/nerve/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/Version-0.1.0-7C3AED.svg)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2563EB.svg)](LICENSE)
+[![Built with Rust](https://img.shields.io/badge/Rust-F74C00.svg?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Release](https://img.shields.io/github/v/release/Artaeon/nerve?color=7C3AED&label=Download)](https://github.com/Artaeon/nerve/releases/latest)
 
 ```
     _   __
@@ -17,13 +17,202 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-Chat. Code. Ship. All from your terminal.
+**37K lines of Rust | 1,361 tests | 166 prompts | 10 agent tools | 6 providers | 7.7 MB binary**
 
-37K lines of Rust. 1,345 tests. 166 prompts. 9 agent tools. 6 providers. 7.7MB binary.
+[Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 
 </div>
 
-> **[Read the Manifesto](MANIFESTO.md)** -- Why we built Nerve and what makes it different.
+---
+
+Nerve is a fast, open-source AI coding assistant built entirely in Rust. It runs in your terminal, connects to 6 AI providers, ships 166 expert prompts, and includes a full coding agent with 10 tools -- all in a single 7.7 MB binary with zero runtime dependencies.
+
+It is designed for developers who think in keystrokes, not clicks.
+
+---
+
+## Install
+
+### Pre-built binaries (recommended)
+
+Download from [GitHub Releases](https://github.com/Artaeon/nerve/releases/latest):
+
+```bash
+# Linux
+curl -LO https://github.com/Artaeon/nerve/releases/latest/download/nerve-linux-x86_64.tar.gz
+tar xzf nerve-linux-x86_64.tar.gz && mv nerve ~/.local/bin/
+
+# macOS (Apple Silicon)
+curl -LO https://github.com/Artaeon/nerve/releases/latest/download/nerve-macos-arm64.tar.gz
+tar xzf nerve-macos-arm64.tar.gz && mv nerve /usr/local/bin/
+
+# macOS (Intel)
+curl -LO https://github.com/Artaeon/nerve/releases/latest/download/nerve-macos-x86_64.tar.gz
+tar xzf nerve-macos-x86_64.tar.gz && mv nerve /usr/local/bin/
+```
+
+Windows: download `nerve-windows-x86_64.zip` from the [releases page](https://github.com/Artaeon/nerve/releases/latest).
+
+Every release includes SHA256 checksums.
+
+### From source
+
+```bash
+git clone https://github.com/Artaeon/nerve.git
+cd nerve
+cargo build --release
+cp target/release/nerve ~/.local/bin/
+```
+
+Requires Rust 1.85+ (edition 2024). Install with [rustup](https://rustup.rs/).
+
+---
+
+## Quick Start
+
+```bash
+nerve                                        # Launch (defaults to Claude Code)
+nerve --provider ollama --model llama3       # Use a local model
+nerve -n "explain TCP vs UDP"                # One-shot (prints and exits)
+cat src/main.rs | nerve --stdin -n "review"  # Pipe files in
+git diff | nerve --stdin -n "commit message" # Generate commit messages
+nerve --continue                             # Resume last session
+```
+
+---
+
+## Features
+
+### 6 AI Providers
+
+Switch instantly with `Ctrl+T`:
+
+| Provider | Setup | Cost |
+|----------|-------|------|
+| **Claude Code** | [Install CLI](https://claude.ai/code) | Subscription |
+| **Ollama** | `ollama pull llama3` | Free (local) |
+| **OpenAI** | `OPENAI_API_KEY=sk-...` | Per token |
+| **OpenRouter** | `OPENROUTER_API_KEY=sk-or-...` | Per token |
+| **GitHub Copilot** | [gh CLI](https://cli.github.com/) + Copilot | Subscription |
+| **Custom** | Any OpenAI-compatible endpoint | Varies |
+
+### Agent Mode
+
+Type `/agent on` and let Nerve work autonomously. The agent has 10 tools:
+
+| Tool | What it does |
+|------|-------------|
+| `read_file` | Read any file into context |
+| `write_file` | Create new files |
+| `edit_file` | Surgical edits to existing files |
+| `read_lines` | Read specific line ranges |
+| `run_command` | Execute shell commands |
+| `list_files` | Browse directory contents |
+| `search_code` | Ripgrep-powered code search |
+| `find_files` | Glob pattern file search |
+| `create_dir` | Create directories |
+| `web_search` | Search the web via DuckDuckGo |
+
+Every agent action is tracked. Roll back with `/agent undo`. Inspect changes with `/agent diff`.
+
+```
+/agent on
+/file src/auth.rs
+> "The login endpoint returns 500 for invalid credentials. Fix it and add tests."
+```
+
+The agent reads the code, writes a fix, runs the tests, and reports back.
+
+### 166 Smart Prompts
+
+Press `Ctrl+K` to open the prompt library. 28 categories of expert-level prompts:
+
+Engineering, Rust, Python, TypeScript, Go, Testing, Security, API Design, Database, Cloud, DevOps, UI/UX, Business, and more.
+
+Each prompt is 5-15 lines of carefully crafted instructions -- not vague suggestions, but real engineering guidance.
+
+### Developer Workflow
+
+```bash
+/file src/main.rs              # Add file as context
+/file src/main.rs:10-50        # Specific line range
+/test                          # Auto-detect and run tests
+/build                         # Auto-detect and build
+/lint                          # Run linter (clippy/eslint/ruff)
+/format                        # Run formatter
+/search "fn main"              # Ripgrep search
+/diff                          # Git diff as context
+/commit                        # AI-generated commit message
+/map                           # Project structure overview
+/web <query>                   # Search the web
+```
+
+### Keyboard-Driven
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+K` | Prompt library |
+| `Ctrl+T` | Switch provider |
+| `Ctrl+M` | Switch model |
+| `Ctrl+N` | New conversation |
+| `Ctrl+O` | History browser |
+| `Ctrl+F` | Search in conversation |
+| `Ctrl+B` | Clipboard manager |
+| `Ctrl+,` | Settings overlay |
+| `Ctrl+R` | Regenerate response |
+| `Ctrl+E` | Edit last message |
+| `Esc` | Stop streaming |
+| `i / Esc` | Insert / normal mode |
+| `j / k` | Scroll (normal mode) |
+| `G / g` | Bottom / top |
+
+Full vim-style navigation in normal mode.
+
+### Sessions & Branching
+
+- **Auto-save** -- every conversation is persisted automatically
+- **Resume** -- `nerve --continue` picks up where you left off
+- **Branch** -- `/branch save` and `/branch restore` for conversation branching
+- **History** -- `Ctrl+O` to browse, search, and sort past sessions
+- **Export** -- `/export` to save as markdown
+
+### 10 Color Themes
+
+`/theme list` to preview. Includes: Catppuccin Mocha, Tokyo Night, Gruvbox Dark, Nord, Solarized Dark, Dracula, One Dark, Rose Pine, High Contrast, Monochrome.
+
+### Token Tracking
+
+- Real-time cost estimates in the status bar
+- `/usage` for detailed token breakdown
+- `/limit set 5.00` to cap spending
+- Auto-compacting context to stay within provider limits
+
+---
+
+## Configuration
+
+Generated at `~/.config/nerve/config.toml` on first run:
+
+```toml
+default_model = "sonnet"
+default_provider = "claude_code"
+auto_agent = true
+
+# temperature = 0.7
+# top_p = 0.9
+# context_limit = 64000
+
+[providers.claude_code]
+enabled = true
+
+[providers.ollama]
+base_url = "http://localhost:11434/v1"
+enabled = true
+
+[providers.openai]
+api_key = ""   # or OPENAI_API_KEY env var
+enabled = false
+```
 
 ---
 
@@ -31,214 +220,35 @@ Chat. Code. Ship. All from your terminal.
 
 | | Nerve | Claude Code | Cursor | Aider |
 |---|---|---|---|---|
-| **Open source** | MIT | No | No | Apache-2.0 |
-| **Terminal-native** | Yes | Yes | No (Electron) | Yes |
-| **Multi-provider** | 6 providers | Claude only | Limited | Multi |
-| **Local/offline** | Ollama | No | No | Ollama |
-| **Agent mode** | 9 tools | Yes | Yes | Yes |
-| **Smart prompts** | 166 built-in | No | No | No |
-| **Cost** | Free + API keys | $20/mo | $20/mo | Free + API |
-| **Binary size** | 7.7 MB | ~150 MB | ~500 MB | Python |
-| **Vim keybindings** | Native | No | Plugin | No |
+| Open source | MIT | No | No | Apache-2.0 |
+| Terminal-native | Yes | Yes | No | Yes |
+| Multi-provider | 6 | 1 | Limited | Multi |
+| Local/offline | Ollama | No | No | Ollama |
+| Agent tools | 10 | Yes | Yes | Yes |
+| Built-in prompts | 166 | No | No | No |
+| Cost | Free + API | $20/mo | $20/mo | Free + API |
+| Binary size | 7.7 MB | ~150 MB | ~500 MB | Python |
+| Vim keybindings | Native | No | Plugin | No |
 
 ---
 
-## Installation
+## Project Quality
 
-### Download (pre-built)
-
-Grab the latest binary from [GitHub Releases](https://github.com/Artaeon/nerve/releases/latest):
-
-| Platform | Download |
-|----------|----------|
-| Linux x86_64 | `nerve-linux-x86_64.tar.gz` |
-| macOS Apple Silicon | `nerve-macos-arm64.tar.gz` |
-| macOS Intel | `nerve-macos-x86_64.tar.gz` |
-| Windows x86_64 | `nerve-windows-x86_64.zip` |
-
-```bash
-# Example: Linux
-curl -LO https://github.com/Artaeon/nerve/releases/latest/download/nerve-linux-x86_64.tar.gz
-tar xzf nerve-linux-x86_64.tar.gz
-mv nerve ~/.local/bin/
-```
-
-Each release includes SHA256 checksums for verification.
-
-### Quick Install (from source)
-
-```bash
-# 1. Clone
-git clone https://github.com/Artaeon/nerve.git
-cd nerve
-
-# 2. Build
-cargo build --release
-
-# 3. Install to your PATH
-cp target/release/nerve ~/.local/bin/
-
-# 4. Verify
-nerve --help
-```
-
-Make sure `~/.local/bin` is in your PATH. If not, add to your shell rc:
-
-```bash
-# Add to ~/.bashrc or ~/.zshrc
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-### Alternative: Symlink (easier updates)
-
-```bash
-ln -sf "$(pwd)/target/release/nerve" ~/.local/bin/nerve
-# To update later: git pull && cargo build --release
-```
-
-### Requirements
-
-- **Rust 1.85+** (edition 2024) -- install with [rustup](https://rustup.rs/)
-- **One AI provider** (at least one):
-
-| Provider | Setup | Cost |
-|----------|-------|------|
-| **Claude Code** | Install [Claude Code CLI](https://claude.ai/code) | Subscription |
-| **Ollama** | `curl -fsSL https://ollama.ai/install.sh \| sh && ollama pull llama3` | Free (local) |
-| **OpenAI** | `export OPENAI_API_KEY="sk-..."` | Pay per token |
-| **OpenRouter** | `export OPENROUTER_API_KEY="sk-or-..."` | Pay per token |
-| **GitHub Copilot** | Install [gh CLI](https://cli.github.com/) + Copilot extension | Subscription |
-
----
-
-## Quick Start
-
-```bash
-# Launch the TUI (defaults to Claude Code)
-nerve
-
-# Use a different provider
-nerve --provider ollama --model llama3
-
-# One-shot question (prints answer and exits)
-nerve -n "explain the difference between TCP and UDP"
-
-# Pipe files for review
-cat src/main.rs | nerve --stdin -n "review this code for bugs"
-
-# Pipe git diff for commit messages
-git diff | nerve --stdin -n "write a commit message"
-
-# Resume your last session
-nerve --continue
-```
-
-Once inside the TUI:
-
-| Action | How |
-|--------|-----|
-| Send a message | Type + Enter |
-| Open prompt library | Ctrl+K |
-| Switch provider | Ctrl+T |
-| Switch model | Ctrl+M |
-| Enable coding agent | `/agent on` |
-| Read a file into context | `/file src/main.rs` |
-| Run tests | `/test` |
-| See all commands | `/help` |
-
----
-
-## Features
-
-### AI Providers (6)
-
-Switch instantly with **Ctrl+T** or `/provider <name>`:
-
-- **Claude Code** -- uses your subscription, no API key needed
-- **OpenAI** -- GPT-4o and GPT-4o-mini
-- **OpenRouter** -- 100+ models through one API
-- **Ollama** -- local models, free, works offline
-- **GitHub Copilot** -- via gh CLI
-- **Custom** -- any OpenAI-compatible endpoint
-
-### Coding Agent (`/agent on`)
-
-The AI gets 9 tools and works autonomously:
-
-```
-/agent on
-/file src/auth.rs
-"The login endpoint returns 500 for invalid credentials. Fix it and add tests."
-```
-
-The agent reads files, edits code, runs commands, and verifies -- with a git safety net (`/agent undo` to rollback).
-
-### Smart Prompts (166 across 28 categories)
-
-Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeScript, Go, UI/UX, Testing, Security, API, Database, Cloud, DevOps, Business, and more. Each prompt is 5-15 lines of expert instructions.
-
-### Developer Workflow
-
-```bash
-/file src/main.rs              # Add file as context
-/file src/main.rs:10-50        # Specific lines
-/test                          # Auto-detect and run tests
-/build                         # Auto-detect and build
-/lint                          # Auto-detect and run linter
-/format                        # Auto-detect and run formatter
-/search "fn main"              # Search codebase with ripgrep
-/diff                          # Git diff as context
-/commit                        # AI-generated commit message
-/run cargo clippy              # Run any command
-/map                           # Show project structure
-```
-
-### Productivity
-
-- **Persistent sessions** -- auto-saves, resume with `nerve -c`
-- **Conversation branching** -- `/branch save`, `/branch restore`
-- **History browser** (Ctrl+O) -- search, sort, preview
-- **Clipboard manager** (Ctrl+B) -- fuzzy search
-- **In-chat search** (Ctrl+F)
-- **Input history** -- Up/Down arrows cycle previous inputs
-- **10 color themes** -- `/theme list`
-- **Plugin system** -- scripts in `~/.config/nerve/plugins/`
-- **Settings overlay** -- Ctrl+, for visual configuration
-
-### Token Efficiency
-
-- Provider-aware context limits (auto-compacts to save tokens)
-- Usage tracking (`/usage`) and spending limits (`/limit set 5.00`)
-- Cost estimates in the status bar for paid providers
-
----
-
-## Keybindings
-
-| Key | Action |
-|-----|--------|
-| **Ctrl+K** or **/** | Prompt library (166 prompts) |
-| **Ctrl+T** | Switch provider |
-| **Ctrl+M** | Switch model |
-| **Ctrl+N** | New conversation |
-| **Ctrl+O** | History browser |
-| **Ctrl+F** | Search in conversation |
-| **Ctrl+B** | Clipboard manager |
-| **Ctrl+,** | Settings |
-| **Ctrl+R** | Regenerate response |
-| **Ctrl+E** | Edit last message |
-| **Esc** | Stop streaming |
-| **Tab/Shift+Tab** | Next/prev conversation |
-| **Up/Down** (insert) | Input history |
-| **i / Esc** | Insert / normal mode |
-| **j / k** | Scroll (normal mode) |
-| **G / g** | Jump to bottom / top |
-| **PgUp / PgDn** | Fast scroll |
-| **1-9** | Copy message by number |
+| Metric | Value |
+|--------|-------|
+| Language | 100% Rust |
+| Lines of code | 37,600+ |
+| Tests | 1,361 passing |
+| Clippy | 0 warnings |
+| Unsafe code | 0 blocks |
+| Binary (release) | 7.7 MB (LTO + stripped) |
 
 ---
 
 ## All Commands
+
+<details>
+<summary>70+ commands -- click to expand</summary>
 
 | Command | Description |
 |---------|-------------|
@@ -247,78 +257,43 @@ Press **Ctrl+K** to search. Categories include: Engineering, Rust, Python, TypeS
 | `/model <name>` | Switch model |
 | `/agent on\|off` | Toggle coding agent |
 | `/agent undo` | Rollback agent changes |
-| `/agent diff` | Show what agent changed |
+| `/agent diff` | Show agent changes |
 | `/file <path>` | Read file as context |
 | `/run <cmd>` | Execute command |
 | `/test` | Run project tests |
 | `/build` | Build project |
-| `/lint` | Run linter (clippy/eslint/ruff) |
-| `/format` | Run formatter (fmt/prettier/ruff) |
-| `/search <pat>` | Search codebase (ripgrep) |
+| `/lint` | Run linter |
+| `/format` | Run formatter |
+| `/search <pat>` | Search codebase |
 | `/diff` | Git diff as context |
-| `/commit [msg]` | Stage + commit (AI message) |
-| `/stage [files]` | Stage files for commit |
+| `/commit [msg]` | Stage + commit |
+| `/stage [files]` | Stage files |
 | `/stash` | Git stash operations |
 | `/gitbranch` | Branch management |
 | `/git <subcmd>` | Git operations |
 | `/template <name>` | Create from template |
 | `/scaffold <desc>` | AI-generated project |
 | `/kb add <dir>` | Add to knowledge base |
+| `/web <query>` | Search the web |
 | `/theme <name>` | Switch color theme |
-| `/usage` | Show token usage and cost |
+| `/usage` | Token usage and cost |
 | `/limit set <$>` | Set spending limit |
 | `/export` | Export as markdown |
 | `/branch save` | Save conversation branch |
 | `/session save` | Save session |
-| `/map` | Show project file tree |
+| `/map` | Project file tree |
 | `/alias <n> <cmd>` | Create command alias |
 | `/status` | System overview |
 
-See `/help` in the TUI for the complete list of 70+ commands.
+Run `/help` inside Nerve for the complete list.
 
----
-
-## Configuration
-
-Auto-generated at `~/.config/nerve/config.toml` on first run:
-
-```toml
-default_model = "sonnet"
-default_provider = "claude_code"
-
-# Sampling parameters (optional — omit to use provider defaults)
-# temperature = 0.7     # 0.0 = deterministic, 2.0 = very creative
-# top_p = 0.9           # nucleus sampling (0.0-1.0)
-# context_limit = 64000 # override context window size (tokens)
-
-# Auto-agent mode: automatically enables tools when the message needs them
-auto_agent = true
-
-# Git author for /commit (optional)
-# git_user_name = "Your Name"
-# git_user_email = "you@example.com"
-
-[providers.claude_code]
-enabled = true
-
-[providers.openai]
-api_key = ""   # or set OPENAI_API_KEY env var
-enabled = false
-
-[providers.ollama]
-base_url = "http://localhost:11434/v1"
-enabled = true
-
-[providers.openrouter]
-api_key = ""   # or set OPENROUTER_API_KEY env var
-enabled = false
-```
+</details>
 
 ---
 
 ## Project Templates
 
-```
+```bash
 /template list
 ```
 
@@ -337,20 +312,9 @@ enabled = false
 
 ## Documentation
 
-- **[User Guide](docs/GUIDE.md)** -- comprehensive 2,200-line guide
-- **[Changelog](CHANGELOG.md)** -- release notes
-
----
-
-## Quality
-
-| Check | Status |
-|-------|--------|
-| Tests | 1,345 passing |
-| Clippy | 0 warnings |
-| Format | 0 diffs |
-| Unsafe code | 0 |
-| Binary | 7.7 MB (LTO + stripped) |
+- **[User Guide](docs/GUIDE.md)** -- comprehensive guide (2,200+ lines)
+- **[Manifesto](MANIFESTO.md)** -- why Nerve exists
+- **[Changelog](CHANGELOG.md)** -- release history
 
 ---
 
@@ -361,9 +325,8 @@ Contributions welcome. Please open an issue first to discuss changes.
 ```bash
 git clone https://github.com/Artaeon/nerve.git
 cd nerve
-cargo build
-cargo test          # 1,345 tests
-cargo clippy        # lint
+cargo test          # 1,361 tests
+cargo clippy        # 0 warnings
 cargo fmt --check   # format check
 ```
 
