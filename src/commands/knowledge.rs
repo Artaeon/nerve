@@ -443,6 +443,82 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
     app.set_status("Unknown /auto command. Use: list, run, create, delete, info");
 }
 
+/// Execute an automation pipeline.
+async fn run_automation(
+    app: &mut App,
+    automation: &automation::Automation,
+    input: &str,
+    provider: &Arc<dyn AiProvider>,
+) {
+    let start = std::time::Instant::now();
+    let mut prev_output = String::new();
+    let total_steps = automation.steps.len();
+
+    app.set_status(format!("Running automation: {}", automation.name));
+
+    for (i, step) in automation.steps.iter().enumerate() {
+        let model_owned = step
+            .model
+            .clone()
+            .unwrap_or_else(|| app.selected_model.clone());
+        let prompt = step
+            .prompt_template
+            .replace("{{input}}", input)
+            .replace("{{prev_output}}", &prev_output);
+
+        app.set_status(format!(
+            "Automation step {}/{}: {}...",
+            i + 1,
+            total_steps,
+            step.name,
+        ));
+
+        if i == total_steps - 1 {
+            app.add_user_message(format!(
+                "[Automation: {} - Step {}/{}]",
+                automation.name,
+                i + 1,
+                total_steps,
+            ));
+            app.scroll_offset = 0;
+
+            let messages = vec![ChatMessage::user(&prompt)];
+            let (tx, rx) = mpsc::unbounded_channel();
+
+            app.stream_rx = Some(rx);
+            app.is_streaming = true;
+            app.streaming_response.clear();
+            app.streaming_start = Some(std::time::Instant::now());
+
+            let provider = Arc::clone(provider);
+            tokio::spawn(async move {
+                if let Err(e) = provider
+                    .chat_stream(&messages, &model_owned, tx.clone())
+                    .await
+                {
+                    let _ = tx.send(StreamEvent::Error(e.to_string()));
+                }
+            });
+
+            let elapsed = start.elapsed().as_millis();
+            app.set_status(format!(
+                "Automation '{}' complete ({total_steps} steps, {elapsed}ms)",
+                automation.name,
+            ));
+        } else {
+            let messages = vec![ChatMessage::user(&prompt)];
+            match provider.chat(&messages, &model_owned).await {
+                Ok(response) => prev_output = response,
+                Err(e) => {
+                    app.add_assistant_message(format!("Automation error at step {}: {e}", i + 1,));
+                    app.set_status(format!("Automation failed at step {}", i + 1));
+                    return;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,81 +730,5 @@ mod tests {
         assert!(!handle(&mut app, "/kbx", &provider).await);
         assert!(!handle(&mut app, "/urls", &provider).await);
         assert!(!handle(&mut app, "/autox", &provider).await);
-    }
-}
-
-/// Execute an automation pipeline.
-async fn run_automation(
-    app: &mut App,
-    automation: &automation::Automation,
-    input: &str,
-    provider: &Arc<dyn AiProvider>,
-) {
-    let start = std::time::Instant::now();
-    let mut prev_output = String::new();
-    let total_steps = automation.steps.len();
-
-    app.set_status(format!("Running automation: {}", automation.name));
-
-    for (i, step) in automation.steps.iter().enumerate() {
-        let model_owned = step
-            .model
-            .clone()
-            .unwrap_or_else(|| app.selected_model.clone());
-        let prompt = step
-            .prompt_template
-            .replace("{{input}}", input)
-            .replace("{{prev_output}}", &prev_output);
-
-        app.set_status(format!(
-            "Automation step {}/{}: {}...",
-            i + 1,
-            total_steps,
-            step.name,
-        ));
-
-        if i == total_steps - 1 {
-            app.add_user_message(format!(
-                "[Automation: {} - Step {}/{}]",
-                automation.name,
-                i + 1,
-                total_steps,
-            ));
-            app.scroll_offset = 0;
-
-            let messages = vec![ChatMessage::user(&prompt)];
-            let (tx, rx) = mpsc::unbounded_channel();
-
-            app.stream_rx = Some(rx);
-            app.is_streaming = true;
-            app.streaming_response.clear();
-            app.streaming_start = Some(std::time::Instant::now());
-
-            let provider = Arc::clone(provider);
-            tokio::spawn(async move {
-                if let Err(e) = provider
-                    .chat_stream(&messages, &model_owned, tx.clone())
-                    .await
-                {
-                    let _ = tx.send(StreamEvent::Error(e.to_string()));
-                }
-            });
-
-            let elapsed = start.elapsed().as_millis();
-            app.set_status(format!(
-                "Automation '{}' complete ({total_steps} steps, {elapsed}ms)",
-                automation.name,
-            ));
-        } else {
-            let messages = vec![ChatMessage::user(&prompt)];
-            match provider.chat(&messages, &model_owned).await {
-                Ok(response) => prev_output = response,
-                Err(e) => {
-                    app.add_assistant_message(format!("Automation error at step {}: {e}", i + 1,));
-                    app.set_status(format!("Automation failed at step {}", i + 1));
-                    return;
-                }
-            }
-        }
     }
 }
