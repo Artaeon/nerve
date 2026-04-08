@@ -50,6 +50,7 @@ dirs = "6"
 anyhow = "1"
 
 # Unix process group management
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 # CLI argument parsing

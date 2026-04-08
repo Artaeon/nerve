@@ -1,4 +1,5 @@
 use anyhow::Context;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -88,20 +89,30 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
     }
 
     let start = Instant::now();
-    let mut child = unsafe {
-        Command::new("sh")
-            .args(["-c", cmd])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .pre_exec(|| {
-                // Put the child in its own process group so we can kill the
-                // entire tree (shell + its children) on timeout.
-                libc::setpgid(0, 0);
-                Ok(())
-            })
-            .spawn()
-            .with_context(|| format!("Failed to spawn: {cmd}"))?
-    };
+
+    let mut cmd_builder = Command::new(if cfg!(windows) { "cmd" } else { "sh" });
+    if cfg!(windows) {
+        cmd_builder.args(["/C", cmd]);
+    } else {
+        cmd_builder.args(["-c", cmd]);
+    }
+    cmd_builder
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    // On Unix, put the child in its own process group so we can kill the
+    // entire tree (shell + its children) on timeout.
+    #[cfg(unix)]
+    unsafe {
+        cmd_builder.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = cmd_builder
+        .spawn()
+        .with_context(|| format!("Failed to spawn: {cmd}"))?;
 
     let timeout = Duration::from_secs(timeout_secs);
 
@@ -148,10 +159,15 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
             Ok(None) => {
                 // Still running -- check timeout.
                 if start.elapsed() >= timeout {
-                    // Kill the entire process group, not just the shell,
-                    // so child processes (e.g. `sleep`) are also terminated.
+                    // Kill the entire process tree on timeout.
+                    #[cfg(unix)]
                     unsafe {
+                        // Kill the process group (shell + children).
                         libc::kill(-(child.id() as i32), libc::SIGKILL);
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = child.kill();
                     }
                     let _ = child.wait(); // Reap the zombie.
 
