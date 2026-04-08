@@ -4066,10 +4066,10 @@ mod tests {
         let items = autocomplete_file_paths("");
         // Should return entries from the current directory (project root).
         assert!(!items.is_empty(), "empty partial should list cwd files");
-        // Cargo.toml should appear somewhere in the results.
+        // src/ is a directory and directories sort first, so it's always in the top 10.
         assert!(
-            items.iter().any(|i| i.starts_with("Cargo.toml")),
-            "expected Cargo.toml in results: {items:?}"
+            items.iter().any(|i| i.starts_with("src/")),
+            "expected src/ in results: {items:?}"
         );
     }
 
@@ -4092,13 +4092,15 @@ mod tests {
     #[test]
     fn autocomplete_file_paths_directories_sorted_first() {
         let items = autocomplete_file_paths("");
-        // Find positions of known dir (src/) and file (Cargo.toml).
-        let dir_pos = items.iter().position(|i| i.starts_with("src/"));
-        let file_pos = items.iter().position(|i| i.starts_with("Cargo.toml"));
-        if let (Some(d), Some(f)) = (dir_pos, file_pos) {
+        // Find first directory and first file entry.
+        let first_dir = items.iter().position(|i| i.contains("directory"));
+        let first_file = items
+            .iter()
+            .position(|i| !i.contains("directory") && i.contains("\u{2500}\u{2500}"));
+        if let (Some(d), Some(f)) = (first_dir, first_file) {
             assert!(
                 d < f,
-                "directories should sort before files: src/ at {d}, Cargo.toml at {f}"
+                "directories should sort before files: dir at {d}, file at {f}"
             );
         }
     }
