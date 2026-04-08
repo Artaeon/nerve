@@ -1,4 +1,5 @@
 use anyhow::Context;
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -87,12 +88,20 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
     }
 
     let start = Instant::now();
-    let mut child = Command::new("sh")
-        .args(["-c", cmd])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .with_context(|| format!("Failed to spawn: {cmd}"))?;
+    let mut child = unsafe {
+        Command::new("sh")
+            .args(["-c", cmd])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .pre_exec(|| {
+                // Put the child in its own process group so we can kill the
+                // entire tree (shell + its children) on timeout.
+                libc::setpgid(0, 0);
+                Ok(())
+            })
+            .spawn()
+            .with_context(|| format!("Failed to spawn: {cmd}"))?
+    };
 
     let timeout = Duration::from_secs(timeout_secs);
 
@@ -139,7 +148,11 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
             Ok(None) => {
                 // Still running -- check timeout.
                 if start.elapsed() >= timeout {
-                    let _ = child.kill();
+                    // Kill the entire process group, not just the shell,
+                    // so child processes (e.g. `sleep`) are also terminated.
+                    unsafe {
+                        libc::kill(-(child.id() as i32), libc::SIGKILL);
+                    }
                     let _ = child.wait(); // Reap the zombie.
 
                     // Capture any partial output produced before the timeout.

@@ -49,6 +49,9 @@ dirs = "6"
 # Error handling
 anyhow = "1"
 
+# Unix process group management
+libc = "0.2"
+
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
