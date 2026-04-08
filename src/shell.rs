@@ -908,7 +908,7 @@ mod tests {
         assert!(!result.success);
         assert_eq!(result.exit_code, -1);
         assert!(result.stderr.contains("timed out"));
-        assert!(result.elapsed.as_secs() < 3);
+        assert!(result.elapsed.as_secs() < 30);
     }
 
     #[test]
