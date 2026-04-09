@@ -1259,6 +1259,7 @@ dependencies = [
  "fastrand",
  "futures",
  "fuzzy-matcher",
+ "libc",
  "ratatui",
  "reqwest",
  "serde",
