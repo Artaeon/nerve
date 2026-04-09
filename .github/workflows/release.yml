@@ -81,8 +81,9 @@ jobs:
             artifact: nerve-macos-arm64
             binary: nerve
             archive_ext: tar.gz
-          - os: macos-13
+          - os: macos-latest
             artifact: nerve-macos-x86_64
+            target: x86_64-apple-darwin
             binary: nerve
             archive_ext: tar.gz
           - os: windows-latest
@@ -92,20 +93,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.os }}
-      - run: cargo build --release
+          key: release-${{ matrix.os }}-${{ matrix.target || 'default' }}
+      - name: Build
+        run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
-          cd target/release
-          tar czf ../../${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
+          if [ -n "${{ matrix.target }}" ]; then
+            cp target/${{ matrix.target }}/release/${{ matrix.binary }} .
+          else
+            cp target/release/${{ matrix.binary }} .
+          fi
+          tar czf ${{ matrix.artifact }}.tar.gz ${{ matrix.binary }}
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
         run: |
-          cd target/release
-          7z a ../../${{ matrix.artifact }}.zip ${{ matrix.binary }}
+          cp target/release/${{ matrix.binary }} .
+          7z a ${{ matrix.artifact }}.zip ${{ matrix.binary }}
         shell: bash
       - name: Generate checksum
         run: sha256sum ${{ matrix.artifact }}.${{ matrix.archive_ext }} > ${{ matrix.artifact }}.${{ matrix.archive_ext }}.sha256

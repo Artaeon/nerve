@@ -62,19 +62,23 @@ jobs:
             artifact: nerve-linux-x86_64
           - os: macos-latest
             artifact: nerve-macos-arm64
-          - os: macos-13
+          - os: macos-latest
             artifact: nerve-macos-x86_64
+            target: x86_64-apple-darwin
           - os: windows-latest
             artifact: nerve-windows-x86_64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target || '' }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}
-      - run: cargo build --release
+          key: ${{ matrix.os }}-${{ matrix.target || 'default' }}
+      - name: Build
+        run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/nerve${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          path: target/${{ matrix.target && format('{0}/', matrix.target) || '' }}release/nerve${{ matrix.os == 'windows-latest' && '.exe' || '' }}
