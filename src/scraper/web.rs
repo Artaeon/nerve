@@ -158,14 +158,34 @@ pub async fn scrape_urls(urls: &[&str]) -> Vec<anyhow::Result<ScrapeResult>> {
 }
 
 /// Extract the content of the first `<title>` tag, if present.
+///
+/// Uses char-index arithmetic so that positions are valid for both
+/// the lowercased and original strings, even when multibyte UTF-8
+/// characters appear before the `<title>` tag.
 fn extract_title(html: &str) -> Option<String> {
     let lower = html.to_lowercase();
-    let start = lower.find("<title")?;
+
+    let start_byte = lower.find("<title")?;
+    // Convert byte offset to char offset so we can safely index both strings.
+    let start_char = lower[..start_byte].chars().count();
+
+    let chars_orig: Vec<char> = html.chars().collect();
+    let chars_lower: Vec<char> = lower.chars().collect();
+
     // Find the closing `>` of the opening tag.
-    let tag_end = lower[start..].find('>')? + start + 1;
-    let end = lower[tag_end..].find("</title")? + tag_end;
-    let raw = &html[tag_end..end];
-    let decoded = decode_html_entities(raw);
+    let tag_end_char = chars_lower[start_char..].iter().position(|&c| c == '>')?
+        + start_char
+        + 1;
+
+    // Find `</title` in the lowercased chars after the opening tag.
+    let closing: Vec<char> = "</title".chars().collect();
+    let end_char = chars_lower[tag_end_char..]
+        .windows(closing.len())
+        .position(|w| w == closing.as_slice())?
+        + tag_end_char;
+
+    let raw: String = chars_orig[tag_end_char..end_char].iter().collect();
+    let decoded = decode_html_entities(&raw);
     let trimmed = decoded.trim().to_string();
     if trimmed.is_empty() {
         None
@@ -254,7 +274,8 @@ fn skip_to_closing_tag(chars: &[char], start: usize, tag_name: &str) -> usize {
                 while j < len && chars[j] != '>' {
                     j += 1;
                 }
-                return j + 1; // past the `>`
+                // If `>` was found, skip past it; otherwise consume to end.
+                return if j < len { j + 1 } else { len };
             }
         }
         i += 1;
