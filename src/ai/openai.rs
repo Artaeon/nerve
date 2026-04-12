@@ -199,6 +199,9 @@ impl OpenAiProvider {
     }
 
     /// Try to extract an error message from a non-2xx response body.
+    ///
+    /// Truncates raw (unparseable) response bodies to avoid leaking
+    /// sensitive information from provider error responses.
     async fn extract_api_error(response: reqwest::Response) -> String {
         let status = response.status();
         match response.text().await {
@@ -209,7 +212,10 @@ impl OpenAiProvider {
                 {
                     return format!("API error ({status}): {msg}");
                 }
-                format!("API error ({status}): {body}")
+                // Truncate raw bodies to avoid leaking sensitive details.
+                let preview: String = body.chars().take(200).collect();
+                let suffix = if body.len() > 200 { "..." } else { "" };
+                format!("API error ({status}): {preview}{suffix}")
             }
             Err(_) => format!("API error ({status})"),
         }
