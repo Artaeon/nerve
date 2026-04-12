@@ -1211,4 +1211,140 @@ mod tests {
         assert_eq!(group, "Ollama");
         assert!(ctx.is_empty());
     }
+
+    // ── hex_to_color ────────────────────────────────────────────────
+
+    #[test]
+    fn hex_to_color_valid_black() {
+        assert_eq!(hex_to_color("#000000"), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn hex_to_color_valid_white() {
+        assert_eq!(hex_to_color("#ffffff"), Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn hex_to_color_valid_red() {
+        assert_eq!(hex_to_color("#ff0000"), Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn hex_to_color_without_hash() {
+        assert_eq!(hex_to_color("00ff00"), Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn hex_to_color_invalid_length() {
+        assert_eq!(hex_to_color("#fff"), Color::White);
+    }
+
+    #[test]
+    fn hex_to_color_empty_string() {
+        assert_eq!(hex_to_color(""), Color::White);
+    }
+
+    #[test]
+    fn hex_to_color_invalid_chars() {
+        // Invalid hex chars get unwrap_or(255)
+        assert_eq!(hex_to_color("#zzzzzz"), Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn hex_to_color_uppercase() {
+        assert_eq!(hex_to_color("#AABBCC"), Color::Rgb(170, 187, 204));
+    }
+
+    // ── format_number ───────────────────────────────────────────────
+
+    #[test]
+    fn format_number_zero() {
+        assert_eq!(format_number(0), "0");
+    }
+
+    #[test]
+    fn format_number_small() {
+        assert_eq!(format_number(42), "42");
+    }
+
+    #[test]
+    fn format_number_exactly_1000() {
+        assert_eq!(format_number(1000), "1,000");
+    }
+
+    #[test]
+    fn format_number_thousands() {
+        assert_eq!(format_number(1_234), "1,234");
+    }
+
+    #[test]
+    fn format_number_hundred_thousands() {
+        assert_eq!(format_number(123_456), "123,456");
+    }
+
+    #[test]
+    fn format_number_millions() {
+        assert_eq!(format_number(1_234_567), "1,234,567");
+    }
+
+    #[test]
+    fn format_number_exactly_million() {
+        assert_eq!(format_number(1_000_000), "1,000,000");
+    }
+
+    // ── format_elapsed ──────────────────────────────────────────────
+
+    #[test]
+    fn format_elapsed_sub_second() {
+        assert_eq!(format_elapsed(0.5), "<1s");
+    }
+
+    #[test]
+    fn format_elapsed_zero() {
+        assert_eq!(format_elapsed(0.0), "<1s");
+    }
+
+    #[test]
+    fn format_elapsed_seconds() {
+        assert_eq!(format_elapsed(30.0), "30s");
+    }
+
+    #[test]
+    fn format_elapsed_one_second() {
+        assert_eq!(format_elapsed(1.0), "1s");
+    }
+
+    #[test]
+    fn format_elapsed_minutes() {
+        assert_eq!(format_elapsed(90.0), "1m30s");
+    }
+
+    #[test]
+    fn format_elapsed_exact_minute() {
+        assert_eq!(format_elapsed(60.0), "1m00s");
+    }
+
+    #[test]
+    fn format_elapsed_large() {
+        assert_eq!(format_elapsed(3661.0), "61m01s");
+    }
+
+    // ── ResolvedTheme helpers ───────────────────────────────────────
+
+    #[test]
+    fn resolved_theme_separator_returns_border() {
+        let theme = ResolvedTheme {
+            accent: Color::Red,
+            border: Color::Blue,
+            success: Color::Green,
+            error: Color::Red,
+            warning: Color::Yellow,
+            dim: Color::Gray,
+            user_color: Color::Cyan,
+            assistant_color: Color::White,
+        };
+        assert_eq!(theme.separator(), Color::Blue);
+        assert_eq!(theme.active_border(), Color::Red);
+        assert_eq!(theme.inactive_border(), Color::Gray);
+    }
 }
