@@ -1,6 +1,6 @@
 [package]
 name = "nerve"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Raw AI power in your terminal"
 authors = ["Artaeon <raphael.lugmayr@stoicera.com>"]
