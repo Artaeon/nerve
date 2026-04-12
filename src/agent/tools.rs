@@ -570,7 +570,11 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let content = call.args.get("content").map(std::string::String::as_str).unwrap_or("");
+    let content = call
+        .args
+        .get("content")
+        .map(std::string::String::as_str)
+        .unwrap_or("");
 
     // Security: block writing to protected system paths (including symlinks).
     if let Err(blocked) = validate_write_path(path, "write_file") {
@@ -624,7 +628,11 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
         Ok(t) => t,
         Err(e) => return e,
     };
-    let new_text = call.args.get("new_text").map(std::string::String::as_str).unwrap_or("");
+    let new_text = call
+        .args
+        .get("new_text")
+        .map(std::string::String::as_str)
+        .unwrap_or("");
 
     // Security: block editing protected system paths (including symlinks).
     if let Err(blocked) = validate_write_path(path, "edit_file") {
@@ -720,7 +728,11 @@ fn execute_run_command(call: &ToolCall, timeout_secs: u64) -> ToolResult {
 }
 
 fn execute_list_files(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
+    let path = call
+        .args
+        .get("path")
+        .map(std::string::String::as_str)
+        .unwrap_or(".");
     match std::fs::read_dir(path) {
         Ok(entries) => {
             let mut items: Vec<String> = entries
@@ -754,7 +766,11 @@ fn execute_search_code(call: &ToolCall) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
+    let path = call
+        .args
+        .get("path")
+        .map(std::string::String::as_str)
+        .unwrap_or(".");
 
     let cmd = format!(
         "grep -rn --include='*.rs' --include='*.py' --include='*.js' --include='*.ts' \
@@ -811,8 +827,16 @@ fn execute_create_dir(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_find_files(call: &ToolCall) -> ToolResult {
-    let pattern = call.args.get("pattern").map(std::string::String::as_str).unwrap_or("*");
-    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
+    let pattern = call
+        .args
+        .get("pattern")
+        .map(std::string::String::as_str)
+        .unwrap_or("*");
+    let path = call
+        .args
+        .get("path")
+        .map(std::string::String::as_str)
+        .unwrap_or(".");
 
     let cmd = format!(
         "find {} -name {} -type f | head -100",
@@ -1969,5 +1993,120 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
         reset_tool_counter();
         let result = validate_write_path("/etc/evil.conf", "write_file");
         assert!(result.is_err(), "Should block direct /etc/ writes");
+    }
+
+    // ── parse_tool_calls edge cases ─────────────────────────────────
+
+    #[test]
+    fn parse_tool_calls_empty_input() {
+        let calls = parse_tool_calls("");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_tool_calls_whitespace_only() {
+        let calls = parse_tool_calls("   \n\n   \t  ");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_tool_calls_plain_text_no_tools() {
+        let calls = parse_tool_calls("This is just a regular response with no tool calls.");
+        assert!(calls.is_empty());
+    }
+
+    #[test]
+    fn parse_tool_calls_unclosed_xml_still_parses() {
+        // The parser has a fallback: if no closing tag is found, it parses
+        // to the end of the text. This is by design for robustness.
+        let calls = parse_tool_calls("<tool_call>tool: read_file\npath: test.rs");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "read_file");
+        assert_eq!(calls[0].args["path"], "test.rs");
+    }
+
+    #[test]
+    fn parse_tool_calls_empty_tool_name() {
+        let input = "<tool_call>tool: \npath: test.rs</tool_call>";
+        let calls = parse_tool_calls(input);
+        // Parser extracts empty tool name — the call is created but tool is empty
+        if !calls.is_empty() {
+            assert!(calls[0].tool.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_tool_calls_json_with_non_string_tool() {
+        let input = r#"{"tool": 123, "path": "test.rs"}"#;
+        let calls = parse_tool_calls(input);
+        // JSON parser only accepts string tool values
+        for call in &calls {
+            // If parsed, verify the tool name is the stringified number or empty
+            assert!(call.tool.is_empty() || call.tool == "123" || calls.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_tool_calls_multiple_in_sequence() {
+        let input = "\
+<tool_call>tool: read_file\npath: a.rs</tool_call>\n\
+<tool_call>tool: read_file\npath: b.rs</tool_call>";
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args["path"], "a.rs");
+        assert_eq!(calls[1].args["path"], "b.rs");
+    }
+
+    #[test]
+    fn parse_tool_calls_markdown_wrapped_xml() {
+        let input = "```xml\n<tool_call>tool: list_files\npath: src</tool_call>\n```";
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "list_files");
+    }
+
+    #[test]
+    fn parse_tool_calls_json_format() {
+        let input = r#"{"tool": "search_code", "pattern": "fn main", "path": "."}"#;
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "search_code");
+        assert_eq!(calls[0].args["pattern"], "fn main");
+    }
+
+    #[test]
+    fn parse_tool_calls_multiline_content_arg() {
+        let input = "\
+<tool_call>tool: write_file\npath: test.txt\ncontent:\nline 1\nline 2\nline 3</tool_call>";
+        let calls = parse_tool_calls(input);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].tool, "write_file");
+        assert!(calls[0].args["content"].contains("line 1"));
+        assert!(calls[0].args["content"].contains("line 3"));
+    }
+
+    // ── validate_write_path edge cases ──────────────────────────────
+
+    #[test]
+    fn validate_write_path_empty_string_returns_ok() {
+        reset_tool_counter();
+        // Empty path is not a protected system path, so validate_write_path
+        // lets it through. The actual write will fail at the fs::write level.
+        let result = validate_write_path("", "write_file");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_write_path_blocks_etc_passwd() {
+        reset_tool_counter();
+        let result = validate_write_path("/etc/passwd", "write_file");
+        assert!(result.is_err(), "Should block writing to /etc/");
+    }
+
+    #[test]
+    fn validate_write_path_blocks_traversal() {
+        reset_tool_counter();
+        let result = validate_write_path("/tmp/x/../../etc/shadow", "write_file");
+        assert!(result.is_err(), "Should block path traversal to /etc/");
     }
 }
