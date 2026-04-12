@@ -506,8 +506,13 @@ fn render_goodbye(frame: &mut ratatui::Frame, app: &crate::app::App) {
 /// Save the last used provider+model so new sessions remember the choice.
 fn save_last_provider(provider: &str, model: &str) {
     let dir = dirs::config_dir().unwrap_or_default().join("nerve");
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join("last_provider"), format!("{provider}\n{model}"));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("failed to create config directory: {e}");
+        return;
+    }
+    if let Err(e) = std::fs::write(dir.join("last_provider"), format!("{provider}\n{model}")) {
+        tracing::warn!("failed to save last provider: {e}");
+    }
 }
 
 /// Load the last used provider+model (if saved).
@@ -644,7 +649,9 @@ async fn run_tui(
 
     // Auto-save session on every quit path.
     let sess = session::session_from_app(&app);
-    let _ = session::save_session(&sess);
+    if let Err(e) = session::save_session(&sess) {
+        tracing::warn!("failed to save session on exit: {e}");
+    }
 
     // Remember the last used provider+model for new sessions.
     save_last_provider(&app.selected_provider, &app.selected_model);
