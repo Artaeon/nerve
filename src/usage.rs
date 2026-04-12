@@ -51,11 +51,11 @@ impl UsageStats {
         provider: &str,
         model: &str,
     ) {
-        self.total_tokens_sent += tokens_sent;
-        self.total_tokens_received += tokens_received;
-        self.total_requests += 1;
+        self.total_tokens_sent = self.total_tokens_sent.saturating_add(tokens_sent);
+        self.total_tokens_received = self.total_tokens_received.saturating_add(tokens_received);
+        self.total_requests = self.total_requests.saturating_add(1);
 
-        let total_tokens = tokens_sent + tokens_received;
+        let total_tokens = tokens_sent.saturating_add(tokens_received);
         let cost = cost_per_million_tokens(provider, model) * total_tokens as f64 / 1_000_000.0;
         self.estimated_cost_usd += cost;
     }
