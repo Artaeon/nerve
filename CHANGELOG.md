@@ -5,6 +5,13 @@ All notable changes to Nerve will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1](https://github.com/Artaeon/nerve/compare/nerve-v0.2.0...nerve-v0.2.1) (2026-04-12)
+
+
+### Bug Fixes
+
+* let / insert character in Insert mode instead of opening Nerve Bar ([a45d149](https://github.com/Artaeon/nerve/commit/a45d14924a2d8f7e5364fae55d9dc92675b5bd8d))
+
 ## [Unreleased]
 
 ### Added
