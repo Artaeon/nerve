@@ -173,9 +173,7 @@ fn extract_title(html: &str) -> Option<String> {
     let chars_lower: Vec<char> = lower.chars().collect();
 
     // Find the closing `>` of the opening tag.
-    let tag_end_char = chars_lower[start_char..].iter().position(|&c| c == '>')?
-        + start_char
-        + 1;
+    let tag_end_char = chars_lower[start_char..].iter().position(|&c| c == '>')? + start_char + 1;
 
     // Find `</title` in the lowercased chars after the opening tag.
     let closing: Vec<char> = "</title".chars().collect();
@@ -680,5 +678,151 @@ mod tests {
     fn blocks_ipv6_multicast() {
         assert!(is_private_url("http://[ff00::1]/"));
         assert!(is_private_url("http://[ff02::1]/"));
+    }
+
+    // ── extract_title edge cases ────────────────────────────────────
+
+    #[test]
+    fn extract_title_basic() {
+        let html = "<html><head><title>Hello World</title></head></html>";
+        assert_eq!(extract_title(html), Some("Hello World".into()));
+    }
+
+    #[test]
+    fn extract_title_case_insensitive() {
+        let html = "<html><head><TITLE>Case Test</TITLE></head></html>";
+        assert_eq!(extract_title(html), Some("Case Test".into()));
+    }
+
+    #[test]
+    fn extract_title_with_attributes() {
+        let html = r#"<html><head><title lang="en">Attributed</title></head></html>"#;
+        assert_eq!(extract_title(html), Some("Attributed".into()));
+    }
+
+    #[test]
+    fn extract_title_empty() {
+        let html = "<html><head><title></title></head></html>";
+        assert_eq!(extract_title(html), None);
+    }
+
+    #[test]
+    fn extract_title_whitespace_only() {
+        let html = "<html><head><title>   \n\t  </title></head></html>";
+        assert_eq!(extract_title(html), None);
+    }
+
+    #[test]
+    fn extract_title_no_title_tag() {
+        let html = "<html><head></head><body>Hello</body></html>";
+        assert_eq!(extract_title(html), None);
+    }
+
+    #[test]
+    fn extract_title_with_html_entities() {
+        let html = "<html><head><title>A &amp; B &lt; C</title></head></html>";
+        assert_eq!(extract_title(html), Some("A & B < C".into()));
+    }
+
+    #[test]
+    fn extract_title_with_non_ascii_before_title() {
+        // UTF-8 multibyte characters before <title> caused byte-alignment panics
+        let html = "<html><head><meta name=\"desc\" content=\"café résumé\"><title>Multibyte Test</title></head></html>";
+        assert_eq!(extract_title(html), Some("Multibyte Test".into()));
+    }
+
+    #[test]
+    fn extract_title_with_emoji_before_title() {
+        let html = "<html><!-- 🎉🎊 --><head><title>Emoji OK</title></head></html>";
+        assert_eq!(extract_title(html), Some("Emoji OK".into()));
+    }
+
+    #[test]
+    fn extract_title_with_cjk_before_title() {
+        let html = "<html><head><meta content=\"中文测试\"><title>CJK Test</title></head></html>";
+        assert_eq!(extract_title(html), Some("CJK Test".into()));
+    }
+
+    // ── strip_html edge cases ───────────────────────────────────────
+
+    #[test]
+    fn strip_html_removes_script_blocks() {
+        let html = "<p>Before</p><script>alert('xss')</script><p>After</p>";
+        let result = strip_html(html);
+        assert!(!result.contains("alert"));
+        assert!(result.contains("Before"));
+        assert!(result.contains("After"));
+    }
+
+    #[test]
+    fn strip_html_removes_style_blocks() {
+        let html = "<p>Visible</p><style>body { color: red; }</style><p>Also</p>";
+        let result = strip_html(html);
+        assert!(!result.contains("color"));
+        assert!(result.contains("Visible"));
+    }
+
+    #[test]
+    fn strip_html_unclosed_script_tag() {
+        // Malformed: <script> without closing </script>
+        let html = "<p>Before</p><script>var x = 1;";
+        let result = strip_html(html);
+        assert!(result.contains("Before"));
+        // Script content should be consumed to end
+        assert!(!result.contains("var x"));
+    }
+
+    #[test]
+    fn strip_html_empty_input() {
+        assert_eq!(strip_html(""), "");
+    }
+
+    #[test]
+    fn strip_html_plain_text() {
+        assert_eq!(strip_html("Hello, world!").trim(), "Hello, world!");
+    }
+
+    #[test]
+    fn strip_html_nested_tags() {
+        let html = "<div><p><strong>Bold text</strong></p></div>";
+        let result = strip_html(html);
+        assert!(result.contains("Bold text"));
+    }
+
+    #[test]
+    fn strip_html_self_closing_tag() {
+        let html = "Before<br/>After<hr/>";
+        let result = strip_html(html);
+        assert!(result.contains("Before"));
+        assert!(result.contains("After"));
+    }
+
+    #[test]
+    fn skip_to_closing_tag_malformed_no_gt() {
+        // Closing tag without > should clamp to len, not len+1
+        let chars: Vec<char> = "<script>code</script".chars().collect();
+        let result = skip_to_closing_tag(&chars, 0, "script");
+        assert!(result <= chars.len(), "Should not exceed chars length");
+    }
+
+    // ── truncate_words edge cases ───────────────────────────────────
+
+    #[test]
+    fn truncate_words_empty() {
+        assert_eq!(truncate_words("", 100), "");
+    }
+
+    #[test]
+    fn truncate_words_under_limit() {
+        let text = "hello world";
+        assert_eq!(truncate_words(text, 100), text);
+    }
+
+    #[test]
+    fn truncate_words_at_limit() {
+        let text = "one two three";
+        let result = truncate_words(text, 2);
+        assert!(result.starts_with("one two"));
+        assert!(result.contains("truncated"));
     }
 }
