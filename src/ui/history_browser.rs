@@ -698,4 +698,88 @@ mod tests {
         let app = App::new();
         assert_eq!(app.history_sort, 0);
     }
+
+    // ── format_relative_time edge cases ─────────────────────────────
+
+    #[test]
+    fn relative_time_now_is_just_now() {
+        let now = chrono::Utc::now();
+        assert_eq!(format_relative_time(&now), "just now");
+    }
+
+    #[test]
+    fn relative_time_30s_is_just_now() {
+        let dt = chrono::Utc::now() - chrono::Duration::seconds(30);
+        assert_eq!(format_relative_time(&dt), "just now");
+    }
+
+    #[test]
+    fn relative_time_5min() {
+        let dt = chrono::Utc::now() - chrono::Duration::minutes(5);
+        assert_eq!(format_relative_time(&dt), "5m ago");
+    }
+
+    #[test]
+    fn relative_time_3h() {
+        let dt = chrono::Utc::now() - chrono::Duration::hours(3);
+        assert_eq!(format_relative_time(&dt), "3h ago");
+    }
+
+    #[test]
+    fn relative_time_7d() {
+        let dt = chrono::Utc::now() - chrono::Duration::days(7);
+        assert_eq!(format_relative_time(&dt), "7d ago");
+    }
+
+    #[test]
+    fn relative_time_60d_is_2_months() {
+        let dt = chrono::Utc::now() - chrono::Duration::days(60);
+        assert_eq!(format_relative_time(&dt), "2mo ago");
+    }
+
+    #[test]
+    fn relative_time_future_date_graceful() {
+        // Future dates (clock skew) should degrade gracefully
+        let future = chrono::Utc::now() + chrono::Duration::hours(1);
+        let result = format_relative_time(&future);
+        assert_eq!(result, "just now");
+    }
+
+    // ── group_label boundary tests ──────────────────────────────────
+
+    #[test]
+    fn group_label_now_is_today() {
+        let now = chrono::Utc::now();
+        assert_eq!(group_label(&now), "Today");
+    }
+
+    #[test]
+    fn group_label_1d_ago_is_yesterday() {
+        let yesterday = chrono::Utc::now() - chrono::Duration::days(1);
+        assert_eq!(group_label(&yesterday), "Yesterday");
+    }
+
+    #[test]
+    fn group_label_3d_is_this_week() {
+        let three_days_ago = chrono::Utc::now() - chrono::Duration::days(3);
+        assert_eq!(group_label(&three_days_ago), "This Week");
+    }
+
+    #[test]
+    fn group_label_30d_is_older() {
+        let long_ago = chrono::Utc::now() - chrono::Duration::days(30);
+        assert_eq!(group_label(&long_ago), "Older");
+    }
+
+    #[test]
+    fn group_label_7d_boundary_is_this_week() {
+        let seven_days = chrono::Utc::now() - chrono::Duration::days(7);
+        assert_eq!(group_label(&seven_days), "This Week");
+    }
+
+    #[test]
+    fn group_label_8d_boundary_is_older() {
+        let eight_days = chrono::Utc::now() - chrono::Duration::days(8);
+        assert_eq!(group_label(&eight_days), "Older");
+    }
 }

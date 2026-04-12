@@ -1049,4 +1049,93 @@ mod tests {
     fn git_author_flag_both_empty() {
         assert!(build_git_author_flag("", "").is_empty());
     }
+
+    // ── Branch name validation ──────────────────────────────────────
+
+    #[test]
+    fn branch_name_valid() {
+        assert!(is_valid_branch_name("feature/new-thing"));
+        assert!(is_valid_branch_name("fix-123"));
+        assert!(is_valid_branch_name("main"));
+    }
+
+    #[test]
+    fn branch_name_empty() {
+        assert!(!is_valid_branch_name(""));
+    }
+
+    #[test]
+    fn branch_name_starts_with_dash() {
+        assert!(!is_valid_branch_name("-bad"));
+    }
+
+    #[test]
+    fn branch_name_starts_with_dot() {
+        assert!(!is_valid_branch_name(".hidden"));
+    }
+
+    #[test]
+    fn branch_name_ends_with_dot() {
+        assert!(!is_valid_branch_name("branch."));
+    }
+
+    #[test]
+    fn branch_name_ends_with_slash() {
+        assert!(!is_valid_branch_name("branch/"));
+    }
+
+    #[test]
+    fn branch_name_ends_with_lock() {
+        assert!(!is_valid_branch_name("branch.lock"));
+    }
+
+    #[test]
+    fn branch_name_double_dot() {
+        assert!(!is_valid_branch_name("a..b"));
+    }
+
+    #[test]
+    fn branch_name_rejects_at_brace() {
+        assert!(!is_valid_branch_name("a@{b"));
+    }
+
+    #[test]
+    fn branch_name_rejects_space() {
+        assert!(!is_valid_branch_name("has space"));
+    }
+
+    #[test]
+    fn branch_name_rejects_tilde() {
+        assert!(!is_valid_branch_name("branch~1"));
+    }
+
+    #[test]
+    fn branch_name_rejects_caret() {
+        assert!(!is_valid_branch_name("branch^"));
+    }
+
+    #[test]
+    fn branch_name_rejects_colon() {
+        assert!(!is_valid_branch_name("a:b"));
+    }
+
+    #[test]
+    fn branch_name_rejects_backslash() {
+        assert!(!is_valid_branch_name("a\\b"));
+    }
+
+    #[test]
+    fn branch_name_rejects_question() {
+        assert!(!is_valid_branch_name("branch?"));
+    }
+
+    #[test]
+    fn branch_name_rejects_asterisk() {
+        assert!(!is_valid_branch_name("branch*"));
+    }
+
+    #[test]
+    fn branch_name_rejects_bracket() {
+        assert!(!is_valid_branch_name("branch[0]"));
+    }
 }
