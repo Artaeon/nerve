@@ -329,4 +329,153 @@ mod tests {
         let kb = KnowledgeBase::new("test".into());
         assert_eq!(kb.total_words(), 0);
     }
+
+    // ── Persistence tests (save/load/list_all) ─────────────────────
+
+    /// Write a KB to a specific directory and read it back, bypassing
+    /// the default storage_dir() which depends on the system.
+    fn save_to_dir(kb: &KnowledgeBase, dir: &std::path::Path) -> anyhow::Result<()> {
+        let path = dir.join(format!("{}.json", kb.name));
+        let json = serde_json::to_string_pretty(kb)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    fn load_from_dir(name: &str, dir: &std::path::Path) -> anyhow::Result<KnowledgeBase> {
+        let path = dir.join(format!("{name}.json"));
+        let data = std::fs::read_to_string(path)?;
+        let kb: KnowledgeBase = serde_json::from_str(&data)?;
+        Ok(kb)
+    }
+
+    fn list_from_dir(dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("json")
+                && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            {
+                names.push(stem.to_string());
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb = make_test_kb();
+
+        save_to_dir(&kb, dir.path()).expect("save should succeed");
+
+        let loaded = load_from_dir("test", dir.path()).expect("load should succeed");
+        assert_eq!(loaded.name, "test");
+        assert_eq!(loaded.documents.len(), 1);
+        assert_eq!(loaded.chunks.len(), 2);
+        assert_eq!(loaded.documents[0].title, "Test Doc");
+        assert_eq!(loaded.chunks[0].content, "hello world");
+        assert_eq!(loaded.chunks[1].content, "foo bar baz");
+    }
+
+    #[test]
+    fn save_and_load_preserves_timestamps() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb = make_test_kb();
+        let original_created = kb.created_at;
+        let original_updated = kb.updated_at;
+
+        save_to_dir(&kb, dir.path()).unwrap();
+        let loaded = load_from_dir("test", dir.path()).unwrap();
+
+        assert_eq!(loaded.created_at, original_created);
+        assert_eq!(loaded.updated_at, original_updated);
+    }
+
+    #[test]
+    fn save_and_load_empty_kb() {
+        let dir = tempfile::tempdir().unwrap();
+        let kb = KnowledgeBase::new("empty".into());
+
+        save_to_dir(&kb, dir.path()).unwrap();
+        let loaded = load_from_dir("empty", dir.path()).unwrap();
+
+        assert_eq!(loaded.name, "empty");
+        assert!(loaded.documents.is_empty());
+        assert!(loaded.chunks.is_empty());
+    }
+
+    #[test]
+    fn load_nonexistent_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = load_from_dir("nonexistent", dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_corrupt_json_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("corrupt.json");
+        std::fs::write(&path, "{ not valid json }").unwrap();
+        let result = load_from_dir("corrupt", dir.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_all_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let names = list_from_dir(dir.path()).unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn list_all_finds_saved_kbs() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let kb1 = KnowledgeBase::new("alpha".into());
+        let kb2 = KnowledgeBase::new("beta".into());
+        let kb3 = KnowledgeBase::new("gamma".into());
+
+        save_to_dir(&kb1, dir.path()).unwrap();
+        save_to_dir(&kb2, dir.path()).unwrap();
+        save_to_dir(&kb3, dir.path()).unwrap();
+
+        let names = list_from_dir(dir.path()).unwrap();
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    #[test]
+    fn list_all_ignores_non_json_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        save_to_dir(&KnowledgeBase::new("real".into()), dir.path()).unwrap();
+        // Write a non-json file that should be ignored
+        std::fs::write(dir.path().join("notes.txt"), "not a kb").unwrap();
+
+        let names = list_from_dir(dir.path()).unwrap();
+        assert_eq!(names, vec!["real"]);
+    }
+
+    #[test]
+    fn save_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut kb = KnowledgeBase::new("overwrite_test".into());
+        save_to_dir(&kb, dir.path()).unwrap();
+
+        let doc = Document {
+            id: "new".into(),
+            title: "New".into(),
+            source_path: "/tmp/new.md".into(),
+            ingested_at: chrono::Utc::now(),
+            word_count: 10,
+        };
+        kb.add_document(doc, vec![]);
+        save_to_dir(&kb, dir.path()).unwrap();
+
+        let loaded = load_from_dir("overwrite_test", dir.path()).unwrap();
+        assert_eq!(loaded.documents.len(), 1);
+        assert_eq!(loaded.documents[0].title, "New");
+    }
 }
