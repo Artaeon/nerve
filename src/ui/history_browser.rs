@@ -195,7 +195,7 @@ fn build_left_panel_items<'a>(
         };
         let detail_line = Line::from(vec![
             Span::styled("      ", meta_style),
-            Span::styled(format!("{} msgs", msg_count), meta_style),
+            Span::styled(format!("{msg_count} msgs"), meta_style),
             Span::styled(" | ", meta_style),
             Span::styled(&record.model, meta_style),
             Span::styled(" | ", meta_style),
@@ -391,7 +391,7 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
             };
 
             lines.push(Line::from(Span::styled(
-                format!("{} >", role_label),
+                format!("{role_label} >"),
                 Style::default().fg(role_color).add_modifier(Modifier::BOLD),
             )));
 
@@ -400,7 +400,7 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
                 msg.content.lines().take(4).collect::<Vec<_>>().join("\n");
             let truncated: String = content_preview.chars().take(300).collect();
             for content_line in truncated.lines() {
-                let line_text = format!("  {}", content_line);
+                let line_text = format!("  {content_line}");
                 if !app.history_search.is_empty() {
                     lines.push(highlight_search_matches(&line_text, &app.history_search));
                 } else {

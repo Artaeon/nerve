@@ -127,7 +127,7 @@ async fn main() -> anyhow::Result<()> {
         }
         if let Some(query) = &cli.query {
             let response = daemon::send_to_daemon(query).await?;
-            println!("{}", response);
+            println!("{response}");
             return Ok(());
         }
     }
@@ -509,7 +509,7 @@ fn save_last_provider(provider: &str, model: &str) {
     let _ = std::fs::create_dir_all(&dir);
     let _ = std::fs::write(
         dir.join("last_provider"),
-        format!("{}\n{}", provider, model),
+        format!("{provider}\n{model}"),
     );
 }
 
@@ -1427,7 +1427,7 @@ async fn handle_normal_mode(
                                 } else {
                                     format!("{} ", parts[0])
                                 };
-                                app.input = format!("{}{}", prefix, completed);
+                                app.input = format!("{prefix}{completed}");
                                 app.cursor_position = app.input.len();
                             } else {
                                 // Show multiple matches in status bar if any exist
@@ -1481,7 +1481,7 @@ async fn handle_normal_mode(
                                     if let Some(completed) = complete_file_path(partial) {
                                         let before = app.input[..at_pos + 1].to_string();
                                         let after = app.input[pos..].to_string();
-                                        app.input = format!("{}{}{}", before, completed, after);
+                                        app.input = format!("{before}{completed}{after}");
                                         app.cursor_position = at_pos + 1 + completed.len();
                                     } else {
                                         let file_matches = list_file_matches(partial);
@@ -1584,18 +1584,18 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
                                 let mut cfg = Config::load().unwrap_or_default();
                                 cfg.theme = theme.clone();
                                 let _ = cfg.save();
-                                app.set_status(format!("Theme: {}", name));
+                                app.set_status(format!("Theme: {name}"));
                             }
                         }
                         "@action:agent_toggle" => {
                             app.agent_mode = !app.agent_mode;
                             let state = if app.agent_mode { "ON" } else { "OFF" };
-                            app.set_status(format!("Agent mode: {}", state));
+                            app.set_status(format!("Agent mode: {state}"));
                         }
                         "@action:code_toggle" => {
                             app.code_mode = !app.code_mode;
                             let state = if app.code_mode { "ON" } else { "OFF" };
-                            app.set_status(format!("Code mode: {}", state));
+                            app.set_status(format!("Code mode: {state}"));
                         }
                         "@action:help" => {
                             app.mode = AppMode::Help;
@@ -2328,7 +2328,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
     let mut entries_vec: Vec<(String, bool, u64)> = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') {
                 continue; // skip hidden files
@@ -2342,12 +2342,12 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
             let completed = if partial.contains('/') {
                 let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
                 if is_dir {
-                    format!("{}{}/", dir_part, name)
+                    format!("{dir_part}{name}/")
                 } else {
-                    format!("{}{}", dir_part, name)
+                    format!("{dir_part}{name}")
                 }
             } else if is_dir {
-                format!("{}/", name)
+                format!("{name}/")
             } else {
                 name
             };
@@ -2365,7 +2365,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
         .take(10)
         .map(|(path, is_dir, size)| {
             if is_dir {
-                format!("{}  \u{2500}\u{2500} directory", path)
+                format!("{path}  \u{2500}\u{2500} directory")
             } else {
                 format!("{}  \u{2500}\u{2500} {}", path, format_file_size(size))
             }
@@ -2376,7 +2376,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
 /// Format a byte count into a human-readable size string.
 fn format_file_size(bytes: u64) -> String {
     if bytes < 1024 {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else if bytes < 1024 * 1024 * 1024 {
@@ -2410,7 +2410,7 @@ fn accept_autocomplete(app: &mut App) {
 
         if app.input.starts_with('/') {
             // Replace the entire slash command prefix.
-            app.input = format!("{} ", clean);
+            app.input = format!("{clean} ");
             app.cursor_position = app.input.len();
         } else if let Some(at_pos) = app.input.rfind('@') {
             // Strip the description suffix to get the actual path.
@@ -2432,14 +2432,14 @@ fn accept_autocomplete(app: &mut App) {
 
             if is_directory {
                 // Don't add a space — let the user browse into the directory.
-                app.input = format!("{}{}{}", before, path, after_cursor);
+                app.input = format!("{before}{path}{after_cursor}");
                 app.cursor_position = before.len() + path.len();
                 // Re-trigger autocomplete so the directory contents are shown.
                 update_autocomplete(app);
                 return;
             } else {
                 // File selected — add a trailing space.
-                app.input = format!("{}{} {}", before, path, after_cursor);
+                app.input = format!("{before}{path} {after_cursor}");
                 app.cursor_position = before.len() + path.len() + 1;
             }
         }
@@ -2486,7 +2486,7 @@ fn complete_file_path(partial: &str) -> Option<String> {
     let mut matches: Vec<String> = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') {
                 continue;
@@ -2501,12 +2501,12 @@ fn complete_file_path(partial: &str) -> Option<String> {
             let completed = if partial.contains('/') {
                 let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
                 if is_dir {
-                    format!("{}{}/", dir_part, name)
+                    format!("{dir_part}{name}/")
                 } else {
-                    format!("{}{}", dir_part, name)
+                    format!("{dir_part}{name}")
                 }
             } else if is_dir {
-                format!("{}/", name)
+                format!("{name}/")
             } else {
                 name.clone()
             };
@@ -2568,7 +2568,7 @@ fn list_file_matches(partial: &str) -> Vec<String> {
     let mut matches: Vec<String> = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.') {
                 continue;
@@ -2578,7 +2578,7 @@ fn list_file_matches(partial: &str) -> Vec<String> {
             }
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             if is_dir {
-                matches.push(format!("{}/", name));
+                matches.push(format!("{name}/"));
             } else {
                 matches.push(name);
             }
@@ -2987,9 +2987,8 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
                 0,
                 ChatMessage::system(format!(
                     "The following knowledge base context may be relevant \
-                     to the user's query:\n\n{}\n\n\
-                     Use this context to inform your response if relevant.",
-                    context
+                     to the user's query:\n\n{context}\n\n\
+                     Use this context to inform your response if relevant."
                 )),
             );
         }
@@ -3805,10 +3804,9 @@ mod tests {
         // Simulate a long conversation
         for i in 0..50 {
             app.add_user_message(format!(
-                "Question {} about Rust programming and how to handle async errors properly",
-                i
+                "Question {i} about Rust programming and how to handle async errors properly"
             ));
-            app.add_assistant_message(format!("Answer {} explaining async error handling with detailed code examples and best practices for production use", i));
+            app.add_assistant_message(format!("Answer {i} explaining async error handling with detailed code examples and best practices for production use"));
         }
 
         // Apply context management with a very tight budget so compaction triggers

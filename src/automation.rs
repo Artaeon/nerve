@@ -82,7 +82,7 @@ pub fn load_automation(name: &str) -> anyhow::Result<Automation> {
     let path = dir.join(format!("{filename}.toml"));
 
     if !path.exists() {
-        anyhow::bail!("Automation '{}' not found", name);
+        anyhow::bail!("Automation '{name}' not found");
     }
 
     let content = fs::read_to_string(path)?;
@@ -119,7 +119,7 @@ pub fn delete_automation(name: &str) -> anyhow::Result<()> {
     let path = dir.join(format!("{filename}.toml"));
 
     if !path.exists() {
-        anyhow::bail!("Automation '{}' not found", name);
+        anyhow::bail!("Automation '{name}' not found");
     }
 
     fs::remove_file(path)?;

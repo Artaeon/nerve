@@ -150,7 +150,7 @@ fn handle_limit(app: &mut App, trimmed: &str) -> bool {
             if let Some(amount) = args.get(1).and_then(|s| s.parse::<f64>().ok()) {
                 app.spending_limit.max_cost_usd = amount;
                 app.spending_limit.enabled = true;
-                app.set_status(format!("Spending limit set to ${:.2}/session", amount));
+                app.set_status(format!("Spending limit set to ${amount:.2}/session"));
             } else {
                 app.set_status("Usage: /limit set <amount_usd>".to_string());
             }

@@ -964,9 +964,9 @@ command_timeout_secs = 120
 
     #[test]
     fn config_parse_timeout_zero() {
-        let toml_str = r#"
+        let toml_str = r"
 command_timeout_secs = 0
-"#;
+";
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(cfg.command_timeout_secs, 0);
     }

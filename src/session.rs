@@ -224,7 +224,7 @@ mod tests {
         let dir = sessions_dir();
         let found = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
         assert!(found, "Named session file should exist");
     }
@@ -393,7 +393,7 @@ mod tests {
         let dir = sessions_dir();
         let found = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
         assert!(found, "Named session file should exist");
 
@@ -686,7 +686,7 @@ mod tests {
         let prefix = format!("session_{}", &session.id[..8]);
         let before = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
         assert!(before, "Named copy should exist before delete");
 
@@ -694,7 +694,7 @@ mod tests {
 
         let after = std::fs::read_dir(&dir)
             .unwrap()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .any(|e| e.file_name().to_string_lossy().starts_with(&prefix));
         assert!(!after, "Named copy should be gone after delete");
     }

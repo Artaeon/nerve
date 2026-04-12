@@ -95,8 +95,7 @@ impl ContextManager {
             if role == "user" && content.starts_with("Tool execution results:") {
                 let tool_count = content.matches("<tool_result>").count();
                 let brief = format!(
-                    "[Previous tool execution: {} tool(s) ran successfully]",
-                    tool_count
+                    "[Previous tool execution: {tool_count} tool(s) ran successfully]"
                 );
                 result.push((role.clone(), brief));
             } else if role == "system"
@@ -106,7 +105,7 @@ impl ContextManager {
             {
                 // Compact old file/command context
                 let first_line: String = content.lines().next().unwrap_or("").to_string();
-                result.push((role.clone(), format!("[Context: {}]", first_line)));
+                result.push((role.clone(), format!("[Context: {first_line}]")));
             } else {
                 result.push((role.clone(), content.clone()));
             }

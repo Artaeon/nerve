@@ -98,7 +98,7 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             let full = if remaining_args.is_empty() {
                 aliased.clone()
             } else {
-                format!("{} {}", aliased, remaining_args)
+                format!("{aliased} {remaining_args}")
             };
             app.input = full;
             app.cursor_position = app.input.len();

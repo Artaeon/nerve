@@ -1096,7 +1096,7 @@ export function Counter() {
             },
             TemplateFile {
                 path: "src/index.css".into(),
-                content: r#":root {
+                content: r":root {
   font-family: system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   color: #213547;
@@ -1125,7 +1125,7 @@ button {
 button:hover {
   background-color: #f0f0f0;
 }
-"#
+"
                 .into(),
             },
             TemplateFile {
@@ -1151,7 +1151,7 @@ describe("App", () => {
             },
             TemplateFile {
                 path: "README.md".into(),
-                content: r#"# {{name}}
+                content: r"# {{name}}
 
 {{description}}
 
@@ -1173,7 +1173,7 @@ npm run dev
 npm run build
 npm run preview
 ```
-"#
+"
                 .into(),
             },
         ],
@@ -1306,7 +1306,7 @@ if __name__ == "__main__":
             },
             TemplateFile {
                 path: "README.md".into(),
-                content: r#"# {{name}}
+                content: r"# {{name}}
 
 {{description}}
 
@@ -1328,7 +1328,7 @@ pip install -e .
 ```bash
 python -m pytest tests/
 ```
-"#
+"
                 .into(),
             },
         ],
@@ -1750,10 +1750,10 @@ fn go_api_template() -> ProjectTemplate {
         files: vec![
             TemplateFile {
                 path: "go.mod".into(),
-                content: r#"module {{name}}
+                content: r"module {{name}}
 
 go 1.23
-"#
+"
                 .into(),
             },
             TemplateFile {

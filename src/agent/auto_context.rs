@@ -31,7 +31,7 @@ pub struct FileSnippet {
 /// Runs entirely on the filesystem — no AI calls.
 pub fn gather_context(message: &str, workspace_root: Option<&Path>) -> GatheredContext {
     let root = workspace_root
-        .map(|p| p.to_path_buf())
+        .map(std::path::Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default();
 

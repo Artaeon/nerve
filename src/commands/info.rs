@@ -279,9 +279,9 @@ fn handle_summary(app: &mut App) -> bool {
         .map(|(_, c)| c.len() / 4 + 1)
         .sum::<usize>();
 
-    summary.push_str(&format!("Messages: {} user, {} AI\n", user_count, ai_count));
-    summary.push_str(&format!("Words: {}\n", total_words));
-    summary.push_str(&format!("Estimated tokens: ~{}\n\n", total_tokens));
+    summary.push_str(&format!("Messages: {user_count} user, {ai_count} AI\n"));
+    summary.push_str(&format!("Words: {total_words}\n"));
+    summary.push_str(&format!("Estimated tokens: ~{total_tokens}\n\n"));
 
     summary.push_str("Topics discussed:\n");
     for (i, (role, content)) in conv.messages.iter().enumerate() {
@@ -327,8 +327,7 @@ fn handle_compact(app: &mut App) -> bool {
                 &app.current_conversation().messages,
             );
         app.set_status(format!(
-            "Compacted: {} \u{2192} {} messages (~{} tokens saved)",
-            before, after, saved_tokens
+            "Compacted: {before} \u{2192} {after} messages (~{saved_tokens} tokens saved)"
         ));
     }
     true
@@ -344,9 +343,9 @@ fn handle_tokens(app: &mut App) -> bool {
     let pct = (total as f64 / limit as f64 * 100.0).min(100.0);
 
     let mut msg = format!("Token Usage\n{}\n\n", "=".repeat(30));
-    msg.push_str(&format!("Estimated tokens: ~{}\n", total));
-    msg.push_str(&format!("Provider limit:   ~{}\n", limit));
-    msg.push_str(&format!("Usage:            {:.1}%\n\n", pct));
+    msg.push_str(&format!("Estimated tokens: ~{total}\n"));
+    msg.push_str(&format!("Provider limit:   ~{limit}\n"));
+    msg.push_str(&format!("Usage:            {pct:.1}%\n\n"));
 
     msg.push_str("Breakdown by message:\n");
     for (i, (role, content)) in conv.messages.iter().enumerate() {
@@ -361,8 +360,7 @@ fn handle_tokens(app: &mut App) -> bool {
 
     if pct > 70.0 {
         msg.push_str(&format!(
-            "\nWarning: {:.0}% of context used. Consider /compact to save tokens.",
-            pct
+            "\nWarning: {pct:.0}% of context used. Consider /compact to save tokens."
         ));
     }
 

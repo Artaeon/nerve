@@ -190,7 +190,7 @@ pub fn render_prompt_picker(frame: &mut Frame, app: &App, area: Rect) {
 
     let prompt_list = List::new(prompt_items).block(
         Block::default()
-            .title(format!(" {} ", selected_category))
+            .title(format!(" {selected_category} "))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(prompt_border_color)),
     );

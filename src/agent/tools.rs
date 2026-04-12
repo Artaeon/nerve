@@ -348,7 +348,7 @@ pub fn reset_tool_counter() {
 /// Extract a required argument from a tool call, returning an error result
 /// if the argument is missing or empty.
 fn require_arg<'a>(call: &'a ToolCall, name: &str) -> Result<&'a str, ToolResult> {
-    match call.args.get(name).map(|s| s.as_str()) {
+    match call.args.get(name).map(std::string::String::as_str) {
         Some(v) if !v.is_empty() => Ok(v),
         _ => Err(ToolResult {
             tool: call.tool.clone(),
@@ -570,7 +570,7 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let content = call.args.get("content").map(|s| s.as_str()).unwrap_or("");
+    let content = call.args.get("content").map(std::string::String::as_str).unwrap_or("");
 
     // Security: block writing to protected system paths (including symlinks).
     if let Err(blocked) = validate_write_path(path, "write_file") {
@@ -618,7 +618,7 @@ fn execute_edit_file(call: &ToolCall) -> ToolResult {
         Ok(t) => t,
         Err(e) => return e,
     };
-    let new_text = call.args.get("new_text").map(|s| s.as_str()).unwrap_or("");
+    let new_text = call.args.get("new_text").map(std::string::String::as_str).unwrap_or("");
 
     // Security: block editing protected system paths (including symlinks).
     if let Err(blocked) = validate_write_path(path, "edit_file") {
@@ -714,11 +714,11 @@ fn execute_run_command(call: &ToolCall, timeout_secs: u64) -> ToolResult {
 }
 
 fn execute_list_files(call: &ToolCall) -> ToolResult {
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
+    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
     match std::fs::read_dir(path) {
         Ok(entries) => {
             let mut items: Vec<String> = entries
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
                 .map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -748,7 +748,7 @@ fn execute_search_code(call: &ToolCall) -> ToolResult {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
+    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
 
     let cmd = format!(
         "grep -rn --include='*.rs' --include='*.py' --include='*.js' --include='*.ts' \
@@ -805,8 +805,8 @@ fn execute_create_dir(call: &ToolCall) -> ToolResult {
 }
 
 fn execute_find_files(call: &ToolCall) -> ToolResult {
-    let pattern = call.args.get("pattern").map(|s| s.as_str()).unwrap_or("*");
-    let path = call.args.get("path").map(|s| s.as_str()).unwrap_or(".");
+    let pattern = call.args.get("pattern").map(std::string::String::as_str).unwrap_or("*");
+    let path = call.args.get("path").map(std::string::String::as_str).unwrap_or(".");
 
     let cmd = format!(
         "find {} -name {} -type f | head -100",
@@ -1085,7 +1085,7 @@ content: fn main() {
 
     #[test]
     fn parse_edit_file_with_multiline() {
-        let text = r#"<tool_call>
+        let text = r"<tool_call>
 tool: edit_file
 path: src/main.rs
 old_text: fn old() {
@@ -1094,7 +1094,7 @@ old_text: fn old() {
 new_text: fn new() {
     new_code();
 }
-</tool_call>"#;
+</tool_call>";
         let calls = parse_tool_calls(text);
         assert_eq!(calls.len(), 1);
         assert!(calls[0].args.get("old_text").unwrap().contains("old_code"));

@@ -171,8 +171,7 @@ fn handle_template(app: &mut App, trimmed: &str) -> bool {
         }
         None => {
             app.add_assistant_message(format!(
-                "Template '{}' not found. Use /template list to see available templates.",
-                template_name
+                "Template '{template_name}' not found. Use /template list to see available templates."
             ));
         }
     }

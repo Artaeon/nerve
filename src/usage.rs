@@ -129,7 +129,7 @@ impl SpendingLimit {
         if let Some(max) = self.max_tokens {
             let total = stats.total_tokens_sent + stats.total_tokens_received;
             if total >= max {
-                return Some(format!("Token limit reached: {}/{}", total, max));
+                return Some(format!("Token limit reached: {total}/{max}"));
             }
         }
 

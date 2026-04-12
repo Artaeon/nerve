@@ -302,7 +302,7 @@ fn collapse_whitespace(text: &str) -> String {
     // Remove leading/trailing whitespace from each line.
     result
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect::<Vec<_>>()
         .join("\n")

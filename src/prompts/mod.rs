@@ -99,7 +99,7 @@ mod tests {
     #[test]
     fn categories_has_no_duplicates() {
         let cats = categories();
-        let set: HashSet<&str> = cats.iter().map(|s| s.as_str()).collect();
+        let set: HashSet<&str> = cats.iter().map(std::string::String::as_str).collect();
         assert_eq!(cats.len(), set.len(), "categories() returned duplicates");
     }
 }

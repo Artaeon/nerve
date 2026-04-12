@@ -108,7 +108,7 @@ pub fn render_help(frame: &mut Frame) {
             // Section header with a subtle underline effect.
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("--- {} ", desc),
+                    format!("--- {desc} "),
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
@@ -122,7 +122,7 @@ pub fn render_help(frame: &mut Frame) {
         }
 
         // Pad the key column to a fixed width for alignment.
-        let padded_key = format!("{key:<width$}", width = key_col_width);
+        let padded_key = format!("{key:<key_col_width$}");
         lines.push(Line::from(vec![
             Span::styled(
                 padded_key,

@@ -106,7 +106,7 @@ fn has_extension(dir: &Path, ext: &str) -> bool {
         .ok()
         .map(|entries| {
             entries
-                .filter_map(|e| e.ok())
+                .filter_map(std::result::Result::ok)
                 .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some(ext))
         })
         .unwrap_or(false)
@@ -497,10 +497,10 @@ pub(crate) fn build_tree(
     }
 
     let mut entries: Vec<_> = match std::fs::read_dir(dir) {
-        Ok(entries) => entries.filter_map(|e| e.ok()).collect(),
+        Ok(entries) => entries.filter_map(std::result::Result::ok).collect(),
         Err(_) => return,
     };
-    entries.sort_by_key(|e| e.file_name());
+    entries.sort_by_key(std::fs::DirEntry::file_name);
 
     for entry in &entries {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -577,7 +577,7 @@ fn collect_source_files(
     }
 
     if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let name = entry.file_name().to_string_lossy().to_string();
             if name.starts_with('.')
                 || name == "target"

@@ -276,7 +276,7 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
             name: name.into(),
             description: desc.into(),
             template: name.into(),
-            category: format!("Commands: {}", cat),
+            category: format!("Commands: {cat}"),
             tags: vec!["command".into()],
         })
         .collect()
@@ -312,7 +312,7 @@ pub(crate) fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
     all_prompts.extend(command_prompts());
 
     let tabs = category_tabs();
-    let active_cat = tabs.get(app.command_bar_category).map(|s| s.as_str());
+    let active_cat = tabs.get(app.command_bar_category).map(std::string::String::as_str);
 
     // Category filter.
     let cat_filtered: Vec<&prompts::SmartPrompt> = all_prompts
@@ -427,7 +427,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let tab_labels: Vec<(String, bool)> = tabs
         .iter()
         .enumerate()
-        .map(|(i, name)| (format!(" {} ", name), i == app.command_bar_category))
+        .map(|(i, name)| (format!(" {name} "), i == app.command_bar_category))
         .collect();
 
     // Calculate the character offset of the active tab and the total width.
@@ -539,7 +539,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
                 // Truncate long prompt names to fit the available width.
                 let max_name_len = list_width.saturating_sub(display_width(&badge) + 6); // 6 = marker + padding
                 let truncated_name = truncate_with_ellipsis(&prompt.name, max_name_len);
-                let name_part = format!("{}{}", marker, truncated_name);
+                let name_part = format!("{marker}{truncated_name}");
                 // Calculate padding between name and badge.
                 let padding_len = list_width
                     .saturating_sub(display_width(&name_part))
@@ -615,7 +615,7 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     }
 
     // ── 5. Footer ───────────────────────────────────────────────────────
-    let footer_left = format!("{}/{} items", match_count, total);
+    let footer_left = format!("{match_count}/{total} items");
     let footer_right = "Enter \u{23ce}  |  Tab: category  |  Esc: close";
     let footer_pad = (chunks[4].width as usize)
         .saturating_sub(display_width(&footer_left))
@@ -718,7 +718,7 @@ mod tests {
         let mut app = App::new();
         app.command_bar_input.clear();
         let count = matched_prompt_count(&app);
-        assert!(count >= 225, "expected >= 225, got {}", count);
+        assert!(count >= 225, "expected >= 225, got {count}");
     }
 
     #[test]

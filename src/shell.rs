@@ -23,7 +23,7 @@ pub fn shell_escape(s: &str) -> String {
 /// Returns `true` for `/cmd` (exact) or `/cmd args...` (with space separator).
 /// Returns `false` for `/cmdx` (different command that shares a prefix).
 pub fn matches_command(input: &str, cmd: &str) -> bool {
-    input == cmd || input.starts_with(&format!("{} ", cmd))
+    input == cmd || input.starts_with(&format!("{cmd} "))
 }
 
 #[derive(Debug, Clone)]

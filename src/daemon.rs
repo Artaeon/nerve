@@ -45,7 +45,7 @@ async fn handle_client(stream: &mut UnixStream) {
             }
 
             // Parse request and respond
-            let response = format!("Nerve daemon received: {}", request);
+            let response = format!("Nerve daemon received: {request}");
             let _ = stream.write_all(response.as_bytes()).await;
         }
         _ => {}

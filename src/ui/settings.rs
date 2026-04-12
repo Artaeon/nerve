@@ -214,7 +214,7 @@ fn render_general_tab(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(format!("{:<20}", label), label_style),
+            Span::styled(format!("{label:<20}"), label_style),
             Span::styled(value.clone(), value_style),
         ]));
     }
@@ -327,8 +327,8 @@ fn render_providers_tab(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(format!("{:<14}", name), label_style),
-            Span::styled(format!("{:<10}", status), Style::default().fg(status_color)),
+            Span::styled(format!("{name:<14}"), label_style),
+            Span::styled(format!("{status:<10}"), Style::default().fg(status_color)),
             Span::styled(detail.clone(), Style::default().fg(Color::DarkGray)),
         ]));
     }
@@ -439,7 +439,7 @@ fn render_theme_tab(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(format!("{:<20}", label), label_style),
+            Span::styled(format!("{label:<20}"), label_style),
         ];
 
         if let Some(c) = color {
@@ -580,7 +580,7 @@ fn render_keybinds_tab(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(format!("{:<22}", key), key_style),
+            Span::styled(format!("{key:<22}"), key_style),
             Span::styled(*desc, desc_style),
         ]));
     }
@@ -655,7 +655,7 @@ fn render_git_tab(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(Color::DarkGray)
                 },
             ),
-            Span::styled(format!("{:<20}", label), label_style),
+            Span::styled(format!("{label:<20}"), label_style),
             Span::styled(value.clone(), value_style),
         ]));
     }

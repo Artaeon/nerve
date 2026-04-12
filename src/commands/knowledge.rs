@@ -149,7 +149,7 @@ fn handle_kb(app: &mut App, trimmed: &str) {
                             kb.total_words()
                         ));
                     } else {
-                        lines.push(format!("  {} \u{2014} (could not load)", name));
+                        lines.push(format!("  {name} \u{2014} (could not load)"));
                     }
                 }
                 app.current_conversation_mut()
@@ -312,7 +312,7 @@ async fn handle_auto(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider
                 for (i, step) in auto.steps.iter().enumerate() {
                     msg.push_str(&format!("  Step {}: {}\n", i + 1, step.name));
                     let model_str = step.model.as_deref().unwrap_or("(default)");
-                    msg.push_str(&format!("    Model: {}\n", model_str));
+                    msg.push_str(&format!("    Model: {model_str}\n"));
                     msg.push_str(&format!("    Prompt: {}\n\n", step.prompt_template));
                 }
                 app.add_assistant_message(msg);

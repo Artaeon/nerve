@@ -157,7 +157,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             ];
             for (key, desc) in &shortcuts {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("   {:<10}", key), key_style),
+                    Span::styled(format!("   {key:<10}"), key_style),
                     Span::styled(desc.to_string(), desc_style),
                 ]));
             }
@@ -177,7 +177,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             ];
             for (cmd, desc) in &commands {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("   {:<15}", cmd), key_style),
+                    Span::styled(format!("   {cmd:<15}"), key_style),
                     Span::styled(desc.to_string(), desc_style),
                 ]));
             }
@@ -340,7 +340,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         let msg_number = msg_count - idx;
         let number_badge = if msg_number <= 9 {
             Span::styled(
-                format!(" {} ", msg_number),
+                format!(" {msg_number} "),
                 Style::default().fg(Color::DarkGray),
             )
         } else {
@@ -356,7 +356,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 let mut header_spans = vec![];
                 if msg_number <= 9 {
                     header_spans.push(Span::styled(
-                        format!(" {} ", msg_number),
+                        format!(" {msg_number} "),
                         Style::default().fg(Color::DarkGray),
                     ));
                 } else {
@@ -643,7 +643,7 @@ fn code_header_line(lang: &str) -> Line<'static> {
     let lang_badge = if lang.is_empty() || lang == "text" {
         String::new()
     } else {
-        format!("  {}  ", lang)
+        format!("  {lang}  ")
     };
     let remaining = 40usize.saturating_sub(lang_badge.len() + 5);
 
@@ -970,7 +970,7 @@ pub(crate) fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
                                 .add_modifier(Modifier::UNDERLINED),
                         ));
                         spans.push(Span::styled(
-                            format!(" ({})", url),
+                            format!(" ({url})"),
                             Style::default()
                                 .fg(Color::DarkGray)
                                 .add_modifier(Modifier::DIM),

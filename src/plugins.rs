@@ -189,7 +189,7 @@ pub fn load_plugins() -> Vec<Plugin> {
     let mut plugins = Vec::new();
 
     if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let path = entry.path();
             if !path.is_dir() {
                 continue;
@@ -279,7 +279,7 @@ pub fn list_all_plugins() -> Vec<(PluginManifest, bool)> {
     let mut result = Vec::new();
 
     if let Ok(entries) = fs::read_dir(&dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
+        for entry in entries.filter_map(std::result::Result::ok) {
             let path = entry.path();
             if !path.is_dir() {
                 continue;

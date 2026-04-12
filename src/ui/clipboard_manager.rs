@@ -147,8 +147,7 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
     // ── Bottom help bar ─────────────────────────────────────────────
     let total = app.clipboard_manager.entries().len();
     let help_text = format!(
-        "{}/{} entries | Enter: Copy to clipboard | d: Delete | Esc: Close",
-        match_count, total
+        "{match_count}/{total} entries | Enter: Copy to clipboard | d: Delete | Esc: Close"
     );
     let help_widget = Paragraph::new(Line::from(Span::styled(
         help_text,

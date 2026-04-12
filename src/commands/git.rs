@@ -15,7 +15,7 @@ fn build_git_author_flag(name: &str, email: &str) -> String {
     if name.is_empty() || email.is_empty() {
         return String::new();
     }
-    let author = format!("{} <{}>", name, email);
+    let author = format!("{name} <{email}>");
     format!("--author={}", shell::shell_escape(&author))
 }
 
@@ -97,7 +97,7 @@ fn handle_log(app: &mut App, trimmed: &str) -> bool {
     let count = rest.parse::<usize>().unwrap_or(10);
     let count = count.clamp(1, 100);
 
-    let cmd = format!("git log --oneline --decorate --graph -{}", count);
+    let cmd = format!("git log --oneline --decorate --graph -{count}");
 
     match shell::run_command(&cmd) {
         Ok(result) => {
@@ -290,7 +290,7 @@ async fn generate_commit_message(
     // Truncate large diffs to avoid exceeding context (char-safe, not byte-based).
     let diff_text = if diff_detail.stdout.chars().count() > 4000 {
         let truncated: String = diff_detail.stdout.chars().take(4000).collect();
-        format!("{}\n\n... (diff truncated)", truncated)
+        format!("{truncated}\n\n... (diff truncated)")
     } else {
         diff_detail.stdout.clone()
     };
@@ -391,9 +391,8 @@ fn handle_gitbranch(app: &mut App, trimmed: &str) -> bool {
                         // Check if the branch needs force-delete
                         if result.stderr.contains("not fully merged") {
                             app.add_assistant_message(format!(
-                                "Branch '{}' is not fully merged.\n\
-                                 Use `/run git branch -D {}` to force delete.",
-                                name, name
+                                "Branch '{name}' is not fully merged.\n\
+                                 Use `/run git branch -D {name}` to force delete."
                             ));
                         } else {
                             app.set_status(format!("Delete failed: {}", result.stderr.trim()));

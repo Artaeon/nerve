@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn deserialize_empty_object() {
-        let json = r#"{}"#;
+        let json = r"{}";
         let result = serde_json::from_str::<ChatCompletionResponse>(json);
         assert!(result.is_err(), "Empty object should fail deserialization");
     }
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn deserialize_error_response_empty_object() {
-        let json = r#"{}"#;
+        let json = r"{}";
         let resp: ApiErrorResponse = serde_json::from_str(json).unwrap();
         assert!(resp.error.is_none());
     }

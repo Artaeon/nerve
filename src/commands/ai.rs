@@ -180,9 +180,9 @@ fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
     let ollama_rest = trimmed.strip_prefix("/ollama").unwrap_or("").trim();
     let ollama_args: Vec<String> = ollama_rest
         .split_whitespace()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
-    let subcmd = ollama_args.first().map(|s| s.as_str()).unwrap_or("list");
+    let subcmd = ollama_args.first().map(std::string::String::as_str).unwrap_or("list");
     match subcmd {
         "list" => {
             let models = crate::detect_ollama_models();
@@ -584,7 +584,7 @@ fn handle_mode(app: &mut App, trimmed: &str) -> bool {
             let cwd = std::env::current_dir().unwrap_or_default();
             if let Ok(entries) = std::fs::read_dir(&cwd) {
                 let key_files: Vec<String> = entries
-                    .filter_map(|e| e.ok())
+                    .filter_map(std::result::Result::ok)
                     .filter(|e| {
                         let name = e.file_name().to_string_lossy().to_string();
                         matches!(
@@ -715,7 +715,7 @@ fn handle_autocontext(app: &mut App) -> bool {
             && let Ok(content) = std::fs::read_to_string(&path)
         {
             let truncated: String = content.chars().take(500).collect();
-            context_parts.push(format!("{}:\n{}", filename, truncated));
+            context_parts.push(format!("{filename}:\n{truncated}"));
         }
     }
 
@@ -740,7 +740,7 @@ fn handle_autocontext(app: &mut App) -> bool {
         app.current_conversation_mut()
             .messages
             .push(("system".into(), full_context));
-        app.set_status(format!("Auto-context loaded (~{} tokens)", token_est));
+        app.set_status(format!("Auto-context loaded (~{token_est} tokens)"));
     }
     true
 }

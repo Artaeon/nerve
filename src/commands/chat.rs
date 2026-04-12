@@ -97,7 +97,7 @@ fn handle_export(app: &mut App) -> bool {
             "system" => "System",
             _ => role,
         };
-        content.push_str(&format!("## {}\n{}\n\n---\n\n", label, msg));
+        content.push_str(&format!("## {label}\n{msg}\n\n---\n\n"));
     }
 
     match std::fs::write(&path, &content) {
@@ -186,7 +186,7 @@ fn handle_copy(app: &mut App, trimmed: &str) -> bool {
         "all" => conv
             .messages
             .iter()
-            .map(|(role, content)| format!("{}: {}", role, content))
+            .map(|(role, content)| format!("{role}: {content}"))
             .collect::<Vec<_>>()
             .join("\n\n"),
         "last" => conv
@@ -396,7 +396,7 @@ fn handle_branch(app: &mut App, trimmed: &str) -> bool {
 
                     let mut msg =
                         format!("Diff with branch '{}'\n{}\n\n", branch.name, "=".repeat(30));
-                    msg.push_str(&format!("Common messages: {}\n", common));
+                    msg.push_str(&format!("Common messages: {common}\n"));
                     msg.push_str(&format!(
                         "Current has {} more message(s)\n",
                         current.len().saturating_sub(common)

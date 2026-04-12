@@ -572,7 +572,7 @@ impl App {
             return None;
         }
         // Save to input history (avoid duplicates of the last entry)
-        if self.input_history.last().map(|s| s.as_str()) != Some(&text) {
+        if self.input_history.last().map(std::string::String::as_str) != Some(&text) {
             self.input_history.push(text.clone());
         }
         self.input.clear();

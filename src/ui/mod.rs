@@ -174,7 +174,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     let conv_count = app.conversations.len();
     let conv_num = app.active_conversation + 1;
     let conv_indicator = if conv_count > 1 {
-        format!("\u{25c4} {}/{} \u{25ba} ", conv_num, conv_count)
+        format!("\u{25c4} {conv_num}/{conv_count} \u{25ba} ")
     } else {
         String::new()
     };
@@ -265,7 +265,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
     // Right side: provider > model | msg count
     let model_badge = Paragraph::new(Line::from(vec![
         Span::styled(
-            format!("{} ", provider_label),
+            format!("{provider_label} "),
             Style::default().fg(Color::Magenta),
         ),
         Span::styled("\u{203a} ", Style::default().fg(theme.separator())),
@@ -277,7 +277,7 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(" \u{2502} ", Style::default().fg(theme.separator())),
         Span::styled(
-            format!("{} msgs ", msg_count),
+            format!("{msg_count} msgs "),
             Style::default().fg(theme.accent),
         ),
     ]))
@@ -538,12 +538,12 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("({} words) ", word_count),
+            format!("({word_count} words) "),
             Style::default().fg(theme.dim),
         ),
     ]);
     let bottom_line = Line::from(vec![Span::styled(
-        format!(" {} ", hint),
+        format!(" {hint} "),
         Style::default().fg(theme.dim),
     )]);
 
@@ -593,7 +593,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     if app.agent_mode {
         badge_spans.push(Span::raw(" "));
         let agent_text = if let Some(ref tool) = app.active_tool {
-            format!(" \u{2699} {} ", tool)
+            format!(" \u{2699} {tool} ")
         } else if app.agent_iterations > 0 {
             format!(" AGENT {}/10 ", app.agent_iterations)
         } else {
@@ -681,7 +681,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(progress, Style::default().fg(Color::Green)),
             sep.clone(),
             Span::styled(
-                format!("~{} tokens", approx_tokens),
+                format!("~{approx_tokens} tokens"),
                 Style::default().fg(Color::Cyan),
             ),
             sep.clone(),
@@ -691,7 +691,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ),
             sep.clone(),
             Span::styled(
-                format!("{:.0} tok/s", tok_per_sec),
+                format!("{tok_per_sec:.0} tok/s"),
                 Style::default().fg(Color::DarkGray),
             ),
         ]);
@@ -842,7 +842,7 @@ fn format_number(n: usize) -> String {
     } else if n >= 1_000 {
         format!("{},{:03}", n / 1_000, n % 1_000)
     } else {
-        format!("{}", n)
+        format!("{n}")
     }
 }
 
@@ -875,7 +875,7 @@ fn format_elapsed(secs: f64) -> String {
         return "<1s".into();
     }
     if secs < 60.0 {
-        return format!("{:.0}s", secs);
+        return format!("{secs:.0}s");
     }
     let mins = (secs / 60.0).floor() as u64;
     let remaining = (secs % 60.0).floor() as u64;
@@ -943,7 +943,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
 
         // Provider header
         lines.push(Line::from(Span::styled(
-            format!("  {}", provider_name),
+            format!("  {provider_name}"),
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
@@ -964,11 +964,10 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
             let active_badge = if is_active { " [active]" } else { "" };
 
             // Pad model_id to 13 chars, display_name to 20 chars for alignment
-            let id_padded = format!("{:<13}", model_id);
-            let name_padded = format!("{:<20}", display_name);
+            let id_padded = format!("{model_id:<13}");
+            let name_padded = format!("{display_name:<20}");
             let label = format!(
-                "  {}{} {} {}{}",
-                marker, id_padded, name_padded, ctx, active_badge
+                "  {marker}{id_padded} {name_padded} {ctx}{active_badge}"
             );
 
             let style = if is_selected {
