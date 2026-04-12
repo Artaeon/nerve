@@ -20,3 +20,33 @@ jobs:
         id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Append installation instructions to release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.release.outputs.tag_name }}"
+          CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
+          INSTALL_BODY=$(cat <<'BODY'
+
+          ### Installation
+
+          Download the binary for your platform below, extract, and place in your PATH.
+
+          | Platform | Archive |
+          |----------|---------|
+          | Linux x86_64 | `nerve-linux-x86_64.tar.gz` |
+          | macOS Apple Silicon | `nerve-macos-arm64.tar.gz` |
+          | macOS Intel | `nerve-macos-x86_64.tar.gz` |
+          | Windows x86_64 | `nerve-windows-x86_64.zip` |
+
+          Or build from source:
+          ```bash
+          git clone https://github.com/Artaeon/nerve.git
+          cd nerve && cargo build --release
+          ```
+
+          SHA256 checksums are included for each binary.
+          BODY
+          )
+          gh release edit "$TAG" --notes "${CURRENT_BODY}${INSTALL_BODY}"
