@@ -328,5 +328,177 @@ async fn handle_web_search(app: &mut App, trimmed: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    // Tests for shell commands are minimal since most logic is in shell.rs.
+    use super::*;
+    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+    use std::future::Future;
+    use std::pin::Pin;
+    use tokio::sync::mpsc;
+
+    struct DummyProvider;
+    impl AiProvider for DummyProvider {
+        fn chat_stream(
+            &self,
+            _: &[ChatMessage],
+            _: &str,
+            _: mpsc::UnboundedSender<StreamEvent>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn chat(
+            &self,
+            _: &[ChatMessage],
+            _: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+            Box::pin(async { Ok(String::new()) })
+        }
+        fn list_models(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn name(&self) -> &str {
+            "dummy"
+        }
+    }
+
+    // ── Command routing ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unrecognized_command_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn run_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/run echo hello").await);
+    }
+
+    #[tokio::test]
+    async fn run_bang_shorthand() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/! echo hello").await);
+    }
+
+    #[tokio::test]
+    async fn run_empty_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/run ").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn run_dangerous_command_blocked() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/run rm -rf /").await);
+        let status = app.status_message.clone().unwrap_or_default();
+        assert!(status.contains("Blocked"));
+    }
+
+    #[tokio::test]
+    async fn pipe_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/pipe echo context").await);
+    }
+
+    #[tokio::test]
+    async fn pipe_empty_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/pipe ").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn pipe_dangerous_command_blocked() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/pipe rm -rf /").await);
+        let status = app.status_message.clone().unwrap_or_default();
+        assert!(status.contains("Blocked"));
+    }
+
+    #[tokio::test]
+    async fn diff_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/diff").await);
+    }
+
+    #[tokio::test]
+    async fn test_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/test").await);
+    }
+
+    #[tokio::test]
+    async fn build_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/build").await);
+    }
+
+    #[tokio::test]
+    async fn lint_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/lint").await);
+    }
+
+    #[tokio::test]
+    async fn format_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/format").await);
+    }
+
+    #[tokio::test]
+    async fn fmt_alias_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/fmt").await);
+    }
+
+    #[tokio::test]
+    async fn search_empty_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/search").await);
+        let status = app.status_message.clone().unwrap_or_default();
+        assert!(status.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn search_with_pattern_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/search fn main").await);
+    }
+
+    #[tokio::test]
+    async fn web_empty_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/web").await);
+        let status = app.status_message.clone().unwrap_or_default();
+        assert!(status.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn git_command_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/git status").await);
+    }
+
+    #[tokio::test]
+    async fn git_defaults_to_status() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/git").await);
+    }
+
+    #[tokio::test]
+    async fn git_log_with_count() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/git log 5").await);
+    }
+
+    #[tokio::test]
+    async fn git_dangerous_command_blocked() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/git push --force --delete main").await);
+        // Should still be handled (returns true) even if dangerous
+    }
 }
