@@ -677,4 +677,99 @@ mod tests {
         assert!(p.tools_enabled());
         assert_eq!(p.working_dir, Some("/tmp/test".into()));
     }
+
+    // ── build_args tests ────────────────────────────────────────────
+
+    #[test]
+    fn build_args_basic_structure() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hello", "sonnet", "text", &None);
+        assert_eq!(args[0], "-p");
+        assert_eq!(args[1], "hello");
+        assert_eq!(args[2], "--output-format");
+        assert_eq!(args[3], "text");
+        assert_eq!(args[4], "--model");
+        assert_eq!(args[5], "sonnet");
+    }
+
+    #[test]
+    fn build_args_json_format() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("prompt", "opus", "json", &None);
+        assert_eq!(args[3], "json");
+    }
+
+    #[test]
+    fn build_args_tools_disabled_adds_empty_allowed_tools() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(args.contains(&"--allowedTools".to_string()));
+        assert!(args.contains(&String::new()));
+        assert!(!args.contains(&"--dangerously-skip-permissions".to_string()));
+    }
+
+    #[test]
+    fn build_args_tools_enabled_adds_dangerous_flag() {
+        let p = ClaudeCodeProvider::with_tools();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
+        assert!(!args.contains(&"--allowedTools".to_string()));
+    }
+
+    #[test]
+    fn build_args_no_session_adds_no_persistence() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(args.contains(&"--no-session-persistence".to_string()));
+        assert!(!args.contains(&"--resume".to_string()));
+    }
+
+    #[test]
+    fn build_args_with_session_adds_resume() {
+        let mut p = ClaudeCodeProvider::new();
+        p.session_id = Some("sess-123".into());
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(args.contains(&"--resume".to_string()));
+        assert!(args.contains(&"sess-123".to_string()));
+        assert!(!args.contains(&"--no-session-persistence".to_string()));
+    }
+
+    #[test]
+    fn build_args_with_working_dir() {
+        let p = ClaudeCodeProvider::new().with_working_dir("/project".into());
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(args.contains(&"--add-dir".to_string()));
+        assert!(args.contains(&"/project".to_string()));
+    }
+
+    #[test]
+    fn build_args_without_working_dir() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(!args.contains(&"--add-dir".to_string()));
+    }
+
+    #[test]
+    fn build_args_with_system_prompt() {
+        let p = ClaudeCodeProvider::new();
+        let sys = Some("You are helpful.".to_string());
+        let args = p.build_args("hi", "sonnet", "text", &sys);
+        assert!(args.contains(&"--system-prompt".to_string()));
+        assert!(args.contains(&"You are helpful.".to_string()));
+    }
+
+    #[test]
+    fn build_args_without_system_prompt() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(!args.contains(&"--system-prompt".to_string()));
+    }
+
+    #[test]
+    fn build_args_special_characters_in_prompt() {
+        let p = ClaudeCodeProvider::new();
+        let prompt = "hello 'world' \"test\" $VAR `cmd`";
+        let args = p.build_args(prompt, "sonnet", "text", &None);
+        assert_eq!(args[1], prompt);
+    }
 }
