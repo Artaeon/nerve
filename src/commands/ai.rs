@@ -182,7 +182,10 @@ fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
         .split_whitespace()
         .map(std::string::ToString::to_string)
         .collect();
-    let subcmd = ollama_args.first().map(std::string::String::as_str).unwrap_or("list");
+    let subcmd = ollama_args
+        .first()
+        .map(std::string::String::as_str)
+        .unwrap_or("list");
     match subcmd {
         "list" => {
             let models = crate::detect_ollama_models();

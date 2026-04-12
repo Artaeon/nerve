@@ -507,10 +507,7 @@ fn render_goodbye(frame: &mut ratatui::Frame, app: &crate::app::App) {
 fn save_last_provider(provider: &str, model: &str) {
     let dir = dirs::config_dir().unwrap_or_default().join("nerve");
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(
-        dir.join("last_provider"),
-        format!("{provider}\n{model}"),
-    );
+    let _ = std::fs::write(dir.join("last_provider"), format!("{provider}\n{model}"));
 }
 
 /// Load the last used provider+model (if saved).
@@ -1479,7 +1476,7 @@ async fn handle_normal_mode(
                                 let partial = &app.input[at_pos + 1..pos];
                                 if partial.contains('.') || partial.contains('/') {
                                     if let Some(completed) = complete_file_path(partial) {
-                                        let before = app.input[..at_pos + 1].to_string();
+                                        let before = app.input[..=at_pos].to_string();
                                         let after = app.input[pos..].to_string();
                                         app.input = format!("{before}{completed}{after}");
                                         app.cursor_position = at_pos + 1 + completed.len();
@@ -2310,7 +2307,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
     };
 
     let (dir, prefix) = if path.is_dir() {
-        (path.clone(), String::new())
+        (path, String::new())
     } else {
         let parent = path.parent().unwrap_or(Path::new("."));
         let file_prefix = path
@@ -2340,7 +2337,7 @@ fn autocomplete_file_paths(partial: &str) -> Vec<String> {
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
 
             let completed = if partial.contains('/') {
-                let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
+                let dir_part = &partial[..=partial.rfind('/').unwrap_or(0)];
                 if is_dir {
                     format!("{dir_part}{name}/")
                 } else {
@@ -2418,7 +2415,7 @@ fn accept_autocomplete(app: &mut App) {
             let is_directory = path.ends_with('/');
 
             // Replace the text after `@` with the selected path.
-            let before = app.input[..at_pos + 1].to_string();
+            let before = app.input[..=at_pos].to_string();
             let after_cursor = if app.cursor_position < app.input.len() {
                 // Preserve any text after the current partial.
                 let partial_end = app.input[at_pos + 1..]
@@ -2469,7 +2466,7 @@ fn complete_file_path(partial: &str) -> Option<String> {
 
     // Get the parent directory and the prefix to match
     let (dir, prefix) = if path.is_dir() {
-        (path.clone(), String::new())
+        (path, String::new())
     } else {
         let parent = path.parent().unwrap_or(Path::new("."));
         let file_prefix = path
@@ -2499,7 +2496,7 @@ fn complete_file_path(partial: &str) -> Option<String> {
 
             // Build the completed path relative to what the user typed
             let completed = if partial.contains('/') {
-                let dir_part = &partial[..partial.rfind('/').unwrap_or(0) + 1];
+                let dir_part = &partial[..=partial.rfind('/').unwrap_or(0)];
                 if is_dir {
                     format!("{dir_part}{name}/")
                 } else {
@@ -2551,7 +2548,7 @@ fn list_file_matches(partial: &str) -> Vec<String> {
     };
 
     let (dir, prefix) = if path.is_dir() {
-        (path.clone(), String::new())
+        (path, String::new())
     } else {
         let parent = path.parent().unwrap_or(Path::new("."));
         let file_prefix = path

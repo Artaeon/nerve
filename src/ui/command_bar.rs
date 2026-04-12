@@ -284,7 +284,7 @@ fn command_prompts() -> Vec<prompts::SmartPrompt> {
 
 /// Build the list of category tab labels: "All" followed by every real category,
 /// plus "Quick Actions" and "Commands" groups.
-pub(crate) fn category_tabs() -> Vec<String> {
+pub fn category_tabs() -> Vec<String> {
     let mut tabs: Vec<String> = std::iter::once("All".to_string())
         .chain(prompts::categories())
         .collect();
@@ -306,13 +306,15 @@ pub(crate) fn category_tabs() -> Vec<String> {
 
 /// Apply both category and fuzzy-search filters, returning scored results.
 /// Includes SmartPrompts, quick actions, and slash commands.
-pub(crate) fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
+pub fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
     let mut all_prompts = prompts::all_prompts();
     all_prompts.extend(quick_action_prompts());
     all_prompts.extend(command_prompts());
 
     let tabs = category_tabs();
-    let active_cat = tabs.get(app.command_bar_category).map(std::string::String::as_str);
+    let active_cat = tabs
+        .get(app.command_bar_category)
+        .map(std::string::String::as_str);
 
     // Category filter.
     let cat_filtered: Vec<&prompts::SmartPrompt> = all_prompts

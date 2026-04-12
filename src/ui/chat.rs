@@ -594,7 +594,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
 /// - Italic (`*text*`) → ITALIC modifier
 /// - Headers (`# …`) → Bold + Cyan
 /// - List items (`- …`) → indented bullet
-pub(crate) fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
+pub fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
     let ss = &*SYNTAX_SET;
     let theme = &*THEME;
 
@@ -683,12 +683,7 @@ fn code_footer_line() -> Line<'static> {
 const MAX_HIGHLIGHT_LINES: usize = 200;
 
 /// Syntax-highlight a code block and return styled `Line`s with line numbers.
-pub(crate) fn highlight_code(
-    code: &str,
-    lang: &str,
-    ss: &SyntaxSet,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
+pub fn highlight_code(code: &str, lang: &str, ss: &SyntaxSet, theme: &Theme) -> Vec<Line<'static>> {
     let syntax = ss
         .find_syntax_by_token(lang)
         .unwrap_or_else(|| ss.find_syntax_plain_text());
@@ -762,7 +757,7 @@ pub(crate) fn highlight_code(
 // ── Basic markdown formatting for non-code text ──────────────────────────────
 
 /// Format a single line of non-code assistant text with simple markdown support.
-pub(crate) fn format_markdown_line(text_line: &str) -> Line<'static> {
+pub fn format_markdown_line(text_line: &str) -> Line<'static> {
     let trimmed = text_line.trim_start();
 
     // ── Headers: `# Heading`, `## Heading`, etc. ─────────────────────
@@ -843,7 +838,7 @@ pub(crate) fn format_markdown_line(text_line: &str) -> Line<'static> {
 
 /// If the line starts with a markdown header (`#`, `##`, …), return the text
 /// portion (without the `#` markers and leading space).
-pub(crate) fn try_strip_header(s: &str) -> Option<&str> {
+pub fn try_strip_header(s: &str) -> Option<&str> {
     if !s.starts_with('#') {
         return None;
     }
@@ -865,7 +860,7 @@ pub(crate) fn try_strip_header(s: &str) -> Option<&str> {
 /// Parse inline markdown spans: **bold**, *italic*, `code`.
 ///
 /// Uses a simple state-machine approach rather than full markdown parsing.
-pub(crate) fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
+pub fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut chars = text.char_indices().peekable();
     let mut plain_start = 0;
@@ -1045,7 +1040,7 @@ pub(crate) fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
 ///
 /// Since individual messages don't carry their own timestamps, we estimate
 /// based on conversation creation time and message index within the conversation.
-pub(crate) fn format_time_ago(
+pub fn format_time_ago(
     now: chrono::DateTime<chrono::Utc>,
     conv_created: chrono::DateTime<chrono::Utc>,
     msg_index: usize,

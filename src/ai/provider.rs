@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn stream_event_token_is_cloneable() {
         let event = StreamEvent::Token("chunk".into());
-        let cloned = event.clone();
+        let cloned = event;
         if let StreamEvent::Token(t) = cloned {
             assert_eq!(t, "chunk");
         } else {

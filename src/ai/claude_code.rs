@@ -599,7 +599,7 @@ mod tests {
         // Prompt should preserve the content as-is -- no escaping needed
         // since we pass via Command::args() not sh -c
         assert!(prompt.contains("'hello'"));
-        assert!(prompt.contains("|"));
+        assert!(prompt.contains('|'));
     }
 
     #[test]
@@ -646,7 +646,7 @@ mod tests {
     fn build_prompt_preserves_tabs_and_whitespace() {
         let messages = vec![ChatMessage::user("fn main() {\n\tprintln!(\"hi\");\n}")];
         let (_, prompt) = ClaudeCodeProvider::build_prompt(&messages);
-        assert!(prompt.contains("\t"));
+        assert!(prompt.contains('\t'));
     }
 
     #[test]

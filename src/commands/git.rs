@@ -581,21 +581,21 @@ fn handle_stash(app: &mut App, trimmed: &str) -> bool {
 
 /// Extract the commit message from a `/commit ...` input.
 #[cfg(test)]
-pub(crate) fn parse_commit_message(input: &str) -> Option<&str> {
+pub fn parse_commit_message(input: &str) -> Option<&str> {
     let rest = input.strip_prefix("/commit")?.trim();
     if rest.is_empty() { None } else { Some(rest) }
 }
 
 /// Parse `/log ...` input into the count.
 #[cfg(test)]
-pub(crate) fn parse_log_count(input: &str) -> usize {
+pub fn parse_log_count(input: &str) -> usize {
     let rest = input.strip_prefix("/log").unwrap_or("").trim();
     rest.parse::<usize>().unwrap_or(10).clamp(1, 100)
 }
 
 /// Parse `/gitbranch ...` input into (subcommand, name).
 #[cfg(test)]
-pub(crate) fn parse_gitbranch_args(input: &str) -> (&str, Option<&str>) {
+pub fn parse_gitbranch_args(input: &str) -> (&str, Option<&str>) {
     let rest = input.strip_prefix("/gitbranch").unwrap_or("").trim();
     let args: Vec<&str> = rest.split_whitespace().collect();
 
@@ -611,7 +611,7 @@ pub(crate) fn parse_gitbranch_args(input: &str) -> (&str, Option<&str>) {
 
 /// Parse `/stash ...` input into the subcommand.
 #[cfg(test)]
-pub(crate) fn parse_stash_subcommand(input: &str) -> &str {
+pub fn parse_stash_subcommand(input: &str) -> &str {
     let rest = input.strip_prefix("/stash").unwrap_or("").trim();
     let first = rest.split_whitespace().next().unwrap_or("");
     match first {

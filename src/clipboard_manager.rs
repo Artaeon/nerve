@@ -204,7 +204,7 @@ mod tests {
     fn add_generates_preview_with_truncation() {
         let mut cm = ClipboardManager::new(10);
         let long_content = "a".repeat(200);
-        cm.add(long_content.clone(), ClipboardSource::UserCopy);
+        cm.add(long_content, ClipboardSource::UserCopy);
 
         let entry = &cm.entries()[0];
         assert_eq!(entry.preview.len(), 100);

@@ -310,7 +310,7 @@ async fn handle_web_search(app: &mut App, trimmed: &str) -> bool {
             let formatted = crate::scraper::search::format_search_results(query, &results);
             app.current_conversation_mut()
                 .messages
-                .push(("system".into(), formatted.clone()));
+                .push(("system".into(), formatted));
             if results.is_empty() {
                 app.add_assistant_message(format!("No web results found for: `{query}`"));
             } else {

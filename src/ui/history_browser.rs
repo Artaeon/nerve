@@ -13,7 +13,7 @@ use crate::app::App;
 use crate::history::ConversationRecord;
 
 /// Classify a timestamp into a human-readable date group label.
-pub(crate) fn group_label(dt: &DateTime<Utc>) -> &'static str {
+pub fn group_label(dt: &DateTime<Utc>) -> &'static str {
     let now = Utc::now();
     let today = now.date_naive();
     let date = dt.date_naive();
@@ -30,7 +30,7 @@ pub(crate) fn group_label(dt: &DateTime<Utc>) -> &'static str {
 }
 
 /// Format a relative time string from a datetime.
-pub(crate) fn format_relative_time(dt: &DateTime<Utc>) -> String {
+pub fn format_relative_time(dt: &DateTime<Utc>) -> String {
     let now = Utc::now();
     let diff = now.signed_duration_since(*dt);
     if diff.num_seconds() < 60 {
@@ -103,7 +103,7 @@ fn highlight_search_matches_styled<'a>(
 }
 
 /// Return the filtered list of history entries based on the current search query.
-pub(crate) fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
+pub fn filtered_entries(app: &App) -> Vec<&ConversationRecord> {
     let matcher = SkimMatcherV2::default();
     let query = &app.history_search;
 

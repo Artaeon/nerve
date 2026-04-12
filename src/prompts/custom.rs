@@ -18,7 +18,7 @@ fn custom_prompts_dir() -> PathBuf {
 /// Lowercases, replaces whitespace runs with `_`, strips non-alphanumeric
 /// characters (except `_` and `-`), and appends `.toml`.
 #[allow(dead_code)]
-pub(crate) fn prompt_filename(name: &str) -> String {
+pub fn prompt_filename(name: &str) -> String {
     let slug: String = name
         .to_lowercase()
         .split_whitespace()

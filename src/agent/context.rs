@@ -4,7 +4,7 @@ pub struct ContextManager {
 }
 
 /// Truncate text intelligently at a sentence boundary when possible.
-pub(crate) fn smart_truncate(text: &str, max_chars: usize) -> String {
+pub fn smart_truncate(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         return text.to_string();
     }
@@ -94,9 +94,8 @@ impl ContextManager {
             // Compact old tool results
             if role == "user" && content.starts_with("Tool execution results:") {
                 let tool_count = content.matches("<tool_result>").count();
-                let brief = format!(
-                    "[Previous tool execution: {tool_count} tool(s) ran successfully]"
-                );
+                let brief =
+                    format!("[Previous tool execution: {tool_count} tool(s) ran successfully]");
                 result.push((role.clone(), brief));
             } else if role == "system"
                 && (content.starts_with("File:")

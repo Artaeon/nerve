@@ -335,7 +335,7 @@ pub fn is_dangerous_command(cmd: &str) -> bool {
 
 /// Paths that should never be written to by the agent.
 pub fn is_protected_path(path: &str) -> bool {
-    let normalized = path.replace("\\", "/");
+    let normalized = path.replace('\\', "/");
     let protected = [
         "/etc/", "/usr/", "/bin/", "/sbin/", "/boot/", "/dev/", "/proc/", "/sys/", "/var/",
     ];
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn truncate_output_one_over_boundary() {
         // One line over the limit should trigger truncation.
-        let text: String = (0..MAX_OUTPUT_LINES + 1)
+        let text: String = (0..=MAX_OUTPUT_LINES)
             .map(|i| format!("line {i}"))
             .collect::<Vec<_>>()
             .join("\n");

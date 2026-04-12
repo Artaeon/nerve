@@ -98,8 +98,12 @@ impl Plugin {
             use std::os::unix::fs::PermissionsExt;
             let mut perms = fs::metadata(&script_path)?.permissions();
             perms.set_mode(0o755);
-            fs::set_permissions(&script_path, perms)
-                .with_context(|| format!("failed to set executable permission on plugin script: {}", script_path.display()))?;
+            fs::set_permissions(&script_path, perms).with_context(|| {
+                format!(
+                    "failed to set executable permission on plugin script: {}",
+                    script_path.display()
+                )
+            })?;
         }
 
         let mut child = Command::new(&script_path)

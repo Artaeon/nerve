@@ -24,7 +24,7 @@ use utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
 // ── Resolved theme colors ───────────────────────────────────────────────
 
 /// Parsed theme colors ready for use in rendering.
-pub(crate) struct ResolvedTheme {
+pub struct ResolvedTheme {
     pub accent: Color,
     pub border: Color,
     pub success: Color,
@@ -65,7 +65,7 @@ fn hex_to_color(hex: &str) -> Color {
 }
 
 /// Resolve the current theme from the app's theme_index into parsed Colors.
-pub(crate) fn resolve_theme(app: &App) -> ResolvedTheme {
+pub fn resolve_theme(app: &App) -> ResolvedTheme {
     let presets = config::theme_presets();
     let theme = presets
         .get(app.theme_index)
@@ -849,7 +849,7 @@ fn format_number(n: usize) -> String {
 // ─── Model info helper ──────────────────────────────────────────────────────
 
 /// Returns (display_name, provider_group, context) for a known model ID.
-pub(crate) fn model_info(id: &str) -> (&str, &str, &str) {
+pub fn model_info(id: &str) -> (&str, &str, &str) {
     match id {
         "opus" => ("Claude Opus 4.6", "Claude Code", "1M ctx"),
         "sonnet" => ("Claude Sonnet 4.6", "Claude Code", "200K ctx"),
@@ -966,9 +966,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
             // Pad model_id to 13 chars, display_name to 20 chars for alignment
             let id_padded = format!("{model_id:<13}");
             let name_padded = format!("{display_name:<20}");
-            let label = format!(
-                "  {marker}{id_padded} {name_padded} {ctx}{active_badge}"
-            );
+            let label = format!("  {marker}{id_padded} {name_padded} {ctx}{active_badge}");
 
             let style = if is_selected {
                 Style::default()
@@ -1060,7 +1058,7 @@ fn render_model_selector(frame: &mut Frame, app: &App) {
 // ─── Provider selector overlay ───────────────────────────────────────────────
 
 /// Human-friendly display name for a provider key.
-pub(crate) fn provider_display_name(key: &str) -> &'static str {
+pub fn provider_display_name(key: &str) -> &'static str {
     match key {
         "claude_code" | "claude" => "Claude Code",
         "ollama" => "Ollama",
@@ -1071,7 +1069,7 @@ pub(crate) fn provider_display_name(key: &str) -> &'static str {
 }
 
 /// Short description for the provider selector overlay.
-pub(crate) fn provider_description(key: &str) -> &'static str {
+pub fn provider_description(key: &str) -> &'static str {
     match key {
         "claude_code" | "claude" => "subscription, no API key",
         "ollama" => "local, no API key",

@@ -127,7 +127,7 @@ pub fn ingest_file(path: &Path, kb: &mut KnowledgeBase) -> anyhow::Result<usize>
 }
 
 /// Split text into overlapping chunks of approximately `chunk_size` words.
-pub(crate) fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();
     if words.is_empty() {
         return Vec::new();

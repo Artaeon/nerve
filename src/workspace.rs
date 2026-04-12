@@ -486,12 +486,7 @@ pub fn generate_project_map(root: &std::path::Path, max_depth: usize) -> String 
     map
 }
 
-pub(crate) fn build_tree(
-    dir: &std::path::Path,
-    output: &mut String,
-    depth: usize,
-    max_depth: usize,
-) {
+pub fn build_tree(dir: &std::path::Path, output: &mut String, depth: usize, max_depth: usize) {
     if depth > max_depth {
         return;
     }
@@ -539,7 +534,7 @@ pub(crate) fn build_tree(
     }
 }
 
-pub(crate) fn extract_key_symbols(root: &std::path::Path, output: &mut String) {
+pub fn extract_key_symbols(root: &std::path::Path, output: &mut String) {
     // Scan important source files for key definitions
     let extensions = ["rs", "py", "js", "ts", "go", "java", "rb"];
 
@@ -599,7 +594,7 @@ fn collect_source_files(
     }
 }
 
-pub(crate) fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<String> {
+pub fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<String> {
     let mut symbols = Vec::new();
 
     for line in content.lines() {

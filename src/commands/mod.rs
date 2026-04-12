@@ -96,7 +96,7 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
 
         if let Some(aliased) = app.aliases.get(cmd_name).cloned() {
             let full = if remaining_args.is_empty() {
-                aliased.clone()
+                aliased
             } else {
                 format!("{aliased} {remaining_args}")
             };
