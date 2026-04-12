@@ -51,6 +51,12 @@ fn visit_dir(dir: &Path, kb: &mut KnowledgeBase, count: &mut usize) -> anyhow::R
             continue;
         }
 
+        // Skip symlinks to prevent traversal escapes and infinite loops.
+        if path.is_symlink() {
+            tracing::debug!("skipping symlink: {}", path.display());
+            continue;
+        }
+
         if path.is_dir() {
             visit_dir(&path, kb, count)?;
         } else if path.is_file() {
