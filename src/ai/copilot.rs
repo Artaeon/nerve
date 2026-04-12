@@ -114,8 +114,15 @@ impl AiProvider for CopilotProvider {
                 }
             }
 
+            let status = child.wait().await;
+            if let Ok(s) = &status
+                && !s.success()
+            {
+                let _ = tx.send(StreamEvent::Error(format!(
+                    "gh copilot exited with {s}"
+                )));
+            }
             let _ = tx.send(StreamEvent::Done);
-            child.wait().await.ok();
             Ok(())
         })
     }
@@ -133,6 +140,14 @@ impl AiProvider for CopilotProvider {
                 .output()
                 .await
                 .context("Failed to run gh copilot")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!(
+                    "gh copilot exited with {}: {stderr}",
+                    output.status
+                ));
+            }
 
             let result = String::from_utf8_lossy(&output.stdout).to_string();
             if result.is_empty() {
