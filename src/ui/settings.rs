@@ -681,3 +681,33 @@ fn render_git_tab(frame: &mut Frame, app: &App, area: Rect) {
 pub fn git_item_count() -> usize {
     2
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn general_item_count_is_positive() {
+        assert!(general_item_count() > 0);
+    }
+
+    #[test]
+    fn providers_item_count_is_positive() {
+        assert!(providers_item_count() > 0);
+    }
+
+    #[test]
+    fn theme_item_count_is_positive() {
+        assert!(theme_item_count() > 0);
+    }
+
+    #[test]
+    fn keybinds_item_count_is_positive() {
+        assert!(keybinds_item_count() > 0);
+    }
+
+    #[test]
+    fn git_item_count_is_positive() {
+        assert!(git_item_count() > 0);
+    }
+}

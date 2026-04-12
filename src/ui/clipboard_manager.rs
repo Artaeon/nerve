@@ -176,3 +176,53 @@ fn format_relative_time(dt: &DateTime<Utc>) -> String {
     }
     format!("{}d ago", diff.num_days())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+    use crate::clipboard_manager::{ClipboardManager, ClipboardSource};
+
+    fn app_with_fresh_clipboard() -> App {
+        let mut app = App::new();
+        app.clipboard_manager = ClipboardManager::new(100);
+        app.clipboard_search.clear();
+        app
+    }
+
+    #[test]
+    fn matched_entry_count_empty_clipboard() {
+        let app = app_with_fresh_clipboard();
+        assert_eq!(matched_entry_count(&app), 0);
+    }
+
+    #[test]
+    fn matched_entry_count_with_entries() {
+        let mut app = app_with_fresh_clipboard();
+        app.clipboard_manager
+            .add("hello world".into(), ClipboardSource::UserCopy);
+        app.clipboard_manager
+            .add("foo bar".into(), ClipboardSource::UserCopy);
+        assert_eq!(matched_entry_count(&app), 2);
+    }
+
+    #[test]
+    fn matched_entry_count_with_filter() {
+        let mut app = app_with_fresh_clipboard();
+        app.clipboard_manager
+            .add("hello world".into(), ClipboardSource::UserCopy);
+        app.clipboard_manager
+            .add("foo bar".into(), ClipboardSource::UserCopy);
+        app.clipboard_search = "hello".into();
+        assert_eq!(matched_entry_count(&app), 1);
+    }
+
+    #[test]
+    fn matched_entry_count_no_match() {
+        let mut app = app_with_fresh_clipboard();
+        app.clipboard_manager
+            .add("hello world".into(), ClipboardSource::UserCopy);
+        app.clipboard_search = "zzzzz".into();
+        assert_eq!(matched_entry_count(&app), 0);
+    }
+}

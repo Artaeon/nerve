@@ -266,3 +266,35 @@ pub fn visible_prompt_count(app: &App) -> usize {
         })
         .count()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::App;
+
+    #[test]
+    fn visible_prompt_count_default_is_nonzero() {
+        let app = App::new();
+        // With default category, should have some built-in prompts
+        let count = visible_prompt_count(&app);
+        assert!(count > 0, "default category should have prompts");
+    }
+
+    #[test]
+    fn visible_prompt_count_with_narrow_filter() {
+        let mut app = App::new();
+        // A very specific filter should reduce the count
+        app.prompt_filter = "xyznonexistent123".into();
+        let count = visible_prompt_count(&app);
+        assert_eq!(count, 0, "nonsense filter should match nothing");
+    }
+
+    #[test]
+    fn visible_prompt_count_empty_filter_shows_all_in_category() {
+        let mut app = App::new();
+        app.prompt_filter.clear();
+        let count = visible_prompt_count(&app);
+        // Empty filter shows all prompts in the selected category
+        assert!(count > 0);
+    }
+}
