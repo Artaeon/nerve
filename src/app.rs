@@ -425,7 +425,16 @@ impl App {
     ///
     /// Clamps `active_conversation` to a valid index so we never panic even if
     /// conversations were deleted without updating the index.
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug builds only) if `conversations` is empty — callers must
+    /// maintain the invariant that at least one conversation always exists.
     pub fn current_conversation(&self) -> &Conversation {
+        debug_assert!(
+            !self.conversations.is_empty(),
+            "App must always have at least one conversation"
+        );
         let idx = self
             .active_conversation
             .min(self.conversations.len().saturating_sub(1));
@@ -436,7 +445,15 @@ impl App {
     ///
     /// Clamps `active_conversation` to a valid index so we never panic even if
     /// conversations were deleted without updating the index.
+    ///
+    /// # Panics
+    ///
+    /// Panics (debug builds only) if `conversations` is empty.
     pub fn current_conversation_mut(&mut self) -> &mut Conversation {
+        debug_assert!(
+            !self.conversations.is_empty(),
+            "App must always have at least one conversation"
+        );
         let idx = self
             .active_conversation
             .min(self.conversations.len().saturating_sub(1));
