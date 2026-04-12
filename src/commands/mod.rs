@@ -110,3 +110,122 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
 
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
+    use std::future::Future;
+    use std::pin::Pin;
+    use tokio::sync::mpsc;
+
+    struct DummyProvider;
+    impl AiProvider for DummyProvider {
+        fn chat_stream(
+            &self,
+            _: &[ChatMessage],
+            _: &str,
+            _: mpsc::UnboundedSender<StreamEvent>,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn chat(
+            &self,
+            _: &[ChatMessage],
+            _: &str,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
+            Box::pin(async { Ok(String::new()) })
+        }
+        fn list_models(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn name(&self) -> &str {
+            "dummy"
+        }
+    }
+
+    fn provider() -> Arc<dyn AiProvider> {
+        Arc::new(DummyProvider)
+    }
+
+    // ── Command routing ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn dispatches_to_info_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/help", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_chat_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/new", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_ai_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/models", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_shell_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/run echo hi", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_git_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/diff", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn dispatches_to_settings_handler() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme list", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn unrecognized_command_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "/totally_unknown_cmd", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn plain_text_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "hello world", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn empty_input_returns_false() {
+        let mut app = App::new();
+        assert!(!handle(&mut app, "", &provider()).await);
+    }
+
+    #[tokio::test]
+    async fn alias_expansion_works() {
+        let mut app = App::new();
+        app.aliases
+            .insert("myalias".into(), "/run echo aliased".into());
+        assert!(handle(&mut app, "/myalias", &provider()).await);
+        assert!(app.input.contains("/run echo aliased"));
+    }
+
+    #[tokio::test]
+    async fn alias_with_args_appended() {
+        let mut app = App::new();
+        app.aliases.insert("greet".into(), "/run echo hello".into());
+        assert!(handle(&mut app, "/greet world", &provider()).await);
+        assert!(app.input.contains("/run echo hello world"));
+    }
+
+    #[tokio::test]
+    async fn whitespace_trimmed() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "  /help  ", &provider()).await);
+    }
+}
