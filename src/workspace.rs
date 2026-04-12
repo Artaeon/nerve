@@ -1080,4 +1080,165 @@ pub enum Mode {
         // Should find src/*.rs but not deeply nested files
         assert!(!files.is_empty());
     }
+
+    // ── Ambiguous project detection ─────────────────────────────────
+
+    #[test]
+    fn rust_wins_over_node_in_mixed_project() {
+        let dir = tempfile::tempdir().unwrap();
+        // Both Cargo.toml and package.json present (monorepo scenario)
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"mixed\"\nversion = \"0.1.0\"",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name": "mixed-frontend"}"#,
+        )
+        .unwrap();
+        let info = detect_workspace_at(dir.path());
+        assert!(info.is_some());
+        let info = info.unwrap();
+        assert_eq!(info.project_type, ProjectType::Rust);
+    }
+
+    // ── Rust symbol extraction edge cases ───────────────────────────
+
+    #[test]
+    fn extract_rust_pub_crate_fn() {
+        let content = "pub(crate) fn internal_helper() {\n}\n";
+        let symbols = extract_symbols_from_content(content, "rs");
+        // pub(crate) fn is NOT extracted (only pub fn is matched)
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn extract_rust_const_fn() {
+        let content = "pub const fn compute() -> usize {\n    42\n}\n";
+        let symbols = extract_symbols_from_content(content, "rs");
+        // pub const fn is NOT extracted (starts with "pub const", not "pub fn")
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn extract_rust_async_fn() {
+        let content = "pub async fn fetch_data() -> String {\n}\n";
+        let symbols = extract_symbols_from_content(content, "rs");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("fetch_data"));
+    }
+
+    #[test]
+    fn extract_rust_trait_with_body() {
+        let content = "pub trait Handler {\n    fn handle(&self);\n}\n";
+        let symbols = extract_symbols_from_content(content, "rs");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("Handler"));
+    }
+
+    #[test]
+    fn extract_rust_enum_variants() {
+        let content = "pub enum Color {\n    Red,\n    Blue,\n}\n";
+        let symbols = extract_symbols_from_content(content, "rs");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("Color"));
+    }
+
+    // ── JS/TS symbol extraction edge cases ──────────────────────────
+
+    #[test]
+    fn extract_ts_export_const() {
+        let content = "export const API_URL = \"https://api.example.com\";\n";
+        let symbols = extract_symbols_from_content(content, "ts");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("API_URL"));
+    }
+
+    #[test]
+    fn extract_ts_export_default_function() {
+        let content = "export default function App() {\n  return null;\n}\n";
+        let symbols = extract_symbols_from_content(content, "tsx");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("App"));
+    }
+
+    #[test]
+    fn extract_ts_export_class() {
+        let content = "export class UserService {\n  constructor() {}\n}\n";
+        let symbols = extract_symbols_from_content(content, "ts");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("UserService"));
+    }
+
+    #[test]
+    fn extract_js_long_line_truncated_at_80() {
+        let long_line = format!("export function {}() {{}}", "a".repeat(100));
+        let symbols = extract_symbols_from_content(&long_line, "js");
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].len(), 80);
+    }
+
+    // ── Python symbol extraction ────────────────────────────────────
+
+    #[test]
+    fn extract_python_async_def() {
+        let content = "async def fetch():\n    pass\n";
+        let symbols = extract_symbols_from_content(content, "py");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("fetch"));
+    }
+
+    #[test]
+    fn extract_python_class() {
+        let content = "class MyModel:\n    pass\n";
+        let symbols = extract_symbols_from_content(content, "py");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("MyModel"));
+    }
+
+    // ── Go symbol extraction ────────────────────────────────────────
+
+    #[test]
+    fn extract_go_func() {
+        let content = "func main() {\n}\n";
+        let symbols = extract_symbols_from_content(content, "go");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("main"));
+    }
+
+    #[test]
+    fn extract_go_type_struct() {
+        let content = "type Config struct {\n    Port int\n}\n";
+        let symbols = extract_symbols_from_content(content, "go");
+        assert_eq!(symbols.len(), 1);
+        assert!(symbols[0].contains("Config"));
+    }
+
+    // ── Symbol truncation ───────────────────────────────────────────
+
+    #[test]
+    fn symbols_truncated_at_15() {
+        let mut content = String::new();
+        for i in 0..20 {
+            content.push_str(&format!("pub fn func_{i}() {{}}\n"));
+        }
+        let symbols = extract_symbols_from_content(&content, "rs");
+        assert_eq!(symbols.len(), 15);
+    }
+
+    // ── Unknown extension ───────────────────────────────────────────
+
+    #[test]
+    fn extract_symbols_unknown_extension_empty() {
+        let content = "public void main() {}";
+        let symbols = extract_symbols_from_content(content, "java");
+        assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn extract_symbols_empty_content() {
+        let symbols = extract_symbols_from_content("", "rs");
+        assert!(symbols.is_empty());
+    }
 }
