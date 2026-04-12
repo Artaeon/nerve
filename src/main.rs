@@ -1632,16 +1632,18 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
         }
         KeyCode::Tab => {
             let cat_count = ui::command_bar::category_tabs().len();
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                app.command_bar_category = if app.command_bar_category == 0 {
-                    cat_count - 1
+            if cat_count > 0 {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    app.command_bar_category = if app.command_bar_category == 0 {
+                        cat_count - 1
+                    } else {
+                        app.command_bar_category - 1
+                    };
                 } else {
-                    app.command_bar_category - 1
-                };
-            } else {
-                app.command_bar_category = (app.command_bar_category + 1) % cat_count;
+                    app.command_bar_category = (app.command_bar_category + 1) % cat_count;
+                }
+                app.command_bar_select_index = 0;
             }
-            app.command_bar_select_index = 0;
         }
         KeyCode::BackTab => {
             // Shift+Tab also reported as BackTab on some terminals.
