@@ -145,6 +145,51 @@ impl ClaudeCodeProvider {
             model
         }
     }
+
+    /// Build the common CLI argument list shared by streaming and
+    /// non-streaming calls. Only `output_format` differs ("text" vs "json").
+    fn build_args(
+        &self,
+        prompt: &str,
+        model: &str,
+        output_format: &str,
+        system_prompt: &Option<String>,
+    ) -> Vec<String> {
+        let mut args: Vec<String> = vec![
+            "-p".into(),
+            prompt.into(),
+            "--output-format".into(),
+            output_format.into(),
+            "--model".into(),
+            model.into(),
+        ];
+
+        if self.enable_tools {
+            args.push("--dangerously-skip-permissions".into());
+        } else {
+            args.push("--allowedTools".into());
+            args.push("".into());
+        }
+
+        if let Some(ref session) = self.session_id {
+            args.push("--resume".into());
+            args.push(session.clone());
+        } else {
+            args.push("--no-session-persistence".into());
+        }
+
+        if let Some(ref dir) = self.working_dir {
+            args.push("--add-dir".into());
+            args.push(dir.clone());
+        }
+
+        if let Some(sys) = system_prompt {
+            args.push("--system-prompt".into());
+            args.push(sys.clone());
+        }
+
+        args
+    }
 }
 
 impl AiProvider for ClaudeCodeProvider {
@@ -165,38 +210,7 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(());
             }
 
-            let mut args: Vec<String> = vec![
-                "-p".into(),
-                prompt.clone(),
-                "--output-format".into(),
-                "text".into(),
-                "--model".into(),
-                model.into(),
-            ];
-
-            if self.enable_tools {
-                args.push("--dangerously-skip-permissions".into());
-            } else {
-                args.push("--allowedTools".into());
-                args.push("".into());
-            }
-
-            if let Some(ref session) = self.session_id {
-                args.push("--resume".into());
-                args.push(session.clone());
-            } else {
-                args.push("--no-session-persistence".into());
-            }
-
-            if let Some(ref dir) = self.working_dir {
-                args.push("--add-dir".into());
-                args.push(dir.clone());
-            }
-
-            if let Some(ref sys) = system_prompt {
-                args.push("--system-prompt".into());
-                args.push(sys.clone());
-            }
+            let args = self.build_args(&prompt, model, "text", &system_prompt);
 
             let mut child = Command::new(&self.claude_binary)
                 .args(&args)
@@ -277,38 +291,7 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(String::new());
             }
 
-            let mut args: Vec<String> = vec![
-                "-p".into(),
-                prompt.clone(),
-                "--output-format".into(),
-                "json".into(),
-                "--model".into(),
-                model.into(),
-            ];
-
-            if self.enable_tools {
-                args.push("--dangerously-skip-permissions".into());
-            } else {
-                args.push("--allowedTools".into());
-                args.push("".into());
-            }
-
-            if let Some(ref session) = self.session_id {
-                args.push("--resume".into());
-                args.push(session.clone());
-            } else {
-                args.push("--no-session-persistence".into());
-            }
-
-            if let Some(ref dir) = self.working_dir {
-                args.push("--add-dir".into());
-                args.push(dir.clone());
-            }
-
-            if let Some(ref sys) = system_prompt {
-                args.push("--system-prompt".into());
-                args.push(sys.clone());
-            }
+            let args = self.build_args(&prompt, model, "json", &system_prompt);
 
             let output = Command::new(&self.claude_binary)
                 .args(&args)
