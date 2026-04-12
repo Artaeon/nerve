@@ -579,7 +579,13 @@ fn execute_write_file(call: &ToolCall) -> ToolResult {
 
     // Create parent directories
     if let Some(parent) = Path::new(path).parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return ToolResult {
+                tool: "write_file".into(),
+                success: false,
+                output: format!("Failed to create parent directory: {e}"),
+            };
+        }
     }
 
     match std::fs::write(path, content) {
