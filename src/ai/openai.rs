@@ -110,7 +110,10 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     /// Create a new provider with explicit configuration.
     pub fn new(api_key: String, base_url: String, provider_name: String) -> Self {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
         Self {
             client,
             api_key,
@@ -364,6 +367,7 @@ impl AiProvider for OpenAiProvider {
 
                     let response = self
                         .auth_request(reqwest::Method::POST, &url)
+                        .timeout(std::time::Duration::from_secs(120))
                         .json(&body)
                         .send()
                         .await
@@ -401,6 +405,7 @@ impl AiProvider for OpenAiProvider {
 
             let response = self
                 .auth_request(reqwest::Method::GET, &url)
+                .timeout(std::time::Duration::from_secs(30))
                 .send()
                 .await
                 .context("failed to fetch models list")?;
