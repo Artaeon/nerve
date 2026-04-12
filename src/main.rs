@@ -1291,7 +1291,7 @@ async fn handle_normal_mode(
                 KeyCode::Char('q') => app.should_quit = true,
                 KeyCode::Char('x') => delete_last_exchange(app),
                 KeyCode::Char(c @ '1'..='9') => {
-                    let n = c.to_digit(10).unwrap() as usize;
+                    let n = c.to_digit(10).expect("char matched '1'..='9'") as usize;
                     let conv = app.current_conversation();
                     let idx = conv.messages.len().saturating_sub(n);
                     if let Some((role, content)) = conv.messages.get(idx) {
@@ -2518,7 +2518,7 @@ fn complete_file_path(partial: &str) -> Option<String> {
     matches.sort();
 
     if matches.len() == 1 {
-        Some(matches.into_iter().next().unwrap())
+        Some(matches.into_iter().next().expect("len checked == 1"))
     } else if matches.len() > 1 {
         // Return common prefix if it extends beyond what was typed
         let common = find_common_prefix_strings(&matches);
