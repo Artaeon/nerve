@@ -551,4 +551,82 @@ mod tests {
         assert_eq!(cfg.initial_delay_ms, 1000);
         assert_eq!(cfg.max_delay_ms, 30_000);
     }
+
+    // ── is_retryable edge cases ─────────────────────────────────────
+
+    #[test]
+    fn non_retryable_wins_over_retryable_in_same_message() {
+        // Message contains both 400 (non-retryable) and 429 (retryable).
+        // Non-retryable is checked first, so should return false.
+        assert!(!is_retryable_message(
+            "error (400): bad request, then (429): rate limited"
+        ));
+    }
+
+    #[test]
+    fn retryable_found_when_no_non_retryable_present() {
+        assert!(is_retryable_message("API error (429): rate limited"));
+        assert!(is_retryable_message("API error (503): service unavailable"));
+    }
+
+    #[test]
+    fn retryable_connection_refused_case_insensitive() {
+        assert!(is_retryable_message("connection refused"));
+        assert!(is_retryable_message("Connection refused by server"));
+    }
+
+    #[test]
+    fn retryable_timeout_variations() {
+        assert!(is_retryable_message("request timed out"));
+        assert!(is_retryable_message("connection timeout"));
+        assert!(is_retryable_message("operation timed out"));
+    }
+
+    #[test]
+    fn non_retryable_auth_errors() {
+        assert!(!is_retryable_message("API error (401): unauthorized"));
+        assert!(!is_retryable_message("API error (403): forbidden"));
+    }
+
+    #[test]
+    fn non_retryable_not_found() {
+        assert!(!is_retryable_message("API error (404): not found"));
+    }
+
+    #[test]
+    fn unknown_error_not_retryable() {
+        assert!(!is_retryable_message("some random error with no status"));
+    }
+
+    // ── delay_with_jitter boundary ──────────────────────────────────
+
+    #[test]
+    fn delay_with_jitter_never_exceeds_max_at_boundary() {
+        let cfg = RetryConfig {
+            max_delay_ms: 1000,
+            initial_delay_ms: 1000,
+            ..RetryConfig::default()
+        };
+        // At max, jitter would try to add up to 250ms, but result is clamped.
+        // Run multiple times to catch jitter variance.
+        for _ in 0..20 {
+            let d = cfg.delay_with_jitter(10);
+            assert!(
+                d.as_millis() as u64 <= cfg.max_delay_ms,
+                "delay {} should not exceed max {}",
+                d.as_millis(),
+                cfg.max_delay_ms
+            );
+        }
+    }
+
+    #[test]
+    fn delay_with_jitter_zero_initial() {
+        let cfg = RetryConfig {
+            initial_delay_ms: 0,
+            ..RetryConfig::default()
+        };
+        let d = cfg.delay_with_jitter(0);
+        assert_eq!(d.as_millis(), 0);
+    }
 }

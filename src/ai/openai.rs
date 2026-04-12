@@ -728,4 +728,89 @@ mod tests {
         assert!(json.contains("\"temperature\":0.7"));
         assert!(json.contains("\"top_p\":0.9"));
     }
+
+    // ── SSE data line extraction ────────────────────────────────────
+
+    /// Helper to simulate SSE data field extraction like the streaming parser.
+    fn extract_sse_data(line: &str) -> Option<String> {
+        let data = if let Some(d) = line.strip_prefix("data: ") {
+            d
+        } else if let Some(d) = line.strip_prefix("data:") {
+            d
+        } else {
+            return None;
+        };
+        Some(data.trim().to_string())
+    }
+
+    #[test]
+    fn sse_data_standard_format() {
+        assert_eq!(extract_sse_data("data: hello"), Some("hello".into()));
+    }
+
+    #[test]
+    fn sse_data_no_space_after_colon() {
+        assert_eq!(extract_sse_data("data:hello"), Some("hello".into()));
+    }
+
+    #[test]
+    fn sse_data_extra_spaces() {
+        assert_eq!(
+            extract_sse_data("data:   hello  "),
+            Some("hello".into())
+        );
+    }
+
+    #[test]
+    fn sse_data_done_sentinel() {
+        assert_eq!(extract_sse_data("data: [DONE]"), Some("[DONE]".into()));
+    }
+
+    #[test]
+    fn sse_data_empty_value() {
+        assert_eq!(extract_sse_data("data: "), Some(String::new()));
+    }
+
+    #[test]
+    fn sse_event_field_ignored() {
+        assert_eq!(extract_sse_data("event: message"), None);
+    }
+
+    #[test]
+    fn sse_id_field_ignored() {
+        assert_eq!(extract_sse_data("id: 123"), None);
+    }
+
+    #[test]
+    fn sse_comment_not_data() {
+        assert_eq!(extract_sse_data(":this is a comment"), None);
+    }
+
+    #[test]
+    fn sse_empty_line_not_data() {
+        assert_eq!(extract_sse_data(""), None);
+    }
+
+    // ── API error truncation ────────────────────────────────────────
+
+    #[test]
+    fn api_error_structured_message_extracted() {
+        let body = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit"}}"#;
+        if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(body)
+            && let Some(detail) = err.error
+            && let Some(msg) = detail.message
+        {
+            assert_eq!(msg, "Rate limit exceeded");
+        } else {
+            panic!("should parse structured error");
+        }
+    }
+
+    #[test]
+    fn api_error_long_body_truncated() {
+        let long_body = "x".repeat(500);
+        let preview: String = long_body.chars().take(200).collect();
+        assert_eq!(preview.len(), 200);
+        assert!(long_body.len() > 200);
+    }
 }
