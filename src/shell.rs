@@ -10,6 +10,20 @@ const MAX_OUTPUT_LINES: usize = 5000;
 /// Default timeout for shell commands in seconds.
 pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 30;
 
+/// Interval between child process polls while waiting for completion.
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Drain a child process pipe into a byte buffer, ignoring read errors
+/// (partial data is still useful when a pipe breaks mid-read).
+fn drain_pipe(pipe: Option<impl std::io::Read>) -> Vec<u8> {
+    pipe.map(|mut r| {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut r, &mut buf).ok();
+        buf
+    })
+    .unwrap_or_default()
+}
+
 /// Wrap a value in single quotes with proper escaping for safe shell usage.
 ///
 /// This is the standard POSIX approach: replace `'` with `'\''` and wrap
@@ -122,24 +136,8 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
             Ok(Some(status)) => {
                 // Process finished within the timeout.
                 let elapsed = start.elapsed();
-                let stdout_raw = child
-                    .stdout
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = Vec::new();
-                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                        buf
-                    })
-                    .unwrap_or_default();
-                let stderr_raw = child
-                    .stderr
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = Vec::new();
-                        std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                        buf
-                    })
-                    .unwrap_or_default();
+                let stdout_raw = drain_pipe(child.stdout.take());
+                let stderr_raw = drain_pipe(child.stderr.take());
 
                 let stdout =
                     truncate_output(&String::from_utf8_lossy(&stdout_raw), MAX_OUTPUT_LINES);
@@ -173,24 +171,8 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
                     let _ = child.wait(); // Reap the zombie.
 
                     // Capture any partial output produced before the timeout.
-                    let partial_stdout = child
-                        .stdout
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = Vec::new();
-                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                            buf
-                        })
-                        .unwrap_or_default();
-                    let partial_stderr = child
-                        .stderr
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = Vec::new();
-                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                            buf
-                        })
-                        .unwrap_or_default();
+                    let partial_stdout = drain_pipe(child.stdout.take());
+                    let partial_stderr = drain_pipe(child.stderr.take());
 
                     let stdout = truncate_output(
                         &String::from_utf8_lossy(&partial_stdout),
@@ -213,7 +195,7 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
                         elapsed,
                     });
                 }
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(POLL_INTERVAL);
             }
             Err(e) => {
                 return Err(anyhow::anyhow!("Error waiting for process: {e}"));
