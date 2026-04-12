@@ -163,7 +163,8 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
                     #[cfg(unix)]
                     unsafe {
                         // Kill the process group (shell + children).
-                        libc::kill(-(child.id() as i32), libc::SIGKILL);
+                        let pid = child.id() as libc::pid_t;
+                        libc::kill(-pid, libc::SIGKILL);
                     }
                     #[cfg(not(unix))]
                     {
