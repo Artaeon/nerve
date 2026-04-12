@@ -81,7 +81,7 @@ jobs:
       - name: Build
         run: cargo build --release ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: target/${{ matrix.target && format('{0}/', matrix.target) || '' }}release/nerve${{ matrix.os == 'windows-latest' && '.exe' || '' }}
