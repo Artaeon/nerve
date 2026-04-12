@@ -93,7 +93,7 @@ impl AiProvider for CopilotProvider {
                 .take()
                 .ok_or_else(|| anyhow!("Failed to capture gh copilot stdout"))?;
 
-            let mut reader = tokio::io::BufReader::with_capacity(32, stdout);
+            let mut reader = tokio::io::BufReader::with_capacity(8192, stdout);
             let mut buf = [0u8; 256];
 
             loop {

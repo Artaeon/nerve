@@ -228,7 +228,7 @@ impl AiProvider for ClaudeCodeProvider {
 
             // Use a small-capacity BufReader so we get chunks as soon as
             // the CLI flushes them, giving a streaming feel.
-            let mut reader = tokio::io::BufReader::with_capacity(32, stdout);
+            let mut reader = tokio::io::BufReader::with_capacity(8192, stdout);
             let mut buf = [0u8; 256];
 
             loop {
