@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::retry::RetryConfig;
@@ -249,11 +250,12 @@ impl Config {
 
         if !path.exists() {
             let config = Config::default();
-            config.save()?;
+            config.save().context("failed to write default config")?;
             return Ok(config);
         }
 
-        let contents = fs::read_to_string(&path)?;
+        let contents = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config: {}", path.display()))?;
         match toml::from_str::<Config>(&contents) {
             Ok(config) => Ok(config),
             Err(e) => {
@@ -273,19 +275,24 @@ impl Config {
     /// users can edit it by hand.
     pub fn save(&self) -> anyhow::Result<()> {
         let dir = Self::config_dir();
-        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(&dir)
+            .with_context(|| format!("failed to create config directory: {}", dir.display()))?;
 
         let path = Self::config_file();
         let contents = self.to_commented_toml();
-        fs::write(&path, contents)?;
+        fs::write(&path, &contents)
+            .with_context(|| format!("failed to write config: {}", path.display()))?;
 
         // Restrict file permissions on Unix (config contains API keys)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path)?.permissions();
+            let mut perms = fs::metadata(&path)
+                .with_context(|| format!("failed to read config metadata: {}", path.display()))?
+                .permissions();
             perms.set_mode(0o600); // Owner read/write only
-            fs::set_permissions(&path, perms)?;
+            fs::set_permissions(&path, perms)
+                .with_context(|| format!("failed to set config permissions: {}", path.display()))?;
         }
 
         Ok(())
