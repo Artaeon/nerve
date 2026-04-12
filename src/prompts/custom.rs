@@ -27,6 +27,9 @@ pub fn prompt_filename(name: &str) -> String {
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
         .collect();
+    if slug.is_empty() {
+        return "unnamed.toml".to_string();
+    }
     format!("{slug}.toml")
 }
 
