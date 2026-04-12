@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use anyhow::Context;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
@@ -60,11 +62,11 @@ fn truncate_output(text: &str, max_lines: usize) -> String {
         return text.to_string();
     }
     let mut truncated: String = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
-    truncated.push_str(&format!(
-        "\n\n... ({} lines truncated, {} total)",
-        total_lines - max_lines,
-        total_lines
-    ));
+    let _ = write!(
+        truncated,
+        "\n\n... ({} lines truncated, {total_lines} total)",
+        total_lines - max_lines
+    );
     truncated
 }
 
@@ -182,7 +184,7 @@ pub fn run_command_with_timeout(cmd: &str, timeout_secs: u64) -> anyhow::Result<
                     if !stderr.is_empty() {
                         stderr.push('\n');
                     }
-                    stderr.push_str(&format!("Command timed out after {timeout_secs}s"));
+                    let _ = write!(stderr, "Command timed out after {timeout_secs}s");
 
                     let elapsed = start.elapsed();
                     return Ok(CommandResult {
@@ -209,10 +211,11 @@ pub fn format_command_output(result: &CommandResult) -> String {
     let mut output = format!("$ {}\n", result.command);
 
     if result.timed_out {
-        output.push_str(&format!(
+        let _ = write!(
+            output,
             "\nCommand timed out after {:.1}s\n",
             result.elapsed.as_secs_f64()
-        ));
+        );
         return output;
     }
 
@@ -224,11 +227,11 @@ pub fn format_command_output(result: &CommandResult) -> String {
     }
 
     if !result.stderr.is_empty() {
-        output.push_str(&format!("\nstderr:\n{}", result.stderr));
+        let _ = write!(output, "\nstderr:\n{}", result.stderr);
     }
 
     if !result.success {
-        output.push_str(&format!("\nExit code: {}", result.exit_code));
+        let _ = write!(output, "\nExit code: {}", result.exit_code);
     }
 
     output

@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 /// Manages conversation context to stay within token limits
 pub struct ContextManager {
     max_tokens: usize,
@@ -171,7 +173,7 @@ impl ContextManager {
                     exchange_count += 1;
                     // Extract the core question/request
                     let brief = smart_truncate(content, 150);
-                    summary.push_str(&format!("- User: {brief}\n"));
+                    let _ = writeln!(summary, "- User: {brief}");
                 }
                 "assistant" => {
                     // For code responses, just note what was done
@@ -184,12 +186,13 @@ impl ContextManager {
                             .chars()
                             .take(100)
                             .collect();
-                        summary.push_str(&format!(
-                            "  AI: {first_line}... [{code_blocks} code block(s)]\n"
-                        ));
+                        let _ = writeln!(
+                            summary,
+                            "  AI: {first_line}... [{code_blocks} code block(s)]"
+                        );
                     } else {
                         let brief = smart_truncate(content, 150);
-                        summary.push_str(&format!("  AI: {brief}\n"));
+                        let _ = writeln!(summary, "  AI: {brief}");
                     }
                 }
                 _ => {}

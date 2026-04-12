@@ -149,7 +149,14 @@ mod tests {
     #[test]
     fn prompt_filename_empty_name() {
         let name = prompt_filename("");
-        assert_eq!(name, ".toml");
+        assert_eq!(name, "unnamed.toml");
+    }
+
+    #[test]
+    fn prompt_filename_special_chars_only() {
+        // All characters filtered out → falls back to unnamed
+        let name = prompt_filename("!@#$%");
+        assert_eq!(name, "unnamed.toml");
     }
 
     #[test]
