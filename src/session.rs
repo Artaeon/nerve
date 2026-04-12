@@ -38,11 +38,17 @@ fn last_session_path() -> PathBuf {
 }
 
 /// Write JSON to a file atomically (write to .tmp, then rename).
-/// Prevents corruption if the app crashes mid-write.
+/// Prevents corruption if the app crashes mid-write. Uses PID in the
+/// temp filename to avoid collisions with stale temp files from
+/// crashed processes or concurrent writes.
 fn atomic_write(path: &std::path::Path, json: &str) -> anyhow::Result<()> {
-    let tmp = path.with_extension("json.tmp");
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
     fs::write(&tmp, json)?;
-    fs::rename(&tmp, path)?;
+    // If rename fails, clean up the temp file.
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e.into());
+    }
     Ok(())
 }
 
