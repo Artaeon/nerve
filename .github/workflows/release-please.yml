@@ -25,6 +25,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${{ steps.release.outputs.tag_name }}"
           CURRENT_BODY=$(gh release view "$TAG" --json body -q .body)
           INSTALL_BODY=$(cat <<'BODY'

@@ -48,6 +48,7 @@ jobs:
       - name: Package (Unix)
         if: matrix.archive_ext == 'tar.gz'
         run: |
+          set -euo pipefail
           if [ -n "${{ matrix.target }}" ]; then
             cp target/${{ matrix.target }}/release/${{ matrix.binary }} .
           else
@@ -57,6 +58,7 @@ jobs:
       - name: Package (Windows)
         if: matrix.archive_ext == 'zip'
         run: |
+          set -euo pipefail
           cp target/release/${{ matrix.binary }} .
           7z a ${{ matrix.artifact }}.zip ${{ matrix.binary }}
         shell: bash
