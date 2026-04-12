@@ -301,8 +301,13 @@ impl AiProvider for OpenAiProvider {
                         continue;
                     }
 
-                    // We only care about "data: ..." lines.
-                    let Some(data) = line.strip_prefix("data: ") else {
+                    // We only care about "data: ..." lines.  Per the SSE
+                    // spec (RFC 8453) "data:value" (no space) is also valid.
+                    let data = if let Some(d) = line.strip_prefix("data: ") {
+                        d
+                    } else if let Some(d) = line.strip_prefix("data:") {
+                        d
+                    } else {
                         // Could be "event:" or other SSE field — ignore.
                         continue;
                     };
