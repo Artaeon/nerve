@@ -74,7 +74,10 @@ fn handle_export(app: &mut App) -> bool {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("nerve")
         .join("exports");
-    std::fs::create_dir_all(&export_dir).ok();
+    if let Err(e) = std::fs::create_dir_all(&export_dir) {
+        app.status_message = Some(format!("Export failed: cannot create directory: {e}"));
+        return true;
+    }
 
     let filename = format!(
         "conversation_{}.md",
