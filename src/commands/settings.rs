@@ -153,9 +153,7 @@ fn handle_limit(app: &mut App, trimmed: &str) -> bool {
                     app.spending_limit.enabled = true;
                     app.set_status(format!("Spending limit set to ${amount:.2}/session"));
                 } else {
-                    app.set_status(
-                        "Spending limit must be a positive number".to_string(),
-                    );
+                    app.set_status("Spending limit must be a positive number".to_string());
                 }
             } else {
                 app.set_status("Usage: /limit set <amount_usd>".to_string());
@@ -429,5 +427,98 @@ mod tests {
         assert!(!handle(&mut app, "/themes").await);
         assert!(!handle(&mut app, "/aliasing").await);
         assert!(!handle(&mut app, "/limiter").await);
+    }
+
+    // ── Spending limit edge cases ───────────────────────────────────
+
+    #[tokio::test]
+    async fn limit_set_valid_amount() {
+        let mut app = App::new();
+        handle(&mut app, "/limit set 5.00").await;
+        assert!(app.spending_limit.enabled);
+        assert!((app.spending_limit.max_cost_usd - 5.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn limit_set_negative_rejected() {
+        let mut app = App::new();
+        app.spending_limit.enabled = false;
+        handle(&mut app, "/limit set -10").await;
+        // Should NOT enable the limit
+        assert!(!app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_set_zero_rejected() {
+        let mut app = App::new();
+        app.spending_limit.enabled = false;
+        handle(&mut app, "/limit set 0").await;
+        assert!(!app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_set_non_numeric_shows_usage() {
+        let mut app = App::new();
+        handle(&mut app, "/limit set abc").await;
+        let status = app.status_message.clone().unwrap_or_default();
+        assert!(status.contains("Usage"));
+    }
+
+    #[tokio::test]
+    async fn limit_on_enables_from_disabled() {
+        let mut app = App::new();
+        app.spending_limit.enabled = false;
+        handle(&mut app, "/limit on").await;
+        assert!(app.spending_limit.enabled);
+    }
+
+    #[tokio::test]
+    async fn limit_off_disables_from_enabled() {
+        let mut app = App::new();
+        app.spending_limit.enabled = true;
+        handle(&mut app, "/limit off").await;
+        assert!(!app.spending_limit.enabled);
+    }
+
+    // ── Theme edge cases ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn theme_list_is_recognized() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/theme list").await);
+    }
+
+    #[tokio::test]
+    async fn theme_out_of_bounds_number() {
+        let mut app = App::new();
+        let original_index = app.theme_index;
+        handle(&mut app, "/theme 999").await;
+        // Should not change the theme index for out-of-bounds
+        assert_eq!(app.theme_index, original_index);
+    }
+
+    #[tokio::test]
+    async fn theme_zero_not_valid() {
+        let mut app = App::new();
+        let original_index = app.theme_index;
+        handle(&mut app, "/theme 0").await;
+        // 0 is out of bounds (1-indexed)
+        assert_eq!(app.theme_index, original_index);
+    }
+
+    // ── Alias edge cases ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn alias_create_and_lookup() {
+        let mut app = App::new();
+        handle(&mut app, "/alias mytest /run echo hello").await;
+        assert!(app.aliases.contains_key("mytest"));
+        assert_eq!(app.aliases["mytest"], "/run echo hello");
+    }
+
+    #[tokio::test]
+    async fn alias_no_args_shows_list() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/alias").await);
     }
 }
