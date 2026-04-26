@@ -42,7 +42,11 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --all-targets -- -D warnings -A dead_code
+      # --release matches the build config that actually ships; dead_code
+      # is NOT globally suppressed — fields/items that are genuinely
+      # dead-to-analysis carry their own #[allow(dead_code)] with a
+      # one-line justification. Keeps CI strict enough to catch drift.
+      - run: cargo clippy --release --all-targets -- -D warnings
 
   fmt:
     name: Format
