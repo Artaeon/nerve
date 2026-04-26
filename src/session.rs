@@ -87,8 +87,18 @@ pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
     }
 
     let mut sessions = Vec::new();
+    // Skip per-entry errors rather than propagating: one unreadable
+    // session file (stale, being written to, permission glitch) must
+    // not hide the rest. Consistent with list_automations and
+    // list_conversations.
     for entry in fs::read_dir(&dir)? {
-        let entry = entry?;
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("sessions: failed to read entry: {e}");
+                continue;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;

@@ -91,6 +91,11 @@ pub fn load_automation(name: &str) -> anyhow::Result<Automation> {
 }
 
 /// List all custom automations saved on disk.
+///
+/// Per-file I/O errors are logged and skipped rather than propagated, so a
+/// single unreadable or concurrently-deleted file does not hide the rest of
+/// the user's automations. Only a top-level directory failure (permission
+/// denied on the directory itself, etc.) returns an error.
 pub fn list_automations() -> anyhow::Result<Vec<Automation>> {
     let dir = automations_dir();
     if !dir.exists() {
@@ -98,14 +103,30 @@ pub fn list_automations() -> anyhow::Result<Vec<Automation>> {
     }
 
     let mut automations = Vec::new();
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-            let content = fs::read_to_string(&path)?;
-            if let Ok(auto) = toml::from_str::<Automation>(&content) {
-                automations.push(auto);
+    let entries = fs::read_dir(&dir)?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("automations: failed to read entry: {e}");
+                continue;
             }
+        };
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        // Skip any file that disappears mid-scan (another process or
+        // concurrent test deleted it) or that can't be parsed as TOML.
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("automations: failed to read {}: {e}", path.display());
+                continue;
+            }
+        };
+        if let Ok(auto) = toml::from_str::<Automation>(&content) {
+            automations.push(auto);
         }
     }
     automations.sort_by(|a, b| a.name.cmp(&b.name));
