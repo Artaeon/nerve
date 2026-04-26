@@ -1464,9 +1464,9 @@ async fn handle_normal_mode(
                         }
                     }
                 }
-                KeyCode::Up => {
+                KeyCode::Up
                     // Browse input history (older)
-                    if !app.input_history.is_empty() {
+                    if !app.input_history.is_empty() => {
                         match app.input_history_index {
                             None => {
                                 // Save current input and go to most recent history
@@ -1485,7 +1485,6 @@ async fn handle_normal_mode(
                             _ => {} // At oldest entry, do nothing
                         }
                     }
-                }
                 KeyCode::Down => {
                     // Browse input history (newer)
                     if let Some(idx) = app.input_history_index {
@@ -1716,10 +1715,10 @@ fn handle_model_select(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
         }
-        KeyCode::Char('j') | KeyCode::Down => {
-            if app.model_select_index + 1 < app.available_models.len() {
-                app.model_select_index += 1;
-            }
+        KeyCode::Char('j') | KeyCode::Down
+            if app.model_select_index + 1 < app.available_models.len() =>
+        {
+            app.model_select_index += 1;
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.model_select_index = app.model_select_index.saturating_sub(1);
@@ -1743,10 +1742,10 @@ fn handle_provider_select(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => {
             app.provider_select_index = app.provider_select_index.saturating_sub(1);
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.provider_select_index + 1 < app.available_providers.len() {
-                app.provider_select_index += 1;
-            }
+        KeyCode::Down | KeyCode::Char('j')
+            if app.provider_select_index + 1 < app.available_providers.len() =>
+        {
+            app.provider_select_index += 1;
         }
         KeyCode::Enter => {
             if let Some(provider_name) = app.available_providers.get(app.provider_select_index) {
@@ -1989,8 +1988,8 @@ fn filtered_history_entries(app: &App) -> Vec<history::ConversationRecord> {
 
     // Apply sort order to match the rendering
     match app.history_sort {
-        1 => entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-        2 => entries.sort_by(|a, b| b.messages.len().cmp(&a.messages.len())),
+        1 => entries.sort_by_key(|a| a.title.to_lowercase()),
+        2 => entries.sort_by_key(|c| std::cmp::Reverse(c.messages.len())),
         _ => {} // Already sorted by date (default from list_conversations)
     }
 
@@ -2004,9 +2003,9 @@ fn handle_search(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
         }
-        KeyCode::Enter => {
+        KeyCode::Enter
             // Jump to next match
-            if !app.search_results.is_empty() {
+            if !app.search_results.is_empty() => {
                 app.search_current = (app.search_current + 1) % app.search_results.len();
                 app.set_status(format!(
                     "Match {}/{}",
@@ -2014,7 +2013,6 @@ fn handle_search(app: &mut App, key: crossterm::event::KeyEvent) {
                     app.search_results.len()
                 ));
             }
-        }
         KeyCode::Backspace => {
             app.search_query.pop();
             update_search_results(app);
@@ -2215,7 +2213,7 @@ fn update_autocomplete(app: &mut App) {
                 .collect()
         };
         // Prefix matches first.
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+        scored.sort_by_key(|x| std::cmp::Reverse(x.0));
 
         app.autocomplete_items = scored
             .iter()
@@ -2778,13 +2776,12 @@ fn toggle_setting(app: &mut App) {
                 _ => {}
             }
         }
-        2 => {
+        2
             // Theme tab: only the preset selector (item 0) cycles
-            if app.settings_select == 0 {
+            if app.settings_select == 0 => {
                 let presets = config::theme_presets();
                 app.theme_index = (app.theme_index + 1) % presets.len();
             }
-        }
         _ => {}
     }
 }

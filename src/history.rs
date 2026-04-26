@@ -113,7 +113,7 @@ pub fn list_conversations() -> anyhow::Result<Vec<ConversationRecord>> {
     }
 
     // Most recently updated first.
-    records.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    records.sort_by_key(|r| std::cmp::Reverse(r.updated_at));
     Ok(records)
 }
 

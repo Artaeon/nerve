@@ -343,7 +343,7 @@ pub fn filtered_prompts(app: &App) -> Vec<(i64, prompts::SmartPrompt)> {
             .collect()
     };
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|x| std::cmp::Reverse(x.0));
     scored
 }
 

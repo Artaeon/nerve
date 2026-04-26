@@ -626,15 +626,14 @@ pub fn extract_symbols_from_content(content: &str, ext: &str) -> Vec<String> {
                     symbols.push(sig.trim().to_string());
                 }
             }
-            "js" | "ts" | "jsx" | "tsx" => {
-                if trimmed.starts_with("export function ")
+            "js" | "ts" | "jsx" | "tsx"
+                if (trimmed.starts_with("export function ")
                     || trimmed.starts_with("export class ")
                     || trimmed.starts_with("export default function ")
-                    || trimmed.starts_with("export const ")
-                {
-                    let sig: String = trimmed.chars().take(80).collect();
-                    symbols.push(sig);
-                }
+                    || trimmed.starts_with("export const ")) =>
+            {
+                let sig: String = trimmed.chars().take(80).collect();
+                symbols.push(sig);
             }
             "go" => {
                 if (trimmed.starts_with("func ") || trimmed.starts_with("type "))

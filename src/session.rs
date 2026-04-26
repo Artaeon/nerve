@@ -115,7 +115,7 @@ pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
         }
     }
 
-    sessions.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+    sessions.sort_by_key(|s| std::cmp::Reverse(s.1)); // newest first
     Ok(sessions)
 }
 

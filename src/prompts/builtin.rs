@@ -1399,7 +1399,13 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Catch breaking changes in public APIs before they ship",
             "Compare the BEFORE and AFTER of this public API and report every breaking change a downstream consumer would notice.\n\nBucket findings:\n- BREAKING — recompile or runtime failure for existing callers (removed/renamed symbol, changed signature, narrower return type, wider input requirement, added required field)\n- BEHAVIOR — same shape, different observable behavior (default change, error type change, ordering change, side-effect change)\n- DEPRECATION-CANDIDATE — should be marked deprecated rather than changed\n- SAFE — additive, optional, default-backwards-compat\n\nFor each BREAKING / BEHAVIOR change, propose:\n1. A non-breaking alternative (overload, optional param, new method) if one exists\n2. A migration note for the changelog\n3. The semver bump it implies\n\n```\n{{input}}\n```",
             "Code Review",
-            &["api", "breaking change", "semver", "compatibility", "review"],
+            &[
+                "api",
+                "breaking change",
+                "semver",
+                "compatibility",
+                "review",
+            ],
         ),
         p(
             "Review for Test Coverage Gaps",
@@ -1435,7 +1441,13 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Structured incident response and root-cause framework",
             "Help me work through an active production incident. I'll describe the symptoms; lead me through a calm, structured response.\n\nUse this framework:\n\n1. STABILIZE FIRST\n   - What's the user-visible impact right now? (errors / latency / data loss / security)\n   - What's the cheapest mitigation? (rollback / scale / shed / circuit-break / flag-flip)\n   - DO THE MITIGATION before deep investigation. Note: rollback is almost always a valid first move.\n\n2. ESTABLISH GROUND TRUTH\n   - When did it start? Correlate with deploys, config flips, traffic spikes, upstream changes.\n   - What's the blast radius? % of users / regions / endpoints affected.\n\n3. FORM HYPOTHESES, RANK THEM\n   - Most recent change is the likeliest culprit (a deploy 4h ago beats a library upgrade 4 weeks ago)\n   - Rank by: prior probability × ease of testing\n   - For each: how would you confirm or rule it out in <5 minutes?\n\n4. INVESTIGATE WITHOUT TUNNEL VISION\n   - Don't keep digging when a hypothesis takes >15 min to confirm — drop it, move to the next\n   - Pull metrics, logs, traces. If you don't have them, that's the postmortem item, not the current incident.\n\n5. EXIT CRITERIA\n   - When can we declare the incident over? Specific metric, specific threshold, time window.\n\n6. POSTMORTEM SEEDS\n   - Note things to address later. Don't fix in the heat of the incident if mitigation already worked.\n\nMy incident:\n\n{{input}}",
             "Debugging",
-            &["incident", "production", "outage", "debugging", "postmortem"],
+            &[
+                "incident",
+                "production",
+                "outage",
+                "debugging",
+                "postmortem",
+            ],
         ),
         p(
             "Diagnose a Slow Database Query",

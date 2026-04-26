@@ -215,8 +215,8 @@ pub fn render_history_browser(frame: &mut Frame, app: &App, area: Rect) {
 
     // Apply sort order
     match app.history_sort {
-        1 => filtered.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase())),
-        2 => filtered.sort_by(|a, b| b.messages.len().cmp(&a.messages.len())),
+        1 => filtered.sort_by_key(|a| a.title.to_lowercase()),
+        2 => filtered.sort_by_key(|c| std::cmp::Reverse(c.messages.len())),
         _ => {} // Already sorted by date (default from list_conversations)
     }
 

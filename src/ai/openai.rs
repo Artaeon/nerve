@@ -752,10 +752,8 @@ mod tests {
     fn extract_sse_data(line: &str) -> Option<String> {
         let data = if let Some(d) = line.strip_prefix("data: ") {
             d
-        } else if let Some(d) = line.strip_prefix("data:") {
-            d
         } else {
-            return None;
+            line.strip_prefix("data:")?
         };
         Some(data.trim().to_string())
     }
