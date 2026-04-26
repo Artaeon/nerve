@@ -128,6 +128,12 @@ impl AgentRole {
     }
 }
 
+/// Hard cap on coder ↔ reviewer iteration rounds. The reviewer can ask
+/// for fixes up to this many times before the workflow finishes
+/// regardless. Prevents runaway loops where the reviewer never accepts
+/// the coder's output.
+pub const MAX_ITERATIONS: usize = 3;
+
 /// Live pipeline state. Stored on `App` while a workflow is active; cleared
 /// when the pipeline reaches `Done` or the user cancels.
 #[derive(Debug, Clone)]
@@ -136,6 +142,9 @@ pub struct PipelineState {
     pub step: PipelineStep,
     /// The user's original task — preserved so we can show it in status.
     pub task: String,
+    /// Number of times we've looped Reviewing → Coding because the
+    /// reviewer requested fixes. Capped at `MAX_ITERATIONS`.
+    pub iterations_used: usize,
 }
 
 impl PipelineState {
@@ -143,12 +152,22 @@ impl PipelineState {
         Self {
             step: PipelineStep::Planning,
             task,
+            iterations_used: 0,
         }
     }
 
     /// Advance to the next step. No-op if already Done.
     pub fn advance(&mut self) {
         self.step = self.step.next();
+    }
+
+    /// Loop back to the Coding step from Reviewing because the reviewer
+    /// asked for fixes. Increments `iterations_used` and returns the
+    /// new step. Caller is responsible for checking the iteration cap
+    /// before calling this — see `should_iterate_on_feedback`.
+    pub fn iterate_back_to_coding(&mut self) {
+        self.iterations_used += 1;
+        self.step = PipelineStep::Coding;
     }
 
     /// True once the pipeline has walked off the end of the sequence.
@@ -159,6 +178,27 @@ impl PipelineState {
     pub fn is_done(&self) -> bool {
         self.step == PipelineStep::Done
     }
+}
+
+/// Decide whether the workflow should loop back to the coder based on
+/// the reviewer's final response.
+///
+/// The reviewer's system prompt asks it to end with one of three
+/// verdict lines. We look for the verdict pattern (case-insensitive)
+/// rather than parsing the full response, so a chatty reviewer that
+/// adds extra context after the verdict still works.
+///
+/// Returns true only if the response contains "NEEDS FIXES" verdict
+/// AND we still have iteration budget. APPROVED, REJECTED, or any
+/// missing/malformed verdict completes the workflow.
+pub fn should_iterate_on_feedback(reviewer_response: &str, iterations_used: usize) -> bool {
+    if iterations_used >= MAX_ITERATIONS {
+        return false;
+    }
+    let upper = reviewer_response.to_uppercase();
+    // Must mention NEEDS FIXES AND not also REJECTED (in case the
+    // reviewer wrote both for some reason — the stricter verdict wins).
+    upper.contains("NEEDS FIXES") && !upper.contains("REJECTED")
 }
 
 // ─── Role system prompts ─────────────────────────────────────────────────
@@ -314,5 +354,73 @@ mod tests {
         let role = PipelineStep::Planning.role().unwrap();
         assert_eq!(role.tool_policy, ToolPolicy::None);
         assert!(role.system_prompt.contains("no tool access"));
+    }
+
+    // ── Iteration loop ──────────────────────────────────────────────
+
+    #[test]
+    fn should_iterate_on_needs_fixes() {
+        let response = "Some review notes...\nVERDICT: NEEDS FIXES";
+        assert!(should_iterate_on_feedback(response, 0));
+        assert!(should_iterate_on_feedback(response, MAX_ITERATIONS - 1));
+    }
+
+    #[test]
+    fn should_not_iterate_on_approved() {
+        let response = "Looks good.\nVERDICT: APPROVED";
+        assert!(!should_iterate_on_feedback(response, 0));
+    }
+
+    #[test]
+    fn should_not_iterate_on_rejected() {
+        let response = "Fundamental problems.\nVERDICT: REJECTED";
+        assert!(!should_iterate_on_feedback(response, 0));
+    }
+
+    #[test]
+    fn should_not_iterate_when_at_iteration_cap() {
+        let response = "VERDICT: NEEDS FIXES";
+        assert!(!should_iterate_on_feedback(response, MAX_ITERATIONS));
+        assert!(!should_iterate_on_feedback(response, MAX_ITERATIONS + 5));
+    }
+
+    #[test]
+    fn should_not_iterate_on_missing_verdict() {
+        // Reviewer that ignored the verdict format completes the
+        // workflow rather than looping. User can /workflow again if
+        // unhappy.
+        assert!(!should_iterate_on_feedback("Just some prose.", 0));
+        assert!(!should_iterate_on_feedback("", 0));
+    }
+
+    #[test]
+    fn should_not_iterate_when_both_needs_fixes_and_rejected_appear() {
+        // Stricter verdict wins; if reviewer wrote both, don't loop.
+        let response = "NEEDS FIXES somewhere... actually REJECTED";
+        assert!(!should_iterate_on_feedback(response, 0));
+    }
+
+    #[test]
+    fn should_iterate_is_case_insensitive() {
+        assert!(should_iterate_on_feedback("verdict: needs fixes", 0));
+        assert!(should_iterate_on_feedback("Verdict: Needs Fixes", 0));
+    }
+
+    #[test]
+    fn iterate_back_to_coding_increments_counter() {
+        let mut state = PipelineState::new("t".into());
+        state.step = PipelineStep::Reviewing;
+        assert_eq!(state.iterations_used, 0);
+        state.iterate_back_to_coding();
+        assert_eq!(state.step, PipelineStep::Coding);
+        assert_eq!(state.iterations_used, 1);
+        state.iterate_back_to_coding();
+        assert_eq!(state.iterations_used, 2);
+    }
+
+    #[test]
+    fn pipeline_state_starts_with_zero_iterations() {
+        let state = PipelineState::new("t".into());
+        assert_eq!(state.iterations_used, 0);
     }
 }

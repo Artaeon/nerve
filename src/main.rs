@@ -3047,10 +3047,43 @@ pub(crate) async fn advance_pipeline_if_active(
     app: &mut App,
     provider: &Arc<dyn AiProvider>,
 ) -> Option<crate::agent::pipeline::PipelineStep> {
-    use crate::agent::pipeline::PipelineStep;
+    use crate::agent::pipeline::{PipelineStep, should_iterate_on_feedback};
 
     // No active workflow — nothing to do.
-    let (next_step, task) = {
+    let current_step = app.pipeline.as_ref()?.step;
+
+    // Special case: when the Reviewer's turn just finished, look at its
+    // verdict. If it asked for fixes and we still have iteration
+    // budget, loop back to the Coder with the reviewer's feedback as
+    // context instead of finishing the workflow.
+    let iteration_handoff = if current_step == PipelineStep::Reviewing {
+        let reviewer_msg = app
+            .current_conversation()
+            .messages
+            .iter()
+            .rfind(|(r, _)| r == "assistant")
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        let iterations = app.pipeline.as_ref()?.iterations_used;
+        if should_iterate_on_feedback(&reviewer_msg, iterations) {
+            // Loop back: drive Coding again with the feedback in
+            // conversation. The state's iteration counter is bumped so
+            // we don't loop forever.
+            app.pipeline.as_mut()?.iterate_back_to_coding();
+            Some(app.pipeline.as_ref()?.iterations_used)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (next_step, task) = if iteration_handoff.is_some() {
+        // We already set step = Coding via iterate_back_to_coding;
+        // don't call advance() again.
+        let state = app.pipeline.as_ref()?;
+        (state.step, state.task.clone())
+    } else {
         let state = app.pipeline.as_mut()?;
         state.advance();
         (state.step, state.task.clone())
@@ -3072,12 +3105,30 @@ pub(crate) async fn advance_pipeline_if_active(
             PipelineStep::Reviewing => 3,
             PipelineStep::Done => 0,
         };
-        app.set_status(format!(
-            "Workflow: {} (step {step_num}/3)",
-            next_step.label()
-        ));
-        if !role.handoff_prompt.is_empty() {
-            app.add_user_message(role.handoff_prompt.clone());
+        // Distinct status when the coder is on a feedback iteration so
+        // the user sees we're not stuck repeating the first attempt.
+        if let Some(iter_n) = iteration_handoff {
+            app.set_status(format!(
+                "Workflow: Coder iteration {iter_n}/{} (addressing reviewer feedback)",
+                crate::agent::pipeline::MAX_ITERATIONS
+            ));
+            // Specific handoff message for iterations: tells the Coder
+            // to read the reviewer's feedback above and address it.
+            app.add_user_message(
+                "The reviewer asked for fixes (verdict above). Read their \
+                 findings carefully, address each one, and run any \
+                 verification commands again. Do not start over — only \
+                 fix what the reviewer flagged."
+                    .into(),
+            );
+        } else {
+            app.set_status(format!(
+                "Workflow: {} (step {step_num}/3)",
+                next_step.label()
+            ));
+            if !role.handoff_prompt.is_empty() {
+                app.add_user_message(role.handoff_prompt.clone());
+            }
         }
         // send_to_ai_from_history sets up a new stream_rx and abort
         // handle; the drain loop picks it up on its next iteration.
@@ -4833,5 +4884,87 @@ mod tests {
             app.agent_iterations, 0,
             "advancing between roles must reset the agent-iteration budget"
         );
+    }
+
+    // ── Iteration loop on reviewer feedback ─────────────────────────
+
+    /// Build an app that's just finished a Reviewing turn whose final
+    /// assistant message contains the given verdict text.
+    fn app_in_post_reviewing_state(verdict_text: &str) -> App {
+        let mut app = App::new();
+        let mut state = crate::agent::pipeline::PipelineState::new("test task".into());
+        state.step = crate::agent::pipeline::PipelineStep::Reviewing;
+        app.pipeline = Some(state);
+        app.add_user_message("test task".into());
+        app.add_assistant_message(verdict_text.into());
+        app
+    }
+
+    #[tokio::test]
+    async fn pipeline_loops_back_to_coding_on_needs_fixes() {
+        let mut app =
+            app_in_post_reviewing_state("Findings:\n- naming is off\nVERDICT: NEEDS FIXES");
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![""]));
+
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+
+        assert_eq!(
+            step,
+            Some(crate::agent::pipeline::PipelineStep::Coding),
+            "should loop back to coder on NEEDS FIXES"
+        );
+        assert_eq!(app.pipeline.as_ref().unwrap().iterations_used, 1);
+        let last_user = app
+            .current_conversation()
+            .messages
+            .iter()
+            .rfind(|(r, _)| r == "user")
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(
+            last_user.contains("reviewer asked for fixes"),
+            "expected iteration-specific handoff, got: {last_user}"
+        );
+        let status = app.status_message.as_deref().unwrap_or("");
+        assert!(
+            status.contains("Coder iteration 1"),
+            "expected iteration status, got: {status}"
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_completes_on_approved_verdict() {
+        let mut app = app_in_post_reviewing_state("All good.\nVERDICT: APPROVED");
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![]));
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(step, Some(crate::agent::pipeline::PipelineStep::Done));
+        assert!(app.pipeline.is_none());
+    }
+
+    #[tokio::test]
+    async fn pipeline_completes_on_rejected_verdict() {
+        let mut app = app_in_post_reviewing_state("Fundamental problems.\nVERDICT: REJECTED");
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![]));
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(step, Some(crate::agent::pipeline::PipelineStep::Done));
+        assert!(app.pipeline.is_none());
+    }
+
+    #[tokio::test]
+    async fn pipeline_caps_iterations_at_max() {
+        let mut app = app_in_post_reviewing_state("Still issues.\nVERDICT: NEEDS FIXES");
+        app.pipeline.as_mut().unwrap().iterations_used = crate::agent::pipeline::MAX_ITERATIONS;
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![]));
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(
+            step,
+            Some(crate::agent::pipeline::PipelineStep::Done),
+            "must not loop past MAX_ITERATIONS"
+        );
+        assert!(app.pipeline.is_none());
     }
 }
