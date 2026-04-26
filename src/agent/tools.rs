@@ -409,13 +409,12 @@ fn execute_read_file(call: &ToolCall) -> ToolResult {
 
     match std::fs::read_to_string(path) {
         Ok(content) => {
-            // Truncate very large files
+            // Truncate very large files. Byte-slicing here would panic
+            // on any file whose byte 50_000 lies mid UTF-8 char (common
+            // for CJK source, JSON with non-ASCII strings, etc.).
             let truncated = if content.len() > 50_000 {
-                format!(
-                    "{}...\n\n[Truncated: file is {} bytes]",
-                    &content[..50_000],
-                    content.len()
-                )
+                let head: String = content.chars().take(50_000).collect();
+                format!("{head}...\n\n[Truncated: file is {} bytes]", content.len())
             } else {
                 content
             };

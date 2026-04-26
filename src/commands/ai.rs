@@ -277,7 +277,10 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
             if let Some(ws) = ws_for_agent {
                 let project_map = crate::workspace::generate_project_map(&ws.root, 3);
                 let map_context = if project_map.len() > 2000 {
-                    format!("{}...\n[Project map truncated]", &project_map[..2000])
+                    // Char-safe truncation: byte slicing panics on
+                    // multi-byte chars in file paths / project names.
+                    let head: String = project_map.chars().take(2000).collect();
+                    format!("{head}...\n[Project map truncated]")
                 } else {
                     project_map
                 };
