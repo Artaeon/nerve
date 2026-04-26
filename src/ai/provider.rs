@@ -53,6 +53,12 @@ pub enum StreamEvent {
         success: bool,
         output_preview: String,
     },
+    /// Emitted by the async agent tool-runner once every tool call in the
+    /// current turn has finished. Carries the aggregated results that must
+    /// be appended to the conversation as a user message before the next
+    /// LLM call. This is what lets the main event loop stay responsive
+    /// during long tool executions (`npm install`, test runs, etc.).
+    AgentToolsComplete { user_message: String },
 }
 
 /// Metadata about an available model.

@@ -1,5 +1,5 @@
 //! Chat commands: /new, /clear, /delete, /export, /copy, /system, /rename,
-//! /session, /branch, /!!, /repeat
+//! /session, /branch, /!!, /repeat, /workflow
 
 use std::sync::Arc;
 
@@ -9,7 +9,7 @@ use crate::clipboard;
 use crate::session;
 
 /// Handle chat-related commands. Returns `true` if the command was handled.
-pub async fn handle(app: &mut App, trimmed: &str, _provider: &Arc<dyn AiProvider>) -> bool {
+pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
     if trimmed == "/clear" {
         return handle_clear(app);
     }
@@ -55,7 +55,67 @@ pub async fn handle(app: &mut App, trimmed: &str, _provider: &Arc<dyn AiProvider
         return handle_repeat(app);
     }
 
+    if trimmed == "/workflow" || trimmed.starts_with("/workflow ") {
+        return handle_workflow(app, trimmed, provider).await;
+    }
+
     false
+}
+
+/// `/workflow <task>` — start the 3-role sequential pipeline
+/// (planner → coder → reviewer) on a fresh conversation. Each role's
+/// output streams normally; the event loop advances between roles on
+/// `StreamEvent::Done`.
+async fn handle_workflow(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>) -> bool {
+    if app.is_streaming {
+        app.set_status("Already streaming — press Esc first");
+        return true;
+    }
+    // A previous pipeline may be paused (user hit Esc mid-workflow):
+    // is_streaming is false but pipeline is still Some. Refuse rather
+    // than silently overwriting it, so the user explicitly picks /new
+    // to abandon it or runs Esc-confirmed again.
+    if app.pipeline.is_some() {
+        app.add_assistant_message(
+            "A workflow is already active (paused). Use /new to abandon it \
+             before starting a fresh one, or resume by sending a message."
+                .into(),
+        );
+        return true;
+    }
+
+    let task = trimmed
+        .strip_prefix("/workflow")
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if task.is_empty() {
+        app.add_assistant_message(
+            "Usage: /workflow <task>\n\
+             \n\
+             Runs a 3-agent pipeline on a fresh conversation:\n\
+               1. Planner  — writes a numbered plan (no tool access)\n\
+               2. Coder    — executes the plan with full tool access\n\
+               3. Reviewer — inspects the result with read-only tools\n\
+             \n\
+             Example: /workflow add a --json flag to the CLI output\n\
+             \n\
+             Press Esc at any time to stop. Use /new to clear the workflow."
+                .into(),
+        );
+        return true;
+    }
+
+    // Start the pipeline in a fresh conversation so the planner/coder/
+    // reviewer have a clean context. The user's previous chats remain in
+    // the history browser (Ctrl+O).
+    app.new_conversation();
+    app.pipeline = Some(crate::agent::pipeline::PipelineState::new(task.clone()));
+    app.set_status("Workflow started: Planner");
+    app.add_user_message(task);
+    crate::send_to_ai_from_history(app, provider).await;
+    true
 }
 
 fn handle_clear(app: &mut App) -> bool {
@@ -752,5 +812,95 @@ mod tests {
         assert!(!handle(&mut app, "/unknown", &provider).await);
         assert!(!handle(&mut app, "/copying", &provider).await);
         assert!(!handle(&mut app, "/newx", &provider).await);
+    }
+
+    // ── /workflow ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn workflow_bare_shows_usage() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/workflow", &provider).await);
+        let last = app
+            .current_conversation()
+            .messages
+            .last()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(last.contains("Usage"));
+        assert!(
+            app.pipeline.is_none(),
+            "bare /workflow should not start a pipeline"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_with_task_starts_pipeline_at_planning() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/workflow add a --json flag", &provider).await);
+        let state = app.pipeline.as_ref().expect("pipeline should be set");
+        assert_eq!(state.step, crate::agent::pipeline::PipelineStep::Planning);
+        assert_eq!(state.task, "add a --json flag");
+        // The task should be the first user message in the new conversation.
+        let first_user = app
+            .current_conversation()
+            .messages
+            .iter()
+            .find(|(r, _)| r == "user")
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert_eq!(first_user, "add a --json flag");
+        // Streaming was started by send_to_ai_from_history.
+        assert!(app.is_streaming);
+    }
+
+    #[tokio::test]
+    async fn workflow_refuses_when_already_streaming() {
+        let mut app = App::new();
+        app.is_streaming = true;
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/workflow do something", &provider).await);
+        assert!(
+            app.pipeline.is_none(),
+            "should not overwrite an in-flight stream"
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_refuses_when_pipeline_already_active() {
+        let mut app = App::new();
+        // Simulate a paused pipeline: is_streaming is false but a
+        // pipeline state is still sitting on the app.
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
+            "old task".into(),
+        ));
+        app.is_streaming = false;
+        let provider = mock_provider();
+
+        assert!(handle(&mut app, "/workflow new task", &provider).await);
+
+        // The old pipeline must NOT have been overwritten.
+        let state = app.pipeline.as_ref().expect("pipeline should still be set");
+        assert_eq!(state.task, "old task");
+        // A guidance message should have been shown.
+        let last = app
+            .current_conversation()
+            .messages
+            .last()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(
+            last.contains("workflow is already active"),
+            "expected guidance message, got: {last}"
+        );
+    }
+
+    #[tokio::test]
+    async fn new_conversation_clears_pipeline() {
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new("t".into()));
+        app.new_conversation();
+        assert!(app.pipeline.is_none());
     }
 }

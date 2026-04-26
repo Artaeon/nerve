@@ -28,7 +28,56 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
         return handle_compact(app);
     }
 
+    if trimmed == "/suggest" || trimmed.starts_with("/suggest ") {
+        return handle_suggest(app, trimmed);
+    }
+
     false
+}
+
+/// `/suggest <query>` — rank all known SmartPrompts against the query
+/// using BM25 and show the top matches so the user can pick one by
+/// number with `/prompt <name>` or Ctrl+K.
+fn handle_suggest(app: &mut App, trimmed: &str) -> bool {
+    let query = trimmed
+        .strip_prefix("/suggest")
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if query.is_empty() {
+        app.add_assistant_message(
+            "Usage: /suggest <what you want to do>\n\
+             \n\
+             Example: /suggest fix a bug in my rust code\n\
+             \n\
+             Ranks the prompt library by relevance and returns the top 5 matches."
+                .into(),
+        );
+        return true;
+    }
+
+    let results = crate::prompts::search::suggest(&query, 5);
+    if results.is_empty() {
+        app.add_assistant_message(format!(
+            "No prompts matched \"{query}\".\n\nPress Ctrl+K to browse the full library."
+        ));
+        return true;
+    }
+
+    let mut out = format!("Top matches for \"{query}\":\n\n");
+    for (i, (p, score)) in results.iter().enumerate() {
+        out.push_str(&format!(
+            "{n}. [{cat}] {name} (score {s:.2})\n   {desc}\n",
+            n = i + 1,
+            cat = p.category,
+            name = p.name,
+            s = score,
+            desc = p.description,
+        ));
+    }
+    out.push_str("\nOpen Ctrl+K to use any of these, or filter by the prompt name.");
+    app.add_assistant_message(out);
+    true
 }
 
 fn handle_help(app: &mut App) -> bool {
@@ -165,6 +214,13 @@ Usage & Cost\n\
   /limit on           Enable spending limit\n\
   /limit off          Disable spending limit\n\
   /limit set <$>      Set spending limit amount\n\
+\n\
+Prompt library\n\
+  Ctrl+K              Browse the full SmartPrompt library\n\
+  /suggest <query>    Rank prompts by relevance to a free-form query\n\
+\n\
+Multi-agent workflow\n\
+  /workflow <task>    Run planner -> coder -> reviewer on a task\n\
 \n\
 System\n\
   /status             Show system status\n\
@@ -560,5 +616,49 @@ mod tests {
         assert!(!handle(&mut app, "/statuses").await);
         assert!(!handle(&mut app, "/token").await);
         assert!(!handle(&mut app, "/summarize").await);
+    }
+
+    #[tokio::test]
+    async fn suggest_bare_shows_usage() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/suggest").await);
+        let last = app
+            .current_conversation()
+            .messages
+            .last()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(last.contains("Usage"), "expected usage help, got: {last}");
+    }
+
+    #[tokio::test]
+    async fn suggest_with_query_lists_matches() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/suggest fix a bug in my code").await);
+        let last = app
+            .current_conversation()
+            .messages
+            .last()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(last.contains("Top matches"));
+        // "Fix Bug" is a built-in prompt and should rank highly for this query.
+        assert!(
+            last.contains("Fix Bug"),
+            "expected Fix Bug in results, got:\n{last}"
+        );
+    }
+
+    #[tokio::test]
+    async fn suggest_with_nonsense_query_reports_no_match() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/suggest xyzzyqwerfloopunmatched").await);
+        let last = app
+            .current_conversation()
+            .messages
+            .last()
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(last.contains("No prompts matched"));
     }
 }

@@ -849,167 +849,54 @@ async fn event_loop(
                                 if !tool_calls.is_empty() && app.agent_iterations < 10 {
                                     app.agent_iterations += 1;
 
-                                    // Show what the agent is doing in a human-readable way
-                                    let mut action_summary = String::new();
-                                    for call in &tool_calls {
-                                        let brief = match call.tool.as_str() {
-                                            "read_file" => format!(
-                                                "Reading {}",
-                                                call.args.get("path").unwrap_or(&"?".into())
-                                            ),
-                                            "write_file" => format!(
-                                                "Writing {}",
-                                                call.args.get("path").unwrap_or(&"?".into())
-                                            ),
-                                            "edit_file" => format!(
-                                                "Editing {}",
-                                                call.args.get("path").unwrap_or(&"?".into())
-                                            ),
-                                            "run_command" => format!(
-                                                "Running: {}",
-                                                call.args.get("command").unwrap_or(&"?".into())
-                                            ),
-                                            "list_files" => format!(
-                                                "Listing {}",
-                                                call.args.get("path").unwrap_or(&".".into())
-                                            ),
-                                            "search_code" => format!(
-                                                "Searching for '{}'",
-                                                call.args.get("pattern").unwrap_or(&"?".into())
-                                            ),
-                                            "create_directory" => format!(
-                                                "Creating {}",
-                                                call.args.get("path").unwrap_or(&"?".into())
-                                            ),
-                                            "find_files" => format!(
-                                                "Finding {}",
-                                                call.args.get("pattern").unwrap_or(&"*".into())
-                                            ),
-                                            "read_lines" => format!(
-                                                "Reading lines from {}",
-                                                call.args.get("path").unwrap_or(&"?".into())
-                                            ),
-                                            _ => call.tool.to_string(),
-                                        };
-                                        action_summary.push_str(&format!("  > {brief}\n"));
-                                    }
+                                    // Show what the agent is doing in a
+                                    // human-readable way (cheap; stays on
+                                    // the UI thread).
+                                    let action_summary = format_agent_action_summary(&tool_calls);
                                     app.set_status(format!(
                                         "Agent (step {}/10):\n{}",
                                         app.agent_iterations, action_summary
                                     ));
 
-                                    // Execute tools and build results message
-                                    let mut results = String::from(
-                                        "I executed your tool calls. Here are the results:\n\n",
-                                    );
-                                    let mut all_success = true;
-
-                                    for (idx, call) in tool_calls.iter().enumerate() {
-                                        // Show which tool is executing.
-                                        app.active_tool = Some(call.tool.clone());
-                                        let args_summary = call
-                                            .args
-                                            .iter()
-                                            .map(|(k, v)| {
-                                                let short = if v.len() > 40 { &v[..40] } else { v };
-                                                format!("{k}={short}")
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join(", ");
-                                        app.set_status(format!(
-                                            "Tool {}/{}: {} ({})",
-                                            idx + 1,
-                                            tool_calls.len(),
-                                            call.tool,
-                                            args_summary,
-                                        ));
-
-                                        let result = crate::agent::tools::execute_tool(
-                                            call,
-                                            config.command_timeout_secs,
-                                        );
-                                        app.active_tool = None;
-
-                                        if !result.success {
-                                            all_success = false;
-                                        }
-                                        let status_icon =
-                                            if result.success { "OK" } else { "ERROR" };
-                                        results.push_str(&format!(
-                                            "### Tool {}: {} [{}]\n```\n{}\n```\n\n",
-                                            idx + 1,
-                                            result.tool,
-                                            status_icon,
-                                            // Truncate very long outputs to save tokens
-                                            if result.output.len() > 5000 {
-                                                format!(
-                                                    "{}...\n[Output truncated: {} chars total]",
-                                                    &result.output[..5000],
-                                                    result.output.len()
-                                                )
-                                            } else {
-                                                result.output.clone()
-                                            }
-                                        ));
-                                    }
-
-                                    if !all_success {
-                                        results.push_str(
-                                            "Some tools failed. Please review the errors above and adjust your approach.\n",
-                                        );
-                                    }
-
-                                    // Add tool results as a user message
-                                    app.add_user_message(results);
-
-                                    // Apply context management based on provider (halved in Efficient mode)
-                                    let base_limit =
-                                        crate::agent::context::ContextManager::effective_limit(
-                                            &app.selected_provider,
-                                            app.context_limit_override,
-                                        );
-                                    let limit = if app.active_mode == app::NerveMode::Efficient {
-                                        base_limit / 2
-                                    } else {
-                                        base_limit
-                                    };
-                                    let context_mgr =
-                                        crate::agent::context::ContextManager::new(limit);
-
-                                    // First compact tool results, then overall conversation
-                                    let tool_compacted = context_mgr
-                                        .compact_tool_results(&app.current_conversation().messages);
-                                    let compacted = context_mgr.compact_messages(&tool_compacted);
-                                    let messages: Vec<ChatMessage> = compacted
-                                        .iter()
-                                        .filter_map(|(role, content)| match role.as_str() {
-                                            "user" => Some(ChatMessage::user(content)),
-                                            "assistant" => Some(ChatMessage::assistant(content)),
-                                            "system" => Some(ChatMessage::system(content)),
-                                            _ => None,
-                                        })
-                                        .collect();
-
-                                    // Trigger another AI call
-                                    let model = app.selected_model.clone();
-                                    let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
-                                    app.stream_rx = Some(new_rx);
+                                    // Move tool execution off the event
+                                    // loop: a long-running command (test
+                                    // run, `npm install`, etc.) would
+                                    // otherwise freeze the UI for its
+                                    // entire duration. The spawned runner
+                                    // emits ToolStart / ToolDone events
+                                    // per tool so the status bar stays
+                                    // live, and finishes with
+                                    // AgentToolsComplete carrying the
+                                    // aggregated results message.
+                                    let (tool_tx, tool_rx) = tokio::sync::mpsc::unbounded_channel();
+                                    app.cancel_active_stream();
+                                    app.stream_rx = Some(tool_rx);
                                     app.is_streaming = true;
                                     app.streaming_response.clear();
                                     app.streaming_start = Some(std::time::Instant::now());
 
-                                    let provider_clone = Arc::clone(&provider);
-                                    tokio::spawn(async move {
-                                        if let Err(e) = provider_clone
-                                            .chat_stream(&messages, &model, tx.clone())
-                                            .await
-                                        {
-                                            let _ = tx.send(StreamEvent::Error(e.to_string()));
-                                        }
-                                    });
+                                    let timeout_secs = config.command_timeout_secs;
+                                    // Derive the tool policy from the
+                                    // pipeline role, if any. Outside of a
+                                    // workflow, the normal agent mode has
+                                    // full tool access.
+                                    let policy = app
+                                        .pipeline
+                                        .as_ref()
+                                        .and_then(|p| p.step.role())
+                                        .map(|r| r.tool_policy)
+                                        .unwrap_or(crate::agent::pipeline::ToolPolicy::Full);
+                                    let handle = tokio::spawn(run_agent_tools_task(
+                                        tool_calls,
+                                        timeout_secs,
+                                        policy,
+                                        tool_tx,
+                                    ));
+                                    app.stream_abort = Some(handle.abort_handle());
 
-                                    // Do not mark finished; loop continues
-                                    // with the new stream receiver
+                                    // Continue the drain loop against the
+                                    // new receiver — the runner will feed
+                                    // it.
                                     break;
                                 } else if app.agent_iterations > 0 {
                                     // No more tool calls or max iterations
@@ -1038,6 +925,13 @@ async fn event_loop(
                             app.auto_agent_active = false;
                         }
 
+                        // Pipeline: the current role's turn is complete
+                        // (no tool calls outstanding — those take the
+                        // agent-mode branch above). Advance to the next
+                        // role and spawn its streaming call, or finalise
+                        // the workflow if we've hit Done.
+                        advance_pipeline_if_active(app, &provider).await;
+
                         finished = true;
                         break;
                     }
@@ -1047,10 +941,63 @@ async fn event_loop(
                         finished = true;
                         break;
                     }
+                    StreamEvent::AgentToolsComplete { user_message } => {
+                        // The async tool runner has finished all tool
+                        // calls for this agent turn. Inject the aggregated
+                        // results as a user message, compact the
+                        // conversation, and kick off the next LLM call on
+                        // a fresh channel.
+                        app.add_user_message(user_message);
+
+                        let base_limit = crate::agent::context::ContextManager::effective_limit(
+                            &app.selected_provider,
+                            app.context_limit_override,
+                        );
+                        let limit = if app.active_mode == app::NerveMode::Efficient {
+                            base_limit / 2
+                        } else {
+                            base_limit
+                        };
+                        let context_mgr = crate::agent::context::ContextManager::new(limit);
+                        let tool_compacted =
+                            context_mgr.compact_tool_results(&app.current_conversation().messages);
+                        let compacted = context_mgr.compact_messages(&tool_compacted);
+                        let messages: Vec<ChatMessage> = compacted
+                            .iter()
+                            .filter_map(|(role, content)| match role.as_str() {
+                                "user" => Some(ChatMessage::user(content)),
+                                "assistant" => Some(ChatMessage::assistant(content)),
+                                "system" => Some(ChatMessage::system(content)),
+                                _ => None,
+                            })
+                            .collect();
+
+                        let model = app.selected_model.clone();
+                        let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
+                        app.cancel_active_stream();
+                        app.stream_rx = Some(new_rx);
+                        app.is_streaming = true;
+                        app.streaming_response.clear();
+                        app.streaming_start = Some(std::time::Instant::now());
+
+                        let provider_clone = Arc::clone(&provider);
+                        let handle = tokio::spawn(async move {
+                            if let Err(e) = provider_clone
+                                .chat_stream(&messages, &model, tx.clone())
+                                .await
+                            {
+                                let _ = tx.send(StreamEvent::Error(e.to_string()));
+                            }
+                        });
+                        app.stream_abort = Some(handle.abort_handle());
+                        break;
+                    }
                 }
             }
-            // Put it back if not finished (finish_streaming sets it to None).
-            if !finished {
+            // Put the receiver back if we aren't finished AND the branch
+            // handlers haven't already installed a new receiver (agent
+            // mode and AgentToolsComplete both replace app.stream_rx).
+            if !finished && app.stream_rx.is_none() {
                 app.stream_rx = Some(rx);
             }
         }
@@ -1073,10 +1020,18 @@ async fn handle_key_event(
     let code = key.code;
     let mods = key.modifiers;
 
-    // Escape while streaming = stop generation
+    // Escape while streaming = stop generation. Also cancels any active
+    // workflow so the next user turn doesn't accidentally resume as a
+    // pipeline role.
     if app.is_streaming && code == KeyCode::Esc {
         app.finish_streaming();
-        app.set_status("Generation stopped");
+        let was_in_pipeline = app.pipeline.take().is_some();
+        let msg = if was_in_pipeline {
+            "Workflow cancelled"
+        } else {
+            "Generation stopped"
+        };
+        app.set_status(msg);
         return Ok(());
     }
 
@@ -2676,11 +2631,13 @@ fn generate_title(first_user_message: &str) -> String {
         return cleaned;
     }
 
-    let truncated = &cleaned[..50];
+    // Char-safe truncation: byte slicing would panic on multi-byte
+    // characters (emoji, CJK) that cross byte index 50.
+    let truncated: String = cleaned.chars().take(50).collect();
     if let Some(space) = truncated.rfind(' ') {
         truncated[..space].to_string()
     } else {
-        truncated.to_string()
+        truncated
     }
 }
 
@@ -2874,8 +2831,13 @@ async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn AiProvider
             .or_else(crate::workspace::detect_workspace);
         if let Some(ws) = ws_for_agent {
             let project_map = crate::workspace::generate_project_map(&ws.root, 3);
+            // `len()` is byte length (O(1)); if it's over the threshold
+            // we definitely need to truncate. Take the first N *chars*
+            // (not bytes) so we never slice through a multi-byte UTF-8
+            // boundary — project paths can contain CJK or emoji.
             let map_context = if project_map.len() > 2000 {
-                format!("{}...\n[Project map truncated]", &project_map[..2000])
+                let head: String = project_map.chars().take(2000).collect();
+                format!("{head}...\n[Project map truncated]")
             } else {
                 project_map
             };
@@ -3011,8 +2973,36 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
     }
 
     // Inject mode-specific system prompt at position 0 so it shapes the
-    // entire conversation.
-    if let Some(mode_prompt) = app.active_mode.system_prompt() {
+    // entire conversation. If a multi-agent pipeline is active, its
+    // current role's prompt REPLACES the mode prompt — the role fully
+    // owns the system context for that turn.
+    if let Some(ref pipeline_state) = app.pipeline
+        && let Some(role) = pipeline_state.step.role()
+    {
+        // Strip any agent-tools system message from prior turns so the
+        // planner (which has no tools) doesn't see stale tool docs.
+        messages.retain(|m| {
+            !(m.role == "system" && m.content.contains("You have access to the following tools"))
+        });
+        // Prepend tool docs if this role has tool access; the existing
+        // `tools_system_prompt()` covers the full tool set, and the
+        // reviewer's own system prompt restricts its USAGE to read-only.
+        if matches!(
+            role.tool_policy,
+            crate::agent::pipeline::ToolPolicy::Full | crate::agent::pipeline::ToolPolicy::ReadOnly
+        ) {
+            messages.insert(
+                0,
+                ChatMessage::system(crate::agent::tools::tools_system_prompt()),
+            );
+        }
+        // Role prompt sits at position 0 so the LLM reads it first.
+        messages.insert(0, ChatMessage::system(role.system_prompt.clone()));
+
+        // Align agent_mode with the role so the Done handler's tool-call
+        // parsing kicks in for Coder and Reviewer.
+        app.agent_mode = !matches!(role.tool_policy, crate::agent::pipeline::ToolPolicy::None);
+    } else if let Some(mode_prompt) = app.active_mode.system_prompt() {
         messages.insert(0, ChatMessage::system(mode_prompt.to_string()));
     }
 
@@ -3024,17 +3014,257 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();
 
+    // Cancel any prior in-flight stream before we replace the receiver —
+    // otherwise the old task keeps running against a dropped receiver.
+    app.cancel_active_stream();
+
     app.stream_rx = Some(rx);
     app.is_streaming = true;
     app.streaming_response.clear();
     app.streaming_start = Some(std::time::Instant::now());
 
     let provider = Arc::clone(provider);
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         if let Err(e) = provider.chat_stream(&messages, &model, tx.clone()).await {
             let _ = tx.send(StreamEvent::Error(e.to_string()));
         }
     });
+    app.stream_abort = Some(handle.abort_handle());
+}
+
+/// Advance the active multi-agent workflow one step. Called from the
+/// event-loop `Done` branch when the current role's turn ends with no
+/// outstanding tool calls.
+///
+/// Returns the step the pipeline landed on, or `None` if there was no
+/// active pipeline (idempotent). When the pipeline transitions to a new
+/// role, this function appends the role's handoff message to the
+/// conversation and kicks off the next streaming call via
+/// `send_to_ai_from_history`. When it transitions to `Done`, it clears
+/// `app.pipeline` and sets a completion status.
+///
+/// Extracted from the inline Done handler so the state machine can be
+/// driven from tests with a mock provider (see
+/// `pipeline_advances_through_all_three_roles` in the tests module).
+pub(crate) async fn advance_pipeline_if_active(
+    app: &mut App,
+    provider: &Arc<dyn AiProvider>,
+) -> Option<crate::agent::pipeline::PipelineStep> {
+    use crate::agent::pipeline::PipelineStep;
+
+    // No active workflow — nothing to do.
+    let (next_step, task) = {
+        let state = app.pipeline.as_mut()?;
+        state.advance();
+        (state.step, state.task.clone())
+    };
+    // Each role gets its own fresh agent-iteration budget.
+    app.agent_iterations = 0;
+
+    if next_step == PipelineStep::Done {
+        let task_preview: String = task.chars().take(60).collect();
+        app.set_status(format!("Workflow complete: {task_preview}"));
+        app.pipeline = None;
+        return Some(PipelineStep::Done);
+    }
+
+    if let Some(role) = next_step.role() {
+        let step_num = match next_step {
+            PipelineStep::Planning => 1,
+            PipelineStep::Coding => 2,
+            PipelineStep::Reviewing => 3,
+            PipelineStep::Done => 0,
+        };
+        app.set_status(format!(
+            "Workflow: {} (step {step_num}/3)",
+            next_step.label()
+        ));
+        if !role.handoff_prompt.is_empty() {
+            app.add_user_message(role.handoff_prompt.clone());
+        }
+        // send_to_ai_from_history sets up a new stream_rx and abort
+        // handle; the drain loop picks it up on its next iteration.
+        send_to_ai_from_history(app, provider).await;
+    }
+    Some(next_step)
+}
+
+/// Async tool runner for agent mode.
+///
+/// Runs each tool call on the tokio blocking pool so the UI event loop keeps
+/// rendering while slow commands (`npm install`, test runs, etc.) execute.
+/// Emits `ToolStart` / `ToolDone` events per call so the status bar updates
+/// in real time, and a final `AgentToolsComplete` carrying the aggregated
+/// results string to inject into the conversation as a user message before
+/// the next LLM call.
+///
+/// `policy` gates which tools may actually run. In the multi-agent
+/// pipeline, the Reviewer role passes `ToolPolicy::ReadOnly`, which causes
+/// write-capable tool calls (`write_file`, `edit_file`, `run_command`,
+/// `create_directory`) to be refused before execution. The refusal is
+/// reported back to the LLM as a failed tool result so it can adjust.
+///
+/// This function is engineered to always reach its final
+/// `AgentToolsComplete` send — even when the receiver is dropped
+/// mid-way — so the drain loop can never get stuck with `is_streaming=true`
+/// and an orphaned receiver.
+pub(crate) async fn run_agent_tools_task(
+    tool_calls: Vec<crate::agent::tools::ToolCall>,
+    timeout_secs: u64,
+    policy: crate::agent::pipeline::ToolPolicy,
+    tx: mpsc::UnboundedSender<StreamEvent>,
+) {
+    use crate::agent::pipeline::ToolPolicy;
+
+    // Tools that mutate the filesystem or execute arbitrary commands.
+    // ReadOnly roles may call everything else.
+    const WRITE_TOOLS: &[&str] = &["write_file", "edit_file", "run_command", "create_directory"];
+
+    let mut results = String::from("I executed your tool calls. Here are the results:\n\n");
+    let mut all_success = true;
+    let total = tool_calls.len();
+
+    for (idx, call) in tool_calls.into_iter().enumerate() {
+        let args_summary = call
+            .args
+            .iter()
+            .map(|(k, v)| {
+                let short: String = v.chars().take(40).collect();
+                format!("{k}={short}")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let start_summary = format!("{}/{} {} ({args_summary})", idx + 1, total, call.tool);
+        // `break` (not `return`) on send failure so the final
+        // AgentToolsComplete send still runs — that's the signal the
+        // drain loop needs to finalise `is_streaming`.
+        if tx
+            .send(StreamEvent::ToolStart {
+                tool: call.tool.clone(),
+                summary: start_summary,
+            })
+            .is_err()
+        {
+            break;
+        }
+
+        let blocked = policy == ToolPolicy::ReadOnly && WRITE_TOOLS.contains(&call.tool.as_str());
+
+        let result = if blocked {
+            all_success = false;
+            crate::agent::tools::ToolResult {
+                tool: call.tool.clone(),
+                success: false,
+                output: format!(
+                    "Blocked: tool `{}` is not permitted in read-only mode. \
+                     The Reviewer role may only call read_file, read_lines, \
+                     search_code, list_files, and find_files — report your \
+                     findings without writing or running code.",
+                    call.tool
+                ),
+            }
+        } else {
+            // Run the blocking tool on the spawn_blocking pool. If the
+            // task itself panics we surface a synthetic error result
+            // rather than letting the panic tear down the runtime.
+            tokio::task::spawn_blocking(move || {
+                crate::agent::tools::execute_tool(&call, timeout_secs)
+            })
+            .await
+            .unwrap_or_else(|e| crate::agent::tools::ToolResult {
+                tool: "<panicked>".into(),
+                success: false,
+                output: format!("tool task panicked: {e}"),
+            })
+        };
+
+        if !result.success {
+            all_success = false;
+        }
+
+        let preview: String = result.output.chars().take(80).collect();
+        if tx
+            .send(StreamEvent::ToolDone {
+                tool: result.tool.clone(),
+                success: result.success,
+                output_preview: preview,
+            })
+            .is_err()
+        {
+            break;
+        }
+
+        let status_icon = if result.success { "OK" } else { "ERROR" };
+        // Char-safe truncation — tool output can be arbitrary bytes
+        // (file contents in any language, subprocess stdout, etc.).
+        let output_str = if result.output.len() > 5000 {
+            let head: String = result.output.chars().take(5000).collect();
+            format!(
+                "{head}...\n[Output truncated: {} bytes total]",
+                result.output.len()
+            )
+        } else {
+            result.output.clone()
+        };
+        results.push_str(&format!(
+            "### Tool {}: {} [{}]\n```\n{}\n```\n\n",
+            idx + 1,
+            result.tool,
+            status_icon,
+            output_str,
+        ));
+    }
+
+    if !all_success {
+        results.push_str(
+            "Some tools failed. Please review the errors above and adjust your approach.\n",
+        );
+    }
+
+    // Always attempt the terminator, even if we broke out of the loop
+    // on a send error. If the receiver really is gone, this send is a
+    // harmless no-op; if the receiver is still alive it lets the drain
+    // loop wind down cleanly instead of sitting in an "is_streaming"
+    // state with no more events coming.
+    let _ = tx.send(StreamEvent::AgentToolsComplete {
+        user_message: results,
+    });
+}
+
+/// Build a short human-readable summary of pending tool calls for the status
+/// bar ("Reading src/main.rs", "Running: cargo test", etc.).
+fn format_agent_action_summary(tool_calls: &[crate::agent::tools::ToolCall]) -> String {
+    let mut out = String::new();
+    for call in tool_calls {
+        let brief = match call.tool.as_str() {
+            "read_file" => format!("Reading {}", call.args.get("path").unwrap_or(&"?".into())),
+            "write_file" => format!("Writing {}", call.args.get("path").unwrap_or(&"?".into())),
+            "edit_file" => format!("Editing {}", call.args.get("path").unwrap_or(&"?".into())),
+            "run_command" => format!(
+                "Running: {}",
+                call.args.get("command").unwrap_or(&"?".into())
+            ),
+            "list_files" => format!("Listing {}", call.args.get("path").unwrap_or(&".".into())),
+            "search_code" => format!(
+                "Searching for '{}'",
+                call.args.get("pattern").unwrap_or(&"?".into())
+            ),
+            "create_directory" => {
+                format!("Creating {}", call.args.get("path").unwrap_or(&"?".into()))
+            }
+            "find_files" => format!(
+                "Finding {}",
+                call.args.get("pattern").unwrap_or(&"*".into())
+            ),
+            "read_lines" => format!(
+                "Reading lines from {}",
+                call.args.get("path").unwrap_or(&"?".into())
+            ),
+            _ => call.tool.to_string(),
+        };
+        out.push_str(&format!("  > {brief}\n"));
+    }
+    out
 }
 
 /// Regenerate the last assistant response by removing it and re-sending.
@@ -3091,6 +3321,7 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
 
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();
+    app.cancel_active_stream();
     app.stream_rx = Some(rx);
     app.is_streaming = true;
     app.streaming_response.clear();
@@ -3099,11 +3330,12 @@ async fn regenerate_response(app: &mut App, provider: &Arc<dyn AiProvider>, _con
     app.set_status("Regenerating...");
 
     let provider = Arc::clone(provider);
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         if let Err(e) = provider.chat_stream(&messages, &model, tx.clone()).await {
             let _ = tx.send(StreamEvent::Error(e.to_string()));
         }
     });
+    app.stream_abort = Some(handle.abort_handle());
 }
 
 /// Edit the last user message: load it back into the input buffer and remove
@@ -3485,6 +3717,19 @@ mod tests {
         let msg = "This is a very long message that goes on and on about various topics and should be truncated";
         let title = generate_title(msg);
         assert!(title.len() <= 60);
+    }
+
+    #[test]
+    fn generate_title_with_emoji_does_not_panic() {
+        // Regression for UTF-8 byte-slice panic: `&cleaned[..50]` used
+        // to slice across a multi-byte boundary on a string full of
+        // emoji. Any of these inputs would panic before the fix.
+        let emoji_fifty = "\u{1F600}".repeat(60); // 60 × 4-byte chars
+        let _ = generate_title(&emoji_fifty);
+        let mixed = format!("Fix {} bug in {}", "\u{1F41B}", "src/main.rs");
+        let _ = generate_title(&mixed);
+        let cjk = "\u{4E00}\u{4E8C}\u{4E09}".repeat(30); // Chinese chars
+        let _ = generate_title(&cjk);
     }
 
     #[test]
@@ -4178,5 +4423,418 @@ mod tests {
 
         assert_eq!(app.input, "@Cargo.toml ");
         assert!(!app.autocomplete_visible);
+    }
+
+    // ── Agent tool runner (async) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_agent_tools_emits_start_done_and_complete_in_order() {
+        use crate::agent::tools::ToolCall;
+        use std::collections::HashMap;
+
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), "Cargo.toml".to_string());
+        let calls = vec![ToolCall {
+            tool: "read_file".to_string(),
+            args,
+        }];
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        run_agent_tools_task(calls, 5, crate::agent::pipeline::ToolPolicy::Full, tx).await;
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+        assert_eq!(
+            events.len(),
+            3,
+            "expected ToolStart, ToolDone, AgentToolsComplete"
+        );
+        assert!(matches!(events[0], StreamEvent::ToolStart { .. }));
+        assert!(matches!(events[1], StreamEvent::ToolDone { .. }));
+        let msg = match &events[2] {
+            StreamEvent::AgentToolsComplete { user_message } => user_message.clone(),
+            other => panic!("expected AgentToolsComplete, got {other:?}"),
+        };
+        assert!(msg.contains("read_file"));
+        assert!(
+            msg.contains("[package]"),
+            "expected Cargo.toml content in results"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_agent_tools_bails_if_receiver_dropped() {
+        use crate::agent::tools::ToolCall;
+        use std::collections::HashMap;
+
+        // Two calls. Receiver is dropped after the first so the runner
+        // should exit early instead of running the second.
+        let mut args1 = HashMap::new();
+        args1.insert("path".to_string(), "Cargo.toml".to_string());
+        let mut args2 = HashMap::new();
+        args2.insert("path".to_string(), "README.md".to_string());
+        let calls = vec![
+            ToolCall {
+                tool: "read_file".to_string(),
+                args: args1,
+            },
+            ToolCall {
+                tool: "read_file".to_string(),
+                args: args2,
+            },
+        ];
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(rx); // Receiver gone before the runner even starts.
+
+        // Must complete without panicking and without hanging.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            run_agent_tools_task(calls, 5, crate::agent::pipeline::ToolPolicy::Full, tx),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "runner should return quickly when rx is dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_agent_tools_read_only_blocks_write_tools() {
+        use crate::agent::pipeline::ToolPolicy;
+        use crate::agent::tools::ToolCall;
+        use std::collections::HashMap;
+
+        // Mix a write-capable tool with a read-only one; only the read
+        // should actually execute under ReadOnly policy.
+        let mut write_args = HashMap::new();
+        write_args.insert("path".to_string(), "/tmp/should-not-exist".to_string());
+        write_args.insert(
+            "content".to_string(),
+            "this must not be written".to_string(),
+        );
+
+        let mut read_args = HashMap::new();
+        read_args.insert("path".to_string(), "Cargo.toml".to_string());
+
+        let calls = vec![
+            ToolCall {
+                tool: "write_file".to_string(),
+                args: write_args,
+            },
+            ToolCall {
+                tool: "read_file".to_string(),
+                args: read_args,
+            },
+        ];
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        run_agent_tools_task(calls, 5, ToolPolicy::ReadOnly, tx).await;
+
+        let mut events = Vec::new();
+        while let Ok(ev) = rx.try_recv() {
+            events.push(ev);
+        }
+
+        // Find the ToolDone events and check outcomes.
+        let tool_dones: Vec<&StreamEvent> = events
+            .iter()
+            .filter(|e| matches!(e, StreamEvent::ToolDone { .. }))
+            .collect();
+        assert_eq!(tool_dones.len(), 2, "both tools should emit ToolDone");
+
+        // First call was write_file — must have been blocked.
+        if let StreamEvent::ToolDone { success, .. } = tool_dones[0] {
+            assert!(!*success, "write_file should be blocked under ReadOnly");
+        }
+        // Second call was read_file — must have succeeded.
+        if let StreamEvent::ToolDone { success, .. } = tool_dones[1] {
+            assert!(*success, "read_file should succeed under ReadOnly");
+        }
+
+        // Final AgentToolsComplete should mention the block reason so the
+        // LLM can self-correct.
+        let complete = events.last().expect("final event missing");
+        if let StreamEvent::AgentToolsComplete { user_message } = complete {
+            assert!(
+                user_message.contains("not permitted in read-only mode"),
+                "expected blocked reason in results, got:\n{user_message}"
+            );
+        } else {
+            panic!("last event should be AgentToolsComplete, got {complete:?}");
+        }
+
+        // Verify nothing was actually written.
+        assert!(
+            !std::path::Path::new("/tmp/should-not-exist").exists(),
+            "write_file should not have created the file"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_agent_tools_read_only_permits_read_tools() {
+        use crate::agent::pipeline::ToolPolicy;
+        use crate::agent::tools::ToolCall;
+        use std::collections::HashMap;
+
+        let mut args = HashMap::new();
+        args.insert("path".to_string(), "Cargo.toml".to_string());
+        let calls = vec![ToolCall {
+            tool: "read_file".to_string(),
+            args,
+        }];
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        run_agent_tools_task(calls, 5, ToolPolicy::ReadOnly, tx).await;
+
+        let mut saw_success = false;
+        while let Ok(ev) = rx.try_recv() {
+            if let StreamEvent::ToolDone { success, .. } = ev {
+                saw_success |= success;
+            }
+        }
+        assert!(
+            saw_success,
+            "read_file must succeed even under ReadOnly policy"
+        );
+    }
+
+    // ── Multi-agent pipeline: end-to-end state machine ─────────────────
+    //
+    // These tests drive `advance_pipeline_if_active` directly with a
+    // scripted mock provider. They exercise the full planner →
+    // coder → reviewer handoff chain without needing real LLM calls or
+    // the full crossterm event loop.
+
+    /// Mock provider that records every chat_stream call and replies with
+    /// a scripted response per call, then emits Done.
+    struct ScriptedProvider {
+        /// Responses to emit in order, one per chat_stream call.
+        responses: std::sync::Mutex<std::collections::VecDeque<String>>,
+        /// Captures each call's system/user messages for assertions.
+        calls: std::sync::Mutex<Vec<Vec<crate::ai::provider::ChatMessage>>>,
+    }
+
+    impl ScriptedProvider {
+        fn new(scripted: Vec<&str>) -> Self {
+            Self {
+                responses: std::sync::Mutex::new(scripted.into_iter().map(String::from).collect()),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn call_count(&self) -> usize {
+            self.calls.lock().unwrap().len()
+        }
+        fn last_call_system_prompts(&self) -> Vec<String> {
+            self.calls
+                .lock()
+                .unwrap()
+                .last()
+                .map(|msgs| {
+                    msgs.iter()
+                        .filter(|m| m.role == "system")
+                        .map(|m| m.content.clone())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+    }
+
+    impl crate::ai::provider::AiProvider for ScriptedProvider {
+        fn chat_stream(
+            &self,
+            messages: &[crate::ai::provider::ChatMessage],
+            _model: &str,
+            tx: mpsc::UnboundedSender<StreamEvent>,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>>
+        {
+            self.calls.lock().unwrap().push(messages.to_vec());
+            let next = self.responses.lock().unwrap().pop_front();
+            Box::pin(async move {
+                if let Some(response) = next
+                    && !response.is_empty()
+                {
+                    let _ = tx.send(StreamEvent::Token(response));
+                }
+                let _ = tx.send(StreamEvent::Done);
+                Ok(())
+            })
+        }
+
+        fn chat(
+            &self,
+            _messages: &[crate::ai::provider::ChatMessage],
+            _model: &str,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send + '_>>
+        {
+            Box::pin(async { Ok(String::new()) })
+        }
+
+        fn list_models(
+            &self,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = anyhow::Result<Vec<crate::ai::provider::ModelInfo>>,
+                    > + Send
+                    + '_,
+            >,
+        > {
+            Box::pin(async { Ok(vec![]) })
+        }
+
+        fn name(&self) -> &str {
+            "scripted"
+        }
+    }
+
+    #[tokio::test]
+    async fn advance_pipeline_is_noop_when_no_pipeline() {
+        let mut app = App::new();
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![]));
+        let result = advance_pipeline_if_active(&mut app, &provider).await;
+        assert!(result.is_none());
+        assert!(app.pipeline.is_none());
+    }
+
+    #[tokio::test]
+    async fn advance_pipeline_moves_planning_to_coding_and_kicks_stream() {
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
+            "add --json flag".into(),
+        ));
+        // Planner just finished; advance should transition to Coding
+        // and trigger a new chat_stream call.
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![""])); // empty response is fine
+
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+
+        assert_eq!(step, Some(crate::agent::pipeline::PipelineStep::Coding));
+        assert_eq!(
+            app.pipeline.as_ref().unwrap().step,
+            crate::agent::pipeline::PipelineStep::Coding
+        );
+        // Coder's handoff message should be appended to the conversation.
+        let last_user = app
+            .current_conversation()
+            .messages
+            .iter()
+            .rfind(|(r, _)| r == "user")
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(
+            last_user.contains("execute"),
+            "handoff should ask to execute"
+        );
+        // agent_iterations should be reset so the coder starts fresh.
+        assert_eq!(app.agent_iterations, 0);
+    }
+
+    #[tokio::test]
+    async fn pipeline_advances_through_all_three_roles_and_completes() {
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
+            "tiny refactor".into(),
+        ));
+        app.add_user_message("tiny refactor".into());
+
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![
+                "plan",
+                "code",
+                "review VERDICT: APPROVED",
+            ]));
+
+        // Simulate: planner just finished — advance to coder. In the
+        // real event loop, finish_streaming() runs before this, so we
+        // call it here too to match the precondition.
+        let s1 = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(s1, Some(crate::agent::pipeline::PipelineStep::Coding));
+
+        app.finish_streaming();
+        let s2 = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(s2, Some(crate::agent::pipeline::PipelineStep::Reviewing));
+
+        app.finish_streaming();
+        let s3 = advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(s3, Some(crate::agent::pipeline::PipelineStep::Done));
+
+        // Final state: pipeline cleared, no further stream in flight.
+        assert!(app.pipeline.is_none());
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Workflow complete: tiny refactor")
+        );
+    }
+
+    /// Poll until the scripted provider has seen at least `n` calls,
+    /// yielding to the runtime so the task that `advance_pipeline_if_active`
+    /// just spawned has a chance to run. Bounded by 50 yields (~50ms in
+    /// practice) so a genuine failure can't hang the test.
+    async fn wait_for_calls(p: &ScriptedProvider, n: usize) {
+        for _ in 0..50 {
+            if p.call_count() >= n {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!(
+            "scripted provider never reached {n} calls (got {})",
+            p.call_count()
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_injects_role_specific_system_prompts() {
+        // When we advance from planner → coder, the next stream call
+        // should carry the CODER's system prompt (not the planner's).
+        //
+        // Precondition for advance_pipeline_if_active: the current
+        // stream has been finish_streaming()'d by the Done handler
+        // already, so is_streaming is false. We simulate that here
+        // rather than driving the full event loop.
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new("x".into()));
+        app.add_user_message("x".into());
+
+        let scripted = Arc::new(ScriptedProvider::new(vec!["", ""]));
+        let provider: Arc<dyn crate::ai::provider::AiProvider> = scripted.clone();
+
+        advance_pipeline_if_active(&mut app, &provider).await;
+        wait_for_calls(&scripted, 1).await;
+        let coder_systems = scripted.last_call_system_prompts();
+        assert!(
+            coder_systems.iter().any(|s| s.contains("CODER")),
+            "first call after advance should carry coder system prompt; got: {coder_systems:?}"
+        );
+
+        // Simulate Done arriving for the coder's stream.
+        app.finish_streaming();
+
+        advance_pipeline_if_active(&mut app, &provider).await;
+        wait_for_calls(&scripted, 2).await;
+        let reviewer_systems = scripted.last_call_system_prompts();
+        assert!(
+            reviewer_systems.iter().any(|s| s.contains("REVIEWER")),
+            "second call should carry reviewer system prompt; got: {reviewer_systems:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_resets_agent_iterations_between_roles() {
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new("y".into()));
+        app.agent_iterations = 7; // pretend the planner looped 7 times
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![""]));
+        advance_pipeline_if_active(&mut app, &provider).await;
+        assert_eq!(
+            app.agent_iterations, 0,
+            "advancing between roles must reset the agent-iteration budget"
+        );
     }
 }
