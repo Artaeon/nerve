@@ -146,6 +146,12 @@ pub struct App {
     pub is_streaming: bool,
     pub stream_rx: Option<mpsc::UnboundedReceiver<StreamEvent>>,
     pub streaming_start: Option<std::time::Instant>,
+    /// Abort handle for the currently spawned provider task (or the
+    /// currently running tool-execution task in agent mode). Calling
+    /// `.abort()` drops the task's future, which — combined with
+    /// `kill_on_drop(true)` on child processes — tears down the whole
+    /// chain within milliseconds.
+    pub stream_abort: Option<tokio::task::AbortHandle>,
 
     // -- viewport --
     pub scroll_offset: u16,
@@ -227,6 +233,11 @@ pub struct App {
 
     /// User-configured context window override (from `config.context_limit`).
     pub context_limit_override: Option<usize>,
+
+    /// Active multi-agent workflow, if any. When `Some`, the event loop's
+    /// Done handler advances through planner → coder → reviewer instead of
+    /// terminating the stream.
+    pub pipeline: Option<crate::agent::pipeline::PipelineState>,
 
     // -- search overlay --
     pub search_query: String,
@@ -315,6 +326,7 @@ impl App {
             is_streaming: false,
             stream_rx: None,
             streaming_start: None,
+            stream_abort: None,
 
             scroll_offset: 0,
 
@@ -376,6 +388,7 @@ impl App {
             auto_agent: true,
             auto_agent_active: false,
             context_limit_override: None,
+            pipeline: None,
 
             search_query: String::new(),
             search_results: Vec::new(),
@@ -462,13 +475,32 @@ impl App {
 
     /// Create a new empty conversation and switch to it.
     pub fn new_conversation(&mut self) {
+        self.cancel_active_stream();
         self.conversations.push(Conversation::new());
         self.active_conversation = self.conversations.len() - 1;
         self.scroll_offset = 0;
         self.streaming_response.clear();
         self.is_streaming = false;
-        self.agent_iterations = 0; // Reset agent iterations
+        self.stream_rx = None;
+        self.streaming_start = None;
+        self.agent_iterations = 0;
+        // A new conversation abandons any in-progress multi-agent
+        // workflow; the next message should start clean.
+        self.pipeline = None;
         self.status_message = Some("New conversation started".into());
+    }
+
+    /// Abort the currently running provider/tool task (if any) and clear
+    /// its abort handle. Safe to call when nothing is streaming.
+    ///
+    /// The spawned task's future is dropped, which drops any in-flight
+    /// `tokio::process::Child` and HTTP stream. Combined with
+    /// `kill_on_drop(true)` on the child, this SIGKILLs the subprocess
+    /// immediately — no need to wait for the next send-error to bail out.
+    pub fn cancel_active_stream(&mut self) {
+        if let Some(handle) = self.stream_abort.take() {
+            handle.abort();
+        }
     }
 
     // ── Status ──────────────────────────────────────────────────────────
@@ -510,6 +542,7 @@ impl App {
     /// Finalise the streaming response: move it into the conversation history
     /// and reset the streaming state.
     pub fn finish_streaming(&mut self) {
+        self.cancel_active_stream();
         if !self.streaming_response.is_empty() {
             let content = std::mem::take(&mut self.streaming_response);
             self.add_assistant_message(content);
@@ -1367,6 +1400,50 @@ mod tests {
         app.finish_streaming();
         assert!(!app.is_streaming);
         assert!(app.current_conversation().messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_active_stream_aborts_running_task() {
+        let mut app = App::new();
+        // Spawn a task that would never finish on its own.
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        let abort = handle.abort_handle();
+        app.stream_abort = Some(abort);
+
+        app.cancel_active_stream();
+
+        // The handle has been taken, and the underlying task should have
+        // been aborted. Awaiting confirms it didn't run to completion.
+        assert!(app.stream_abort.is_none());
+        let join_err = handle.await.expect_err("task should have been aborted");
+        assert!(join_err.is_cancelled());
+    }
+
+    #[test]
+    fn cancel_active_stream_is_safe_when_idle() {
+        let mut app = App::new();
+        // No task has ever been spawned — this must not panic.
+        app.cancel_active_stream();
+        assert!(app.stream_abort.is_none());
+    }
+
+    #[tokio::test]
+    async fn new_conversation_cancels_in_flight_stream() {
+        let mut app = App::new();
+        let handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        });
+        app.stream_abort = Some(handle.abort_handle());
+        app.is_streaming = true;
+
+        app.new_conversation();
+
+        assert!(!app.is_streaming);
+        assert!(app.stream_abort.is_none());
+        let join_err = handle.await.expect_err("task should have been aborted");
+        assert!(join_err.is_cancelled());
     }
 
     #[test]
