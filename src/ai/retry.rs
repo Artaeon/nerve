@@ -83,11 +83,15 @@ where
                 }
 
                 let delay = config.delay_with_jitter(attempt);
+                // Sanitise before logging: upstream error messages can
+                // carry Bearer tokens / API keys from the request that
+                // we forwarded, and tracing output may be persisted.
+                let sanitized = redact_credentials(&err.to_string());
                 tracing::warn!(
                     attempt = attempt + 1,
                     max_retries = config.max_retries,
                     delay_ms = delay.as_millis() as u64,
-                    error = %err,
+                    error = %sanitized,
                     "Retrying after transient error"
                 );
 
@@ -116,6 +120,72 @@ where
 pub fn is_retryable_error(err: &anyhow::Error) -> bool {
     let msg = format!("{err:#}");
     is_retryable_message(&msg)
+}
+
+/// Redact credentials that might appear in an error string before we
+/// write it to logs. Upstream HTTP errors can include request headers
+/// (Bearer tokens, API keys) or URL query parameters, and trace output
+/// may be persisted by operators — keys must not land there.
+///
+/// Covers common shapes: `Bearer <token>`, `api_key=...`, `api-key: ...`,
+/// `Authorization: ...`, `sk-...`-style keys from OpenAI-family providers.
+pub(crate) fn redact_credentials(msg: &str) -> String {
+    let mut out = msg.to_string();
+
+    // Values terminated by end-of-line only (HTTP header shape).
+    for prefix in [
+        "Authorization: ",
+        "authorization: ",
+        "X-Api-Key: ",
+        "x-api-key: ",
+    ] {
+        redact_after(&mut out, prefix, |c| c == '\n' || c == '\r');
+    }
+
+    // `Bearer <token>` in freeform text.
+    redact_after(&mut out, "Bearer ", |c| {
+        c.is_whitespace() || matches!(c, '"' | '\'')
+    });
+
+    // Query-string / form-style key=value.
+    for prefix in ["api_key=", "api-key=", "apikey=", "API_KEY=", "API-KEY="] {
+        redact_after(&mut out, prefix, |c| {
+            matches!(c, ' ' | '&' | '"' | '\'' | ',' | '\n' | '\r')
+        });
+    }
+
+    // OpenAI/Anthropic-style secret prefixes in freeform text
+    // (e.g. an error body that echoes back the provided key).
+    redact_after(&mut out, "sk-", |c| {
+        c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ')' | ']' | '}')
+    });
+
+    out
+}
+
+/// Redact everything between `needle` and the next char for which
+/// `end_of_value` returns true. `needle` itself is kept (so the log
+/// still carries context: "Bearer [REDACTED]"), but the secret portion
+/// is replaced with `[REDACTED]`. Char-boundary safe.
+fn redact_after(buf: &mut String, needle: &str, end_of_value: impl Fn(char) -> bool) {
+    let mut search_from = 0;
+    while let Some(rel) = buf[search_from..].find(needle) {
+        let start = search_from + rel + needle.len();
+        let end_idx = buf[start..]
+            .char_indices()
+            .find(|(_, c)| end_of_value(*c))
+            .map(|(i, _)| start + i)
+            .unwrap_or(buf.len());
+        if end_idx > start {
+            buf.replace_range(start..end_idx, "[REDACTED]");
+            search_from = start + "[REDACTED]".len();
+        } else {
+            search_from = start;
+        }
+        if search_from >= buf.len() {
+            break;
+        }
+    }
 }
 
 /// Inner helper that operates on the stringified error message.
@@ -628,5 +698,88 @@ mod tests {
         };
         let d = cfg.delay_with_jitter(0);
         assert_eq!(d.as_millis(), 0);
+    }
+
+    // ── redact_credentials ────────────────────────────────────────────
+
+    #[test]
+    fn redact_bearer_token() {
+        let r = redact_credentials("auth failed: Bearer sk-abc123def456 expired");
+        assert!(!r.contains("sk-abc123def456"));
+        assert!(r.contains("Bearer [REDACTED]"));
+        assert!(r.contains("expired"));
+    }
+
+    #[test]
+    fn redact_authorization_header() {
+        let r = redact_credentials("HTTP 401\nAuthorization: Bearer xyz789\nDate: today");
+        assert!(!r.contains("xyz789"));
+        assert!(r.contains("Authorization: [REDACTED]"));
+        assert!(r.contains("Date: today"));
+    }
+
+    #[test]
+    fn redact_x_api_key_header() {
+        let r = redact_credentials("X-Api-Key: super-secret-value\nfoo");
+        assert!(!r.contains("super-secret-value"));
+        assert!(r.contains("X-Api-Key: [REDACTED]"));
+    }
+
+    #[test]
+    fn redact_query_string_api_key() {
+        let r = redact_credentials("https://api.example.com/v1?api_key=topsecret&model=gpt-4");
+        assert!(!r.contains("topsecret"));
+        assert!(r.contains("api_key=[REDACTED]"));
+        assert!(r.contains("model=gpt-4"));
+    }
+
+    #[test]
+    fn redact_openai_style_sk_key() {
+        let r = redact_credentials("Provider error: invalid key sk-proj-abc123xyz789");
+        assert!(!r.contains("sk-proj-abc123xyz789"));
+        assert!(r.contains("sk-[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_no_credentials_is_noop() {
+        let plain = "API error (500): internal server error";
+        let r = redact_credentials(plain);
+        assert_eq!(r, plain);
+    }
+
+    #[test]
+    fn redact_handles_multiple_secrets_in_one_message() {
+        let r = redact_credentials("Bearer xyz123 then api_key=foobar and sk-ant-secretvalue");
+        assert!(!r.contains("xyz123"));
+        assert!(!r.contains("foobar"));
+        assert!(!r.contains("secretvalue"));
+        // All three placeholders should be present.
+        assert_eq!(r.matches("[REDACTED]").count(), 3);
+    }
+
+    #[test]
+    fn redact_empty_string() {
+        assert_eq!(redact_credentials(""), "");
+    }
+
+    #[test]
+    fn redact_handles_multibyte_chars_around_secret() {
+        // Make sure the char-boundary scan in redact_after doesn't trip
+        // on multi-byte chars surrounding a secret.
+        let r = redact_credentials("\u{1F511} Bearer abc123 \u{1F600} done");
+        assert!(!r.contains("abc123"));
+        assert!(r.contains("[REDACTED]"));
+        assert!(r.contains("\u{1F511}"));
+        assert!(r.contains("\u{1F600}"));
+    }
+
+    #[test]
+    fn redact_does_not_loop_forever_on_bare_prefix() {
+        // `Bearer ` followed immediately by a terminator (no value to
+        // hide) must not cause an infinite loop in redact_after.
+        let r = redact_credentials("Bearer \nnext line");
+        // The function returned, that's the assertion. Result content
+        // here is whatever — what matters is termination.
+        assert!(r.contains("next line"));
     }
 }
