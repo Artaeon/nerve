@@ -329,37 +329,6 @@ async fn handle_web_search(app: &mut App, trimmed: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::provider::{AiProvider, ChatMessage, ModelInfo, StreamEvent};
-    use std::future::Future;
-    use std::pin::Pin;
-    use tokio::sync::mpsc;
-
-    struct DummyProvider;
-    impl AiProvider for DummyProvider {
-        fn chat_stream(
-            &self,
-            _: &[ChatMessage],
-            _: &str,
-            _: mpsc::UnboundedSender<StreamEvent>,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + '_>> {
-            Box::pin(async { Ok(()) })
-        }
-        fn chat(
-            &self,
-            _: &[ChatMessage],
-            _: &str,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
-            Box::pin(async { Ok(String::new()) })
-        }
-        fn list_models(
-            &self,
-        ) -> Pin<Box<dyn Future<Output = anyhow::Result<Vec<ModelInfo>>> + Send + '_>> {
-            Box::pin(async { Ok(vec![]) })
-        }
-        fn name(&self) -> &str {
-            "dummy"
-        }
-    }
 
     // ── Command routing ──────────────────────────────────────────────
 
