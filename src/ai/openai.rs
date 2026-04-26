@@ -276,9 +276,26 @@ impl AiProvider for OpenAiProvider {
             // Read the byte stream and parse SSE lines.
             let mut byte_stream = response.bytes_stream();
             let mut buffer = String::new();
+            // Per-chunk read timeout: if the server accepts the connection
+            // then stalls (dead proxy, broken upstream, flaky network), the
+            // stream would otherwise block forever. 60s is generous for
+            // "thinking" models that pause between tokens.
+            let read_timeout = std::time::Duration::from_secs(60);
 
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk = match chunk_result {
+            loop {
+                let next = match tokio::time::timeout(read_timeout, byte_stream.next()).await {
+                    Ok(Some(chunk_result)) => chunk_result,
+                    Ok(None) => break, // stream ended normally
+                    Err(_) => {
+                        let msg = format!(
+                            "stream idle for {}s — server stopped sending data",
+                            read_timeout.as_secs()
+                        );
+                        let _ = tx.send(StreamEvent::Error(msg.clone()));
+                        return Err(anyhow!(msg));
+                    }
+                };
+                let chunk = match next {
                     Ok(c) => c,
                     Err(e) => {
                         let msg = format!("stream read error: {e}");
@@ -755,10 +772,7 @@ mod tests {
 
     #[test]
     fn sse_data_extra_spaces() {
-        assert_eq!(
-            extract_sse_data("data:   hello  "),
-            Some("hello".into())
-        );
+        assert_eq!(extract_sse_data("data:   hello  "), Some("hello".into()));
     }
 
     #[test]

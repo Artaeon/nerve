@@ -78,11 +78,15 @@ impl AiProvider for CopilotProvider {
                 return Ok(());
             }
 
-            // Use gh copilot suggest for general queries
+            // stdin is closed so gh doesn't inherit the TUI's raw-mode tty
+            // and try to read from it. kill_on_drop ensures the child is
+            // SIGKILLed when the future is dropped on cancel.
             let mut child = Command::new(&self.gh_binary)
                 .args(["copilot", "suggest", "-t", "shell", &prompt])
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .context(
                     "Failed to spawn gh copilot — is GitHub CLI installed with Copilot extension?",
@@ -92,6 +96,17 @@ impl AiProvider for CopilotProvider {
                 .stdout
                 .take()
                 .ok_or_else(|| anyhow!("Failed to capture gh copilot stdout"))?;
+            let stderr = child.stderr.take();
+
+            // Drain stderr concurrently to avoid pipe-buffer deadlock on
+            // long or chatty outputs.
+            let stderr_task = tokio::spawn(async move {
+                let mut buf = String::new();
+                if let Some(mut stderr) = stderr {
+                    stderr.read_to_string(&mut buf).await.ok();
+                }
+                buf
+            });
 
             let mut reader = tokio::io::BufReader::with_capacity(8192, stdout);
             let mut buf = [0u8; 256];
@@ -115,12 +130,16 @@ impl AiProvider for CopilotProvider {
             }
 
             let status = child.wait().await;
+            let stderr_msg = stderr_task.await.unwrap_or_default();
             if let Ok(s) = &status
                 && !s.success()
             {
-                let _ = tx.send(StreamEvent::Error(format!(
-                    "gh copilot exited with {s}"
-                )));
+                let detail = if stderr_msg.trim().is_empty() {
+                    format!("gh copilot exited with {s}")
+                } else {
+                    format!("gh copilot exited with {s}: {}", stderr_msg.trim())
+                };
+                let _ = tx.send(StreamEvent::Error(detail));
             }
             let _ = tx.send(StreamEvent::Done);
             Ok(())
@@ -137,6 +156,7 @@ impl AiProvider for CopilotProvider {
             let prompt = Self::build_prompt(&messages);
             let output = Command::new(&self.gh_binary)
                 .args(["copilot", "suggest", "-t", "shell", &prompt])
+                .stdin(Stdio::null())
                 .output()
                 .await
                 .context("Failed to run gh copilot")?;
