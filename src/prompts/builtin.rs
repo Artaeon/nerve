@@ -1535,6 +1535,84 @@ pub fn builtin_prompts() -> Vec<SmartPrompt> {
             "Migration",
             &["auth", "identity", "oidc", "migration", "security"],
         ),
+        // ── Observability (5) ──────────────────────────────────────────────
+        p(
+            "Audit Logging Coverage",
+            "Find what's NOT logged in an existing codebase that should be",
+            "Audit the following code for logging coverage gaps. Don't propose a new logging strategy — find specific places where production debugging will be painful because something isn't logged.\n\nFor each gap:\n1. File:line of the gap\n2. What's missing (entry/exit log, error path log, decision branch log, external-call log)\n3. The exact log statement to add — including level, structured fields, and message\n4. Why it matters (\"this is the only place we silently swallow auth failures\" beats \"more logging is better\")\n\nFocus on:\n- Error paths that return Err / catch / .unwrap_or without logging\n- Branches that gate behavior (feature flags, A/B, env-specific) — log which path was taken\n- Outbound calls (HTTP, DB, queue) — log the dependency name and status\n- Long-running operations — log start and end with duration\n- Unexpected states (data invariants violated, retry exhaustion, fallback triggered)\n\nDo NOT recommend logging in tight loops or hot paths unless gated by a sample rate. Don't recommend logging passwords, tokens, PII.\n\n```\n{{input}}\n```",
+            "Observability",
+            &["logging", "observability", "audit", "production"],
+        ),
+        p(
+            "Design a Metrics System",
+            "Pick the right metrics using RED / USE / Four Golden Signals",
+            "Help me design a metrics system for the following service. The goal is the smallest set of metrics that lets us answer \"is the service healthy?\" and \"if not, where?\".\n\nUse these frameworks:\n\nFOR REQUEST-DRIVEN SERVICES — RED method:\n- Rate (requests / sec)\n- Errors (errors / sec)\n- Duration (latency histogram, p50/p95/p99)\n\nFOR RESOURCE-CONSTRAINED — USE method:\n- Utilization (% busy)\n- Saturation (queue depth, wait time)\n- Errors (resource-level errors)\n\nFOR USER-FACING SLOs — Four Golden Signals: latency, traffic, errors, saturation.\n\nFor my service, produce:\n\n1. THE METRIC LIST — name, type (counter/gauge/histogram), labels\n2. CARDINALITY BUDGET — for each label set, estimate cardinality. Flag any > 10K unique series.\n3. WHAT NOT TO MEASURE — \"a metric per user\" / \"a label per request ID\" patterns that explode time-series storage\n4. SLOs — for each user-visible metric, what's the SLO and what's the alerting threshold\n5. DASHBOARD — name 5-7 panels that together tell the health story\n\nMy service:\n\n{{input}}",
+            "Observability",
+            &["metrics", "observability", "red", "use", "slo"],
+        ),
+        p(
+            "Design Distributed Tracing",
+            "Span hierarchy, baggage, and sampling for a multi-service trace",
+            "Design distributed tracing for the following system. Walk me through:\n\n1. SPAN HIERARCHY\n   - The root span: usually inbound request at the edge\n   - Per-service child span boundaries — one per outbound call (DB, HTTP, queue)\n   - Internal spans: only when a meaningful unit of work warrants its own span (don't span every function)\n   - Span naming convention: low-cardinality (e.g. `GET /users/{id}` not `GET /users/12345`)\n\n2. STANDARD ATTRIBUTES (OpenTelemetry semantic conventions)\n   - http.* for HTTP calls\n   - db.* for database queries\n   - messaging.* for queues\n   - Custom attributes: prefix with your namespace (e.g. `app.tenant_id`)\n\n3. BAGGAGE / CONTEXT PROPAGATION\n   - What user-facing IDs need to flow across service boundaries (tenant, user, request, idempotency-key)\n   - W3C Trace-Context headers — every service must propagate them\n   - Don't pollute baggage with anything large; it's per-request bandwidth\n\n4. SAMPLING\n   - Head-based sampling (decision at root) for cheap-and-fixed\n   - Tail-based sampling (collector decides) for catching slow / errored traces always\n   - Sample rate: target 100% of slow / errored, 1-10% of healthy\n\n5. TRAINING WHEELS\n   - Always-trace one specific user (your own) end-to-end for development\n   - Trace exemplars in metrics: one trace ID per latency bucket\n\n6. SECURITY\n   - DON'T put tokens, passwords, PII in spans\n   - DO redact common shapes (Authorization headers, *_password / *_token / *_key fields)\n\nMy system:\n\n{{input}}",
+            "Observability",
+            &["tracing", "opentelemetry", "spans", "observability"],
+        ),
+        p(
+            "Write a Runbook",
+            "Document the operational response for a specific alert",
+            "Write a production runbook for the following alert. The reader is an oncall engineer at 3 AM — they need actionable steps, not background.\n\nFormat:\n\nALERT: {one-line description}\nSEVERITY: page / urgent / warning\nIMPACT: {what users see — '5% of /checkout returning 500'}\n\n# 1. CONFIRM\n- The 30-second sanity check that confirms the alert is real\n- Specific dashboards / queries / log searches with EXACT links / commands\n- What false-positive shapes look like\n\n# 2. MITIGATE\n- The fastest action that reduces user impact, ranked by cost / risk\n- Examples: feature flag flip, traffic shed, scale up, rollback last deploy\n- Each step: the command to run, what \"success\" looks like, when to revert\n\n# 3. INVESTIGATE\n- Likely root causes ranked by recency / probability\n- For each: how to confirm or rule out in <5 min\n- Where to find logs / metrics / traces (specific URLs)\n\n# 4. ESCALATE\n- When to wake whom (specific names/roles, not 'the team')\n- What to hand them (the queries you've already run, NOT \"see the alert\")\n\n# 5. POST-INCIDENT\n- The line item to add to the postmortem queue\n- Whether to keep this runbook or rewrite it (every page should improve the runbook)\n\nThe alert / situation:\n\n{{input}}",
+            "Observability",
+            &["runbook", "oncall", "incident", "operations"],
+        ),
+        p(
+            "Design Alerting Rules",
+            "Symptom-based alerts that page only on real user impact",
+            "Design alerting rules for the following service. Goal: every page wakes someone for a real problem, every silence means users are happy.\n\nUSE THE SYMPTOM-BASED MODEL:\n- Page on what users see (latency too high, error rate up, availability dropped, business metric off baseline)\n- Don't page on causes (CPU at 80%, memory at 70%, queue depth at N) unless they directly imply user impact\n- Cause-based stays as warnings or feeds into investigation, not pages\n\nFOR EACH PROPOSED ALERT:\n\n1. NAME — verb-first, what's wrong (HighCheckoutErrorRate, not CPUHigh)\n2. EXPRESSION — the actual PromQL / SQL / equivalent\n3. THRESHOLD — derived from the SLO, not picked from nowhere\n   - For latency: p99 > X AND for at least M minutes (avoid spikes)\n   - For error rate: error_ratio > X AND traffic > Y (avoid noise on low traffic)\n4. SEVERITY — page (wake someone), urgent (next-business-hour), info (record only)\n5. RUNBOOK LINK — every page must have one\n6. SUPPRESSION — what other firing alert silences this one (e.g. region-down silences per-service alerts in that region)\n\nALSO RECOMMEND:\n- Burn-rate alerts on SLOs: 14-day budget burning at 14x → page; at 6x → urgent\n- Multi-window for stability: short window catches spikes, long window catches sustained\n- DO NOT alert on a metric that has no runbook. If you don't know what to do, that's not an alert yet.\n\nMy service / SLO:\n\n{{input}}",
+            "Observability",
+            &["alerting", "slo", "burn rate", "oncall", "monitoring"],
+        ),
+        // ── Async (5) ──────────────────────────────────────────────────────
+        p(
+            "Choose an Async Pattern",
+            "Pick channels vs locks vs actors for a concurrency problem",
+            "I have concurrent code that needs the right primitive. Help me pick.\n\nFor my situation below, evaluate each option against the constraints:\n\nA. SHARED MUTABLE STATE BEHIND A LOCK (Mutex / RwLock)\n   - Best when: short critical sections, low contention, many readers\n   - Bad when: holding the lock across an .await (deadlock risk in async Rust; this is a compiler error there but a runtime hang in other langs)\n   - Bad when: long critical section blocks everything\n\nB. CHANNELS (mpsc / spsc / broadcast)\n   - Best when: data flows in one direction; producer / consumer model\n   - Bad when: complex bidirectional protocol (you reinvent locks on top)\n   - Bounded vs unbounded: bounded is correct by default — unbounded hides backpressure\n\nC. ACTOR MODEL (single-task owner of state, replies via oneshot)\n   - Best when: a piece of state has many disjoint operations and you want to serialize them without explicit locks\n   - Cost: an extra task and message hop per access; not for hot paths\n\nD. ATOMIC + CAS\n   - Best when: counter / flag / single-word state\n   - Bad when: multiple fields must update together (now you've reinvented a lock with worse ergonomics)\n\nE. READ-COPY-UPDATE (Arc::swap, ArcSwap)\n   - Best when: rarely-updated, frequently-read configuration; no locks on the read path\n   - Cost: writers do a full clone\n\nFor my problem, recommend the primary pattern, name the alternative, and identify the deal-breaker that disqualifies the others.\n\nMy situation:\n\n{{input}}",
+            "Async",
+            &["concurrency", "channels", "actors", "locks", "async"],
+        ),
+        p(
+            "Design Backpressure",
+            "Prevent unbounded queues when producers outpace consumers",
+            "Help me design backpressure for the following pipeline. Default state without backpressure is unbounded growth → OOM → crash; we want graceful degradation.\n\nWalk through:\n\n1. WHERE TO APPLY BACKPRESSURE\n   - At the slowest stage: it's the bottleneck, that's where to push back\n   - Bound EVERY queue, not just the obvious ones\n\n2. BOUND CHOICE\n   - Channel capacity: derive from latency budget × throughput, not picked from nowhere\n   - Too small: false rejections under spikes\n   - Too large: high latency before backpressure kicks in (queue pretending to be a buffer)\n\n3. SHED VS WAIT\n   - Tail-drop (drop newest): right when newer data is more valuable\n   - Head-drop (drop oldest): right when older data is stale (live updates)\n   - Block (wait for capacity): right when you can apply real backpressure upstream\n   - 503 Service Unavailable / Retry-After: right at HTTP edges\n\n4. SIGNALING UPSTREAM\n   - The whole pipeline needs to know — backpressure at stage N must propagate to stage 1\n   - For HTTP: 429 Too Many Requests with Retry-After\n   - For RPC clients: token bucket / gRPC concurrency limit\n\n5. BUDGET-BASED OVER LIMITS\n   - Concurrency limit > queue limit > latency limit\n   - Concurrency limit is the most stable: \"only N requests in flight per service\"\n\n6. OBSERVABILITY\n   - Per-stage queue depth metric — graph it\n   - Backpressure events / drops as their own counter\n   - Latency split: time-in-queue vs time-in-processing\n\nMy pipeline:\n\n{{input}}",
+            "Async",
+            &["backpressure", "queues", "flow control", "throttling"],
+        ),
+        p(
+            "Make Async Code Cancellation-Safe",
+            "Audit and fix futures that misbehave when dropped mid-await",
+            "Audit the following async code for cancellation safety. A future is cancellation-safe if dropping it mid-execution leaves no observable side effect that the caller can't recover from.\n\nFor each issue:\n\n1. Where the future can be cancelled (an .await is the cancellation point)\n2. What state can be left inconsistent if it's cancelled THERE\n3. The fix\n\nCommon hazards:\n\nA. ACQUIRED RESOURCES NOT RELEASED\n   - Mutex guard / DB connection / file handle held across .await — Drop runs on cancel, so this is usually OK if RAII is used. But: lock that's expected to be held until a confirmation? That confirmation never comes.\n\nB. PARTIAL WRITES\n   - Partial network send / file write where the receiver sees half a message\n   - Fix: use a single atomic write at the OS layer, or a length-prefixed framing where partial writes are detectable\n\nC. INCREMENT-WITHOUT-DECREMENT\n   - in_flight_count += 1; ... await ...; in_flight_count -= 1; — cancellation skips the decrement\n   - Fix: drop guard struct that decrements in Drop\n\nD. STATE MACHINES THAT NEED TO COMPLETE\n   - select! between work and timeout: if work loses, what happens to its partial progress?\n   - Use abortable / structured-concurrency primitives that cancel children when parent cancels\n\nE. DATABASE TRANSACTIONS\n   - Connection dropped mid-transaction: rollback at the DB level (usually fine), but confirm timeout behavior\n   - Two-phase: don't end the first phase until the second is uncancellable\n\nF. DOUBLE-WRITE PATTERNS\n   - 'write to A, write to B' across an await: cancel between A and B leaves you inconsistent\n   - Fix: outbox pattern, or write A then enqueue 'finish B' for a worker\n\n```\n{{input}}\n```",
+            "Async",
+            &["cancellation", "async", "futures", "drop", "safety"],
+        ),
+        p(
+            "Async Retries with Backoff",
+            "Build an idempotent, jittered, capped retry loop for an unreliable call",
+            "Help me write a retry loop for the following operation. Bad retries amplify outages; good retries hide transient failures from users without melting the upstream.\n\nDesign with:\n\n1. IDEMPOTENCY FIRST\n   - Is the operation idempotent? If not, retries can double-charge / double-send / double-update.\n   - Add an idempotency key (request UUID) and have the server dedupe.\n   - For non-idempotent operations you can't change: do NOT retry on timeout (success unknown).\n\n2. WHICH ERRORS TO RETRY\n   - Retryable: 408, 429, 500-class except 501, network timeouts, connection reset\n   - Not retryable: 400, 401, 403, 404, deserialization errors, validation errors\n   - Decide once at the boundary; don't sprinkle retry logic across layers\n\n3. BACKOFF\n   - Exponential: base × factor^attempt, capped\n   - Add jitter (random 0..delay) — avoids thundering herd when many clients retry at once\n   - Honor Retry-After header when present\n\n4. CAP\n   - Max attempts: usually 3-5\n   - Total deadline: this matters more than max attempts for user-facing latency\n   - Per-call timeout: separate from total deadline\n\n5. CIRCUIT BREAKER (for stateful clients)\n   - Open the circuit after N consecutive failures; fail fast for some window\n   - Half-open after the window: one trial request decides the next state\n\n6. OBSERVABILITY\n   - Counter for retries / attempt-number, so you can see when retry rate spikes\n   - Don't log a retry failure as an ERROR — it's expected. Final exhaustion is the error.\n\nMy operation:\n\n{{input}}",
+            "Async",
+            &[
+                "retry",
+                "backoff",
+                "jitter",
+                "idempotency",
+                "circuit breaker",
+            ],
+        ),
+        p(
+            "Detect Async Antipatterns",
+            "Find blocking calls in async code, held locks, and Send issues",
+            "Audit the following async code for common antipatterns. For each finding give file:line, severity, and the smallest correct fix.\n\nLook for:\n\n1. BLOCKING CALLS IN ASYNC CONTEXT\n   - std::fs / std::net / std::sync::Mutex / std::thread::sleep inside an async fn\n   - File I/O in a Drop impl that runs in async context\n   - Heavy CPU work without yielding (lock up the executor thread)\n   - Fix: use the async equivalent (tokio::fs, tokio::time::sleep, tokio::sync::Mutex), or move to spawn_blocking\n\n2. LOCK HELD ACROSS .await\n   - In Rust async this is a compile error if Send is required, BUT works for !Send code paths\n   - Even where it compiles, it's almost always a bug — deadlock risk if the awaited future also wants the lock\n   - Fix: drop the lock before await, or use tokio::sync::Mutex which is await-safe by design (and pay the cost)\n\n3. SEND / SYNC ISSUES\n   - Spawning a future that captures !Send data to a multi-threaded executor\n   - Holding Rc<...> across .await\n   - Fix: switch to Arc, or use spawn_local on a current-thread runtime\n\n4. UNBOUNDED CHANNELS\n   - tokio::sync::mpsc::unbounded_channel as a default — accepts unlimited memory pressure\n   - Fix: bounded channel with capacity derived from intended throughput × latency\n\n5. SELECT! WITHOUT BIASING\n   - select! with two equally-likely branches under load can starve one\n   - Fix: biased; or restructure into separate tasks\n\n6. JOIN! VS SPAWN\n   - join!(a, b) runs them concurrently on the same task — if a panics, b is dropped\n   - tokio::spawn(a) + tokio::spawn(b) gives independent tasks (separate panic boundaries) but more scheduling overhead\n   - Pick by failure-domain need\n\n7. AWAIT-LOOP WITH NO YIELD\n   - while let Ok(_) = chan.try_recv() { ... } — busy loop, never yields\n   - Use chan.recv().await instead\n\n```\n{{input}}\n```",
+            "Async",
+            &["async", "antipatterns", "blocking", "deadlock", "audit"],
+        ),
     ]
 }
 
@@ -1626,6 +1704,8 @@ mod tests {
             "Debugging",
             "Performance",
             "Migration",
+            "Observability",
+            "Async",
             "API",
             "Database",
         ] {
