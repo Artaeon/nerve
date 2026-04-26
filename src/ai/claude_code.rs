@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 
 use anyhow::{Context, anyhow};
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 
@@ -164,6 +164,15 @@ impl ClaudeCodeProvider {
             model.into(),
         ];
 
+        // stream-json only emits intermediate events when --verbose is set,
+        // and only emits per-token deltas when --include-partial-messages is
+        // set. Without these, `claude -p` buffers the whole response and
+        // dumps it at end-of-stream, making the TUI look frozen.
+        if output_format == "stream-json" {
+            args.push("--verbose".into());
+            args.push("--include-partial-messages".into());
+        }
+
         if self.enable_tools {
             args.push("--dangerously-skip-permissions".into());
         } else {
@@ -210,12 +219,22 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(());
             }
 
-            let args = self.build_args(&prompt, model, "text", &system_prompt);
+            let args = self.build_args(&prompt, model, "stream-json", &system_prompt);
 
+            // stdin is set to null: the TUI runs the terminal in raw mode with
+            // the alternate screen buffer, and a child inheriting that tty as
+            // stdin can consume the user's keystrokes or block.
+            //
+            // kill_on_drop(true) ensures the subprocess is SIGKILLed the
+            // moment this future is dropped — e.g. when the user cancels
+            // via Esc or Ctrl+N — rather than continuing to run and bill
+            // against the subscription.
             let mut child = Command::new(&self.claude_binary)
                 .args(&args)
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .kill_on_drop(true)
                 .spawn()
                 .context("failed to spawn claude CLI — is it installed and in PATH?")?;
 
@@ -223,25 +242,81 @@ impl AiProvider for ClaudeCodeProvider {
                 .stdout
                 .take()
                 .ok_or_else(|| anyhow!("failed to capture claude stdout"))?;
+            let stderr = child.stderr.take();
 
-            let stderr_handle = child.stderr.take();
+            // Drain stderr concurrently. If we leave it undrained while
+            // streaming stdout, the kernel pipe buffer (~64KB) can fill up
+            // and the child will block writing to stderr, deadlocking the
+            // whole call.
+            let stderr_task = tokio::spawn(async move {
+                let mut buf = String::new();
+                if let Some(mut stderr) = stderr {
+                    stderr.read_to_string(&mut buf).await.ok();
+                }
+                buf
+            });
 
-            // Use a small-capacity BufReader so we get chunks as soon as
-            // the CLI flushes them, giving a streaming feel.
-            let mut reader = tokio::io::BufReader::with_capacity(8192, stdout);
-            let mut buf = [0u8; 256];
+            let reader = tokio::io::BufReader::with_capacity(8192, stdout);
+            let mut lines = reader.lines();
+            let mut emitted_any_token = false;
+            let mut fallback_result: Option<String> = None;
+            let mut error_from_stream: Option<String> = None;
 
             loop {
-                match reader.read(&mut buf).await {
-                    Ok(0) => break, // EOF
-                    Ok(n) => {
-                        let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
-                        if tx.send(StreamEvent::Token(chunk)).is_err() {
-                            // Receiver dropped — kill the child and bail.
-                            child.kill().await.ok();
-                            break;
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        let Ok(event) = serde_json::from_str::<serde_json::Value>(&line) else {
+                            // Non-JSON line (e.g. stray log output). Ignore it
+                            // rather than polluting the chat view.
+                            continue;
+                        };
+
+                        let kind = event["type"].as_str().unwrap_or("");
+                        match kind {
+                            // Per-token deltas (emitted with --include-partial-messages).
+                            "stream_event" => {
+                                let ev = &event["event"];
+                                if ev["type"].as_str() == Some("content_block_delta")
+                                    && let Some(delta) = ev.get("delta")
+                                    && delta["type"].as_str() == Some("text_delta")
+                                    && let Some(text) = delta["text"].as_str()
+                                    && !text.is_empty()
+                                {
+                                    if tx.send(StreamEvent::Token(text.to_string())).is_err() {
+                                        child.kill().await.ok();
+                                        break;
+                                    }
+                                    emitted_any_token = true;
+                                }
+                            }
+                            // Terminal event. Capture session id for logging
+                            // and the fallback result for the "no deltas"
+                            // case (short responses sometimes skip deltas).
+                            "result" => {
+                                if let Some(sid) = event["session_id"].as_str() {
+                                    tracing::info!("Claude Code session: {sid}");
+                                }
+                                if event["is_error"].as_bool().unwrap_or(false) {
+                                    let msg = event["result"]
+                                        .as_str()
+                                        .or_else(|| event["api_error_status"].as_str())
+                                        .unwrap_or("claude returned is_error=true")
+                                        .to_string();
+                                    error_from_stream = Some(msg);
+                                } else if let Some(result) = event["result"].as_str() {
+                                    fallback_result = Some(result.to_string());
+                                }
+                            }
+                            // All other event kinds (system/init, rate_limit_event,
+                            // assistant aggregated messages, etc.) are ignored — the
+                            // deltas and result event carry what we need.
+                            _ => {}
                         }
                     }
+                    Ok(None) => break, // EOF
                     Err(e) => {
                         let _ = tx.send(StreamEvent::Error(format!("read error: {e}")));
                         child.kill().await.ok();
@@ -250,28 +325,40 @@ impl AiProvider for ClaudeCodeProvider {
                 }
             }
 
-            let _ = tx.send(StreamEvent::Done);
+            // Fallback: if no per-token deltas arrived but the terminal
+            // `result` event carries a complete response, emit it in one
+            // chunk so the user still sees something.
+            if !emitted_any_token
+                && error_from_stream.is_none()
+                && let Some(text) = fallback_result
+                && !text.is_empty()
+            {
+                let _ = tx.send(StreamEvent::Token(text));
+            }
 
-            // Reap the child so we don't leave zombies.
+            if let Some(err) = error_from_stream {
+                let _ = tx.send(StreamEvent::Error(err));
+            }
+
             let status = child
                 .wait()
                 .await
                 .context("failed to wait on claude process")?;
+            let stderr_msg = stderr_task.await.unwrap_or_default();
+
             if !status.success() {
-                let stderr_msg = if let Some(mut stderr) = stderr_handle {
-                    let mut buf = String::new();
-                    stderr.read_to_string(&mut buf).await.ok();
-                    buf
+                // Surface the CLI error to the TUI so users see *something*
+                // rather than silence.
+                let detail = if stderr_msg.trim().is_empty() {
+                    format!("claude exited with status {status}")
                 } else {
-                    String::new()
+                    format!("claude exited with status {status}: {}", stderr_msg.trim())
                 };
-                if stderr_msg.is_empty() {
-                    tracing::warn!("claude exited with status {status}");
-                } else {
-                    tracing::warn!("claude exited with status {status}: {stderr_msg}");
-                }
+                tracing::warn!("{detail}");
+                let _ = tx.send(StreamEvent::Error(detail));
             }
 
+            let _ = tx.send(StreamEvent::Done);
             Ok(())
         })
     }
@@ -295,6 +382,7 @@ impl AiProvider for ClaudeCodeProvider {
 
             let output = Command::new(&self.claude_binary)
                 .args(&args)
+                .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .output()
@@ -766,10 +854,84 @@ mod tests {
     }
 
     #[test]
+    fn build_args_stream_json_adds_verbose_and_partial() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "stream-json", &None);
+        assert!(args.contains(&"--verbose".to_string()));
+        assert!(args.contains(&"--include-partial-messages".to_string()));
+        assert_eq!(args[3], "stream-json");
+    }
+
+    #[test]
+    fn build_args_text_does_not_add_stream_flags() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "text", &None);
+        assert!(!args.contains(&"--verbose".to_string()));
+        assert!(!args.contains(&"--include-partial-messages".to_string()));
+    }
+
+    #[test]
+    fn build_args_json_does_not_add_stream_flags() {
+        let p = ClaudeCodeProvider::new();
+        let args = p.build_args("hi", "sonnet", "json", &None);
+        assert!(!args.contains(&"--verbose".to_string()));
+        assert!(!args.contains(&"--include-partial-messages".to_string()));
+    }
+
+    #[test]
     fn build_args_special_characters_in_prompt() {
         let p = ClaudeCodeProvider::new();
         let prompt = "hello 'world' \"test\" $VAR `cmd`";
         let args = p.build_args(prompt, "sonnet", "text", &None);
         assert_eq!(args[1], prompt);
+    }
+
+    // ── Live integration: requires `claude` CLI + valid auth ────────────
+    //
+    // Run with: `cargo test --bin nerve claude_code_stream_live -- --ignored --nocapture`
+    // Uses a real API call (short prompt, ~10 tokens) to verify that
+    // chat_stream() actually delivers tokens via the channel when using
+    // stream-json. This catches regressions the unit tests can't (e.g. if
+    // claude CLI changes its output format).
+    #[tokio::test]
+    #[ignore = "live call to claude CLI — requires auth + network"]
+    async fn chat_stream_live_emits_tokens() {
+        if !ClaudeCodeProvider::new().is_available() {
+            eprintln!("claude CLI not on PATH — skipping");
+            return;
+        }
+
+        let provider = ClaudeCodeProvider::new();
+        let messages = vec![ChatMessage::user(
+            "Respond with exactly the five characters: hello",
+        )];
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        let handle = tokio::spawn(async move {
+            provider.chat_stream(&messages, "sonnet", tx).await.unwrap();
+        });
+
+        let mut collected = String::new();
+        let mut saw_done = false;
+        let mut saw_error: Option<String> = None;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                StreamEvent::Token(t) => collected.push_str(&t),
+                StreamEvent::Done => {
+                    saw_done = true;
+                    break;
+                }
+                StreamEvent::Error(e) => saw_error = Some(e),
+                _ => {}
+            }
+        }
+        handle.await.unwrap();
+
+        assert!(saw_done, "stream never sent Done");
+        assert!(saw_error.is_none(), "stream errored: {saw_error:?}");
+        assert!(
+            collected.to_lowercase().contains("hello"),
+            "expected 'hello' in response, got: {collected:?}"
+        );
     }
 }
