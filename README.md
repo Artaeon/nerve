@@ -17,7 +17,7 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-**37K lines of Rust | 1,361 tests | 166 prompts | 10 agent tools | 6 providers | 7.7 MB binary**
+**38K lines of Rust | 1,640 tests | 186 prompts | 10 agent tools | 6 providers | multi-agent /workflow | 7.7 MB binary**
 
 [Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 
@@ -25,7 +25,7 @@
 
 ---
 
-Nerve is a fast, open-source AI coding assistant built entirely in Rust. It runs in your terminal, connects to 6 AI providers, ships 166 expert prompts, and includes a full coding agent with 10 tools -- all in a single 7.7 MB binary with zero runtime dependencies.
+Nerve is a fast, open-source AI coding assistant built entirely in Rust. It runs in your terminal, connects to 6 AI providers, ships 186 expert prompts, and includes a full coding agent with 10 tools plus a multi-agent (planner -> coder -> reviewer) `/workflow` pipeline -- all in a single 7.7 MB binary with zero runtime dependencies.
 
 It is designed for developers who think in keystrokes, not clicks.
 
@@ -123,13 +123,25 @@ Every agent action is tracked. Roll back with `/agent undo`. Inspect changes wit
 
 The agent reads the code, writes a fix, runs the tests, and reports back.
 
-### 166 Smart Prompts
+### 186 Smart Prompts
 
-Press `Ctrl+K` to open the prompt library. 28 categories of expert-level prompts:
+Press `Ctrl+K` to open the prompt library. 30 categories of expert-level prompts:
 
-Engineering, Rust, Python, TypeScript, Go, Testing, Security, API Design, Database, Cloud, DevOps, UI/UX, Business, and more.
+Engineering, Rust, Python, TypeScript, Go, Testing, Security, API, Database, Cloud, DevOps, UI/UX, Code Review, Debugging, Performance, Migration, Business, and more.
 
 Each prompt is 5-15 lines of carefully crafted instructions -- not vague suggestions, but real engineering guidance.
+
+Don't know which prompt to pick? Type `/suggest <description>` and Nerve ranks the library against your query (BM25, runs locally, ~1ms).
+
+### Multi-agent workflow
+
+For non-trivial tasks, type `/workflow <task>` to run a 3-role pipeline on a fresh conversation:
+
+1. **Planner** -- writes a numbered plan (no tool access)
+2. **Coder** -- executes the plan (full tools)
+3. **Reviewer** -- inspects the result (read-only tools, enforced at the tool layer)
+
+Reviewer ends with `VERDICT: APPROVED | NEEDS FIXES | REJECTED`. Press Esc at any time to stop.
 
 ### Developer Workflow
 
