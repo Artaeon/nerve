@@ -1,5 +1,6 @@
 pub mod builtin;
 pub mod custom;
+pub mod search;
 
 use std::sync::LazyLock;
 
