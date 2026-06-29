@@ -339,6 +339,37 @@ pub fn is_dangerous_command(cmd: &str) -> bool {
 /// Paths that should never be written to by the agent.
 pub fn is_protected_path(path: &str) -> bool {
     let normalized = path.replace('\\', "/");
+
+    // Allow writes inside the operating system's temporary directory. On macOS
+    // this lives under /var/folders/ (or /private/var/folders/), which would
+    // otherwise be caught by the "/var/" rule below. Comparing against
+    // std::env::temp_dir() keeps this correct cross-platform.
+    let temp_dir = std::env::temp_dir();
+    if let Some(temp) = temp_dir.to_str() {
+        let temp = temp.replace('\\', "/");
+        // Normalize trailing slash for prefix comparison.
+        let temp_prefix = temp.trim_end_matches('/');
+        // macOS reports the temp dir under /var/folders but the real path is
+        // /private/var/folders (and vice versa via the /private symlink).
+        let strip_private = |p: &str| -> String {
+            p.strip_prefix("/private")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| p.to_string())
+        };
+        let candidate = strip_private(&normalized);
+        let temp_norm = strip_private(temp_prefix);
+        let is_under = |base: &str| -> bool {
+            !base.is_empty()
+                && (normalized == base
+                    || normalized.starts_with(&format!("{base}/"))
+                    || candidate == base
+                    || candidate.starts_with(&format!("{base}/")))
+        };
+        if is_under(temp_prefix) || is_under(&temp_norm) {
+            return false;
+        }
+    }
+
     let protected = [
         "/etc/", "/usr/", "/bin/", "/sbin/", "/boot/", "/dev/", "/proc/", "/sys/", "/var/",
     ];
