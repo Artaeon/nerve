@@ -14,7 +14,7 @@ use syntect::{
     parsing::SyntaxSet,
 };
 
-use super::utils::display_width;
+use super::utils::{display_width, sanitize_display};
 use crate::app::App;
 
 // ── Lazily-initialised syntect resources (loaded once) ───────────────────────
@@ -125,7 +125,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             )));
             // Box bottom
             lines.push(Line::from(Span::styled(
-            "   \u{256e}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}",
+            "   \u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256f}",
             box_fg,
         )));
 
@@ -373,11 +373,15 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 header_spans.push(Span::styled(time_ago, Style::default().fg(Color::DarkGray)));
                 lines.push(Line::from(header_spans));
 
-                // Content with accent bar
+                // Content with accent bar (control chars stripped so a pasted
+                // escape sequence can't manipulate the terminal).
                 for text_line in content.lines() {
                     lines.push(Line::from(vec![
                         Span::styled("   \u{2502} ", Style::default().fg(Color::Blue)),
-                        Span::styled(text_line.to_string(), Style::default().fg(Color::White)),
+                        Span::styled(
+                            sanitize_display(text_line),
+                            Style::default().fg(Color::White),
+                        ),
                     ]));
                 }
             }
@@ -409,7 +413,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 lines.push(Line::from(vec![
                     Span::styled("   \u{2014} ", Style::default().fg(Color::Rgb(100, 90, 50))),
                     Span::styled(
-                        content.chars().take(100).collect::<String>(),
+                        sanitize_display(&content.chars().take(100).collect::<String>()),
                         Style::default()
                             .fg(Color::Rgb(100, 90, 50))
                             .add_modifier(Modifier::DIM | Modifier::ITALIC),
@@ -543,24 +547,26 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
 
     // ── Compute scroll ──────────────────────────────────────────────────
-    // We need to estimate the WRAPPED line count, not the logical line count,
-    // because Paragraph::scroll operates on wrapped lines when Wrap is enabled.
-    let content_width = area.width.saturating_sub(4) as usize; // account for borders + padding
-    let total_lines: u16 = lines
+    // We need the WRAPPED line count, not the logical line count, because
+    // Paragraph::scroll operates on wrapped rows when Wrap is enabled. We
+    // accumulate in usize (a long conversation can exceed u16) and saturate
+    // to u16 only at the end — summing into a u16 directly overflow-panics in
+    // debug builds and silently wraps in release.
+    let content_width = area.width.saturating_sub(4) as usize; // borders + padding
+    let total_rows: usize = lines
         .iter()
         .map(|line| {
-            let line_width: usize = line.spans.iter().map(|s| display_width(&s.content)).sum();
-            if line_width == 0 {
-                1u16 // Empty lines still take 1 row
-            } else {
-                // Ceiling division: how many rows this line takes when wrapped
-                ((line_width as f64 / content_width.max(1) as f64).ceil() as u16).max(1)
-            }
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            count_wrapped_rows(&text, content_width)
         })
         .sum();
+    let total_lines: u16 = total_rows.min(u16::MAX as usize) as u16;
 
     let visible_lines = area.height.saturating_sub(2); // account for block borders
     let max_scroll = total_lines.saturating_sub(visible_lines);
+    // Record the max so App::scroll_up / scroll_to_top can clamp the offset
+    // (the renderer only has &App, hence the Cell).
+    app.last_max_scroll.set(max_scroll);
 
     let scroll_y = if app.scroll_offset == 0 {
         // Auto-scroll to bottom — always show latest content.
@@ -603,7 +609,11 @@ pub fn parse_assistant_content(content: &str) -> Vec<Line<'static>> {
     let mut code_lang = String::new();
     let mut code_buffer: Vec<String> = Vec::new();
 
-    for text_line in content.lines() {
+    for raw_line in content.lines() {
+        // Strip control chars / ANSI escapes from assistant output before it
+        // reaches the terminal (prevents escape-sequence injection).
+        let sanitized = sanitize_display(raw_line);
+        let text_line = sanitized.as_str();
         if text_line.starts_with("```") {
             if in_code_block {
                 // ── End of code block ────────────────────────────────
@@ -1034,6 +1044,50 @@ pub fn parse_inline_spans(text: &str) -> Vec<Span<'static>> {
     spans
 }
 
+// ── Wrapped-row estimation ───────────────────────────────────────────────────
+
+/// Estimate how many terminal rows a logical line occupies under ratatui's
+/// word wrapping (`Wrap { trim: false }`): greedy by word, a word that would
+/// overflow the current row starts a new row, and a word wider than the whole
+/// row is hard-broken. This matches real word-wrap far better than naive
+/// character packing (which *under*counts prose and lets the newest streamed
+/// lines fall off the bottom of the viewport).
+// `col` is a loop-carried accumulator; its write on the final iteration is
+// intentionally discarded (we only return `rows`).
+#[allow(unused_assignments)]
+pub fn count_wrapped_rows(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let mut rows = 1usize;
+    let mut col = 0usize;
+    for (i, word) in text.split(' ').enumerate() {
+        // Every space except the leading one occupies a cell (trim:false).
+        let sep = usize::from(i > 0);
+        let need = display_width(word) + sep;
+        if col + need <= width {
+            col += need;
+            continue;
+        }
+        // Doesn't fit. Move to a fresh row only if the current one has content
+        // (a word starting at column 0 must not add a spurious wrap row).
+        let w = display_width(word);
+        if col > 0 {
+            rows += 1;
+            col = 0;
+        }
+        if w <= width {
+            col = w;
+        } else {
+            // Word wider than a full row is hard-broken across extra rows.
+            let extra = (w - 1) / width;
+            rows += extra;
+            col = w - extra * width;
+        }
+    }
+    rows
+}
+
 // ── Time formatting ─────────────────────────────────────────────────────────
 
 /// Produce a human-friendly relative timestamp like "2m ago", "1h ago", etc.
@@ -1073,6 +1127,37 @@ mod tests {
     use super::*;
     use chrono::{Duration, Utc};
     use ratatui::style::Modifier;
+
+    // ── count_wrapped_rows tests ────────────────────────────────────────
+
+    #[test]
+    fn count_wrapped_rows_basics() {
+        assert_eq!(count_wrapped_rows("", 10), 1);
+        assert_eq!(count_wrapped_rows("hello", 10), 1);
+        assert_eq!(count_wrapped_rows("hello", 0), 1); // width 0 → no div-by-zero
+        // "aaaa bbbb cccc" with width 9: "aaaa bbbb"(9) then "cccc" → 2 rows.
+        assert_eq!(count_wrapped_rows("aaaa bbbb cccc", 9), 2);
+        // A word longer than the width is hard-broken: 25 chars / width 10 = 3 rows.
+        assert_eq!(count_wrapped_rows(&"a".repeat(25), 10), 3);
+    }
+
+    #[test]
+    fn count_wrapped_rows_word_wrap_not_undercount() {
+        // Char-packing would say ceil(11/6)=2, but word wrap needs 3 rows:
+        // "ab cd" (5) | "ef gh" (5) | "ij" — words don't split mid-word.
+        let rows = count_wrapped_rows("ab cd ef gh ij", 6);
+        assert!(rows >= 3, "word wrap should not undercount, got {rows}");
+    }
+
+    #[test]
+    fn count_wrapped_rows_huge_input_no_overflow() {
+        // Regression: summing wrapped rows into a u16 overflowed (debug panic /
+        // release wrap). The accumulator is usize now; this just must not hang
+        // or panic and must report a large row count.
+        let huge = "x ".repeat(100_000); // 100k words
+        let rows = count_wrapped_rows(&huge, 1);
+        assert!(rows > u16::MAX as usize);
+    }
 
     // ── highlight_code tests ────────────────────────────────────────────
 

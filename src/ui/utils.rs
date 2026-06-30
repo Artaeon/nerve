@@ -35,6 +35,21 @@ pub fn display_width(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
+/// Strip control characters from text before it is rendered to the terminal.
+///
+/// Assistant messages, web-scraped content, file contents, and command output
+/// can contain raw ANSI escape sequences (`\x1b[...`), carriage returns, BEL,
+/// and other C0/C1 control codes. Passed straight through to the terminal they
+/// can move the cursor, change colors, or clear the screen (ANSI-escape
+/// injection). Callers split on `\n` first, so newlines are handled elsewhere;
+/// here we drop every other control char (tabs become a single space).
+pub fn sanitize_display(s: &str) -> String {
+    s.chars()
+        .map(|c| if c == '\t' { ' ' } else { c })
+        .filter(|c| !c.is_control())
+        .collect()
+}
+
 /// Truncate a string to fit within a given display width, adding ellipsis.
 /// Correctly handles wide Unicode characters that occupy two columns.
 pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
@@ -63,6 +78,19 @@ pub fn truncate_with_ellipsis(s: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── sanitize_display ──────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_display_strips_escapes_and_controls() {
+        // ANSI color/clear sequences lose their ESC so they can't take effect.
+        assert!(!sanitize_display("\x1b[31mred\x1b[0m").contains('\x1b'));
+        assert_eq!(sanitize_display("a\x07b\rc"), "abc"); // BEL, CR removed
+        assert_eq!(sanitize_display("x\x1b[2J\x1b[Hy"), "x[2J[Hy"); // no ESC, no effect
+        assert_eq!(sanitize_display("tab\there"), "tab here"); // tab → space
+        // Normal text (incl. multibyte) is preserved.
+        assert_eq!(sanitize_display("héllo 日本 🎉"), "héllo 日本 🎉");
+    }
 
     // ── display_width ─────────────────────────────────────────────────
 
