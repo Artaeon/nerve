@@ -774,6 +774,13 @@ async fn event_loop(
                     StreamEvent::Done => {
                         // Grab the content before finish_streaming moves it.
                         let response_content = app.streaming_response.clone();
+                        // Snapshot the auto-agent flag BEFORE finish_streaming,
+                        // which clears it (app.rs). The cleanup block below
+                        // needs to know whether this turn was an auto-agent
+                        // activation so it can revert agent mode when no tools
+                        // ran — otherwise agent mode would leak into the next
+                        // message.
+                        let was_auto_agent_active = app.auto_agent_active;
                         app.finish_streaming();
                         app.scroll_offset = 0; // Auto-scroll to show the new response
 
@@ -912,17 +919,16 @@ async fn event_loop(
                         // Auto-agent cleanup: if agent mode was activated by
                         // intent detection and no tools were actually invoked,
                         // turn it back off so the next message starts clean.
-                        if app.auto_agent_active {
-                            if app.agent_iterations == 0 {
-                                // No tool calls happened — revert to chat-only.
-                                app.agent_mode = false;
-                                app.current_conversation_mut().messages.retain(|(r, c)| {
-                                    !(r == "system"
-                                        && (c.contains("You have access to the following tools")
-                                            || c.contains("You are Nerve, an AI coding assistant")))
-                                });
-                            }
-                            app.auto_agent_active = false;
+                        // Uses the snapshot taken before finish_streaming,
+                        // which already reset app.auto_agent_active.
+                        if was_auto_agent_active && app.agent_iterations == 0 {
+                            // No tool calls happened — revert to chat-only.
+                            app.agent_mode = false;
+                            app.current_conversation_mut().messages.retain(|(r, c)| {
+                                !(r == "system"
+                                    && (c.contains("You have access to the following tools")
+                                        || c.contains("You are Nerve, an AI coding assistant")))
+                            });
                         }
 
                         // Pipeline: the current role's turn is complete
@@ -938,6 +944,14 @@ async fn event_loop(
                     StreamEvent::Error(e) => {
                         app.streaming_response.push_str(&format!("\n[Error: {e}]"));
                         app.finish_streaming();
+                        // If a stream errors mid-workflow, tear the pipeline
+                        // down instead of leaving it half-active — otherwise
+                        // the user's next message would be silently consumed by
+                        // the stuck pipeline / left in agent mode.
+                        if app.pipeline.take().is_some() {
+                            app.agent_mode = false;
+                            app.set_status("Workflow stopped (stream error)");
+                        }
                         finished = true;
                         break;
                     }
@@ -962,7 +976,7 @@ async fn event_loop(
                         let tool_compacted =
                             context_mgr.compact_tool_results(&app.current_conversation().messages);
                         let compacted = context_mgr.compact_messages(&tool_compacted);
-                        let messages: Vec<ChatMessage> = compacted
+                        let mut messages: Vec<ChatMessage> = compacted
                             .iter()
                             .filter_map(|(role, content)| match role.as_str() {
                                 "user" => Some(ChatMessage::user(content)),
@@ -971,6 +985,13 @@ async fn event_loop(
                                 _ => None,
                             })
                             .collect();
+
+                        // Re-inject the active pipeline role's system + tools
+                        // prompt. These are ephemeral (never stored in the
+                        // conversation), so without this the coder/reviewer
+                        // would lose its role and stop emitting tool calls
+                        // after the first tool round.
+                        inject_pipeline_role_prompts(app, &mut messages);
 
                         let model = app.selected_model.clone();
                         let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1027,6 +1048,9 @@ async fn handle_key_event(
         app.finish_streaming();
         let was_in_pipeline = app.pipeline.take().is_some();
         let msg = if was_in_pipeline {
+            // A workflow's Coder/Reviewer role turns agent mode on; clear it
+            // on cancel so the next plain message isn't silently in agent mode.
+            app.agent_mode = false;
             "Workflow cancelled"
         } else {
             "Generation stopped"
@@ -2861,6 +2885,39 @@ async fn send_to_ai(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
     send_to_ai_from_history(app, provider).await;
 }
 
+/// Prepend the active pipeline role's system prompt (and, for tool-capable
+/// roles, the tools-format prompt) to a freshly built message list.
+///
+/// Pipeline role prompts are ephemeral — they are never persisted into
+/// `conversation.messages` — so every LLM call for that role (the initial
+/// turn AND any follow-up turn after a tool round) must re-inject them, or
+/// the model loses its role and the tool-call format. No-op when no pipeline
+/// role is active.
+pub(crate) fn inject_pipeline_role_prompts(app: &App, messages: &mut Vec<ChatMessage>) {
+    use crate::agent::pipeline::ToolPolicy;
+    let Some(role) = app.pipeline.as_ref().and_then(|p| p.step.role()) else {
+        return;
+    };
+    // Strip any stale agent-tools system message from prior turns so the
+    // planner (no tools) doesn't see tool docs and we don't duplicate them.
+    // The tools prompt opens with "You are Nerve, an AI coding assistant".
+    messages.retain(|m| {
+        !(m.role == "system"
+            && m.content
+                .starts_with("You are Nerve, an AI coding assistant"))
+    });
+    // Prepend tool docs if this role has tool access; the reviewer's own
+    // system prompt restricts its USAGE to read-only.
+    if matches!(role.tool_policy, ToolPolicy::Full | ToolPolicy::ReadOnly) {
+        messages.insert(
+            0,
+            ChatMessage::system(crate::agent::tools::tools_system_prompt()),
+        );
+    }
+    // Role prompt sits at position 0 so the LLM reads it first.
+    messages.insert(0, ChatMessage::system(role.system_prompt.clone()));
+}
+
 /// Start a streaming AI request using the current conversation history.
 /// Assumes the caller has already added the user message to the conversation.
 pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) {
@@ -2974,28 +3031,10 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
     // entire conversation. If a multi-agent pipeline is active, its
     // current role's prompt REPLACES the mode prompt — the role fully
     // owns the system context for that turn.
-    if let Some(ref pipeline_state) = app.pipeline
-        && let Some(role) = pipeline_state.step.role()
-    {
-        // Strip any agent-tools system message from prior turns so the
-        // planner (which has no tools) doesn't see stale tool docs.
-        messages.retain(|m| {
-            !(m.role == "system" && m.content.contains("You have access to the following tools"))
-        });
-        // Prepend tool docs if this role has tool access; the existing
-        // `tools_system_prompt()` covers the full tool set, and the
-        // reviewer's own system prompt restricts its USAGE to read-only.
-        if matches!(
-            role.tool_policy,
-            crate::agent::pipeline::ToolPolicy::Full | crate::agent::pipeline::ToolPolicy::ReadOnly
-        ) {
-            messages.insert(
-                0,
-                ChatMessage::system(crate::agent::tools::tools_system_prompt()),
-            );
-        }
-        // Role prompt sits at position 0 so the LLM reads it first.
-        messages.insert(0, ChatMessage::system(role.system_prompt.clone()));
+    if let Some(role) = app.pipeline.as_ref().and_then(|p| p.step.role()) {
+        // Re-inject the role + tools prompt (shared with the post-tool
+        // AgentToolsComplete path so both turns carry the same context).
+        inject_pipeline_role_prompts(app, &mut messages);
 
         // Align agent_mode with the role so the Done handler's tool-call
         // parsing kicks in for Coder and Reviewer.
@@ -3096,6 +3135,9 @@ pub(crate) async fn advance_pipeline_if_active(
         let task_preview: String = task.chars().take(60).collect();
         app.set_status(format!("Workflow complete: {task_preview}"));
         app.pipeline = None;
+        // The Coder/Reviewer roles enabled agent mode; reset it so the
+        // user's next ordinary message isn't silently executed as agent.
+        app.agent_mode = false;
         return Some(PipelineStep::Done);
     }
 
@@ -4831,10 +4873,60 @@ mod tests {
 
         // Final state: pipeline cleared, no further stream in flight.
         assert!(app.pipeline.is_none());
+        // agent_mode (turned on by the coder/reviewer roles) must be reset
+        // when the workflow completes, so the next plain message isn't
+        // silently executed in agent mode.
+        assert!(
+            !app.agent_mode,
+            "agent_mode must be reset after the workflow completes"
+        );
         assert_eq!(
             app.status_message.as_deref(),
             Some("Workflow complete: tiny refactor")
         );
+    }
+
+    #[test]
+    fn inject_pipeline_role_prompts_reinjects_coder_context() {
+        use crate::agent::pipeline::{PipelineState, PipelineStep};
+        let mut app = App::new();
+        let mut state = PipelineState::new("task".into());
+        state.step = PipelineStep::Coding;
+        app.pipeline = Some(state);
+
+        // Simulate the post-tool message list (no role/tools prompt in it).
+        let mut messages = vec![
+            ChatMessage::user("task"),
+            ChatMessage::assistant("<tool_call>...</tool_call>"),
+            ChatMessage::user("Tool execution results: ..."),
+        ];
+        inject_pipeline_role_prompts(&app, &mut messages);
+
+        // The coder role prompt and the tools-format prompt must now be
+        // present so the model keeps its role across tool rounds.
+        let systems: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.as_str())
+            .collect();
+        assert!(
+            systems.iter().any(|s| s.contains("CODER")),
+            "coder system prompt must be re-injected; got {systems:?}"
+        );
+        assert!(
+            systems
+                .iter()
+                .any(|s| s.starts_with("You are Nerve, an AI coding assistant")),
+            "tools prompt must be re-injected for a Full-policy role"
+        );
+    }
+
+    #[test]
+    fn inject_pipeline_role_prompts_noop_without_pipeline() {
+        let app = App::new(); // no pipeline
+        let mut messages = vec![ChatMessage::user("hello")];
+        inject_pipeline_role_prompts(&app, &mut messages);
+        assert_eq!(messages.len(), 1, "no pipeline => messages unchanged");
     }
 
     /// Poll until the scripted provider has seen at least `n` calls,
