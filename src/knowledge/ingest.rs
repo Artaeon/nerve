@@ -142,11 +142,15 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
     let mut chunks = Vec::new();
     let mut start = 0;
 
+    // Step must be >= 1, otherwise `overlap >= chunk_size` (or chunk_size 0)
+    // would never advance `start` and loop forever, exhausting memory.
+    let step = chunk_size.saturating_sub(overlap).max(1);
+
     while start < words.len() {
-        let end = (start + chunk_size).min(words.len());
+        let end = (start + chunk_size.max(1)).min(words.len());
         let chunk = words[start..end].join(" ");
         chunks.push(chunk);
-        start += chunk_size.saturating_sub(overlap);
+        start += step;
     }
 
     chunks
@@ -155,6 +159,19 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_text_overlap_ge_chunk_size_terminates() {
+        // Regression: overlap >= chunk_size (or chunk_size 0) used to make
+        // `start` never advance → infinite loop / OOM. Must terminate.
+        let text = "a b c d e f g h i j";
+        let c1 = chunk_text(text, 3, 5); // overlap > chunk_size
+        assert!(!c1.is_empty() && c1.len() < 1000);
+        let c2 = chunk_text(text, 3, 3); // overlap == chunk_size
+        assert!(!c2.is_empty() && c2.len() < 1000);
+        let c3 = chunk_text(text, 0, 0); // zero chunk size
+        assert!(!c3.is_empty() && c3.len() < 1000);
+    }
 
     #[test]
     fn chunk_empty_text() {

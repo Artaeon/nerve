@@ -874,7 +874,7 @@ fn execute_read_lines(call: &ToolCall) -> ToolResult {
         .args
         .get("end")
         .and_then(|s| s.parse().ok())
-        .unwrap_or(start + 50);
+        .unwrap_or(start.saturating_add(50));
 
     if crate::shell::is_sensitive_file(path) {
         return ToolResult {
@@ -889,7 +889,9 @@ fn execute_read_lines(call: &ToolCall) -> ToolResult {
             let lines: Vec<&str> = content.lines().collect();
             let total = lines.len();
             let s = start.saturating_sub(1).min(total);
-            let e = end.min(total);
+            // Clamp end to at least `s` so an LLM-supplied reversed range
+            // (e.g. start: 50, end: 10) yields an empty slice, not a panic.
+            let e = end.min(total).max(s);
 
             let mut output = String::new();
             for (i, line) in lines[s..e].iter().enumerate() {
@@ -1731,6 +1733,24 @@ new_text: fn new() {
         assert!(result.success);
         assert!(result.output.contains("[package]"));
         assert!(result.output.contains("1 |"));
+    }
+
+    #[test]
+    fn execute_read_lines_reversed_range_no_panic() {
+        // Regression: an LLM-supplied reversed range (start > end) used to
+        // panic on `lines[s..e]`. It must yield an empty selection instead.
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "read_lines".into(),
+            args: [
+                ("path".into(), "Cargo.toml".into()),
+                ("start".into(), "50".into()),
+                ("end".into(), "10".into()),
+            ]
+            .into(),
+        };
+        let result = execute_tool(&call, crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS);
+        assert!(result.success); // no panic; empty range reported
     }
 
     #[test]

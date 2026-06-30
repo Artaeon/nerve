@@ -333,9 +333,12 @@ fn handle_session(app: &mut App, trimmed: &str) -> bool {
                 } else {
                     let mut msg = "Saved sessions:\n\n".to_string();
                     for (id, date, count) in &sessions {
+                        // Take up to 8 chars (not bytes) so a short or
+                        // multi-byte id read from disk can't panic.
+                        let short_id: String = id.chars().take(8).collect();
                         msg.push_str(&format!(
                             "  {} \u{2014} {} ({} conv)\n",
-                            &id[..8],
+                            short_id,
                             date.format("%Y-%m-%d %H:%M"),
                             count
                         ));

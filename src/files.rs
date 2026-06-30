@@ -90,7 +90,9 @@ pub fn read_file_range(path: &str, start: usize, end: usize) -> anyhow::Result<F
     let lines: Vec<&str> = content.lines().collect();
     let total = lines.len();
     let start = start.saturating_sub(1).min(total); // 1-indexed to 0-indexed
-    let end = end.min(total);
+    // Clamp `end` to at least `start` so a reversed range (e.g. `:10-5`)
+    // yields an empty selection instead of panicking on `lines[start..end]`.
+    let end = end.min(total).max(start);
 
     let selected = lines[start..end].join("\n");
     let language = detect_language(&path_buf);
@@ -446,6 +448,19 @@ mod tests {
         let fc = read_file_range(file_path.to_str().unwrap(), 2, 2).unwrap();
         assert_eq!(fc.line_count, 1);
         assert_eq!(fc.content, "beta");
+    }
+
+    #[test]
+    fn read_file_range_reversed_does_not_panic() {
+        // Regression: `/file path:10-5` (end < start) used to panic on
+        // `lines[start..end]`. It must now yield an empty selection instead.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("rev.txt");
+        fs::write(&file_path, "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n").unwrap();
+
+        let fc = read_file_range(file_path.to_str().unwrap(), 10, 5).unwrap();
+        assert_eq!(fc.line_count, 0);
+        assert_eq!(fc.content, "");
     }
 
     // ── format_file_for_context ────────────────────────────────────────

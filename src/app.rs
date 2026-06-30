@@ -681,6 +681,22 @@ impl App {
     }
 }
 
+/// Given the text to the left of the cursor, return the byte offset where a
+/// word-delete (Ctrl+W) should leave the cursor: the start of the last
+/// whitespace-delimited word, skipping trailing whitespace.
+///
+/// The returned offset is always a valid `char` boundary, so callers can
+/// safely `drain(offset..cursor)` even when the input contains multi-byte
+/// whitespace (e.g. U+00A0 no-break space, U+3000 ideographic space).
+pub fn word_delete_start(before_cursor: &str) -> usize {
+    let trimmed = before_cursor.trim_end();
+    match trimmed.rfind(char::is_whitespace) {
+        // Advance past the matched whitespace char, which may be multi-byte.
+        Some(i) => i + trimmed[i..].chars().next().map_or(1, char::len_utf8),
+        None => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -983,6 +999,46 @@ mod tests {
         app.move_cursor_left();
         // emoji is 4 bytes, so cursor should be at 2
         assert_eq!(app.cursor_position, 2);
+    }
+
+    // ── word_delete_start() (Ctrl+W) ────────────────────────────────────
+
+    #[test]
+    fn word_delete_start_ascii() {
+        assert_eq!(word_delete_start("hello world"), 6); // start of "world"
+        assert_eq!(word_delete_start("oneword"), 0);
+        assert_eq!(word_delete_start(""), 0);
+        assert_eq!(word_delete_start("trailing   "), 0); // trims, then no ws
+    }
+
+    #[test]
+    fn word_delete_start_multibyte_whitespace_no_panic() {
+        // Regression: Ctrl+W used to compute `i + 1`, splitting a multi-byte
+        // whitespace char and panicking on drain. The offset must be a valid
+        // char boundary that a real drain can use without panicking.
+        for ws in ["\u{3000}", "\u{00A0}", "\u{2003}"] {
+            let s = format!("x{ws}y");
+            let pos = s.len(); // cursor at end
+            let start = word_delete_start(&s[..pos]);
+            assert!(s.is_char_boundary(start), "offset must be a char boundary");
+            // The drain that the handler performs must not panic. The word
+            // "y" is removed; the preceding whitespace separator is kept
+            // (matching the original ASCII behaviour).
+            let mut buf = s.clone();
+            buf.drain(start..pos);
+            assert_eq!(buf, format!("x{ws}"));
+        }
+    }
+
+    #[test]
+    fn word_delete_start_multibyte_word() {
+        // Leading multi-byte word with an ASCII-space separator.
+        let s = "λαμβδα word"; // greek word, space, "word"
+        let start = word_delete_start(s);
+        assert!(s.is_char_boundary(start));
+        let mut buf = s.to_string();
+        buf.drain(start..s.len());
+        assert_eq!(buf, "λαμβδα ");
     }
 
     // ── move_cursor_right() ─────────────────────────────────────────────

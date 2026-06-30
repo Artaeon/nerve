@@ -6,12 +6,18 @@ pub struct ContextManager {
 }
 
 /// Truncate text intelligently at a sentence boundary when possible.
+///
+/// `max_chars` is measured in characters, not bytes, and truncation always
+/// happens on a character boundary so multi-byte UTF-8 (CJK, emoji, accents)
+/// never panics.
 pub fn smart_truncate(text: &str, max_chars: usize) -> String {
-    if text.len() <= max_chars {
+    // Fast path: short strings (by char count) are returned verbatim.
+    if text.chars().count() <= max_chars {
         return text.to_string();
     }
 
-    let truncated = &text[..max_chars];
+    // Take up to `max_chars` characters; the result is always valid UTF-8.
+    let truncated: String = text.chars().take(max_chars).collect();
 
     // Try to break at the last sentence-ending punctuation within the range.
     if let Some(pos) = truncated.rfind(['.', '!', '?']) {
@@ -291,6 +297,25 @@ mod tests {
         let text = "abcdefghijklmnopqrstuvwxyz";
         let result = smart_truncate(text, 10);
         assert_eq!(result, "abcdefghij...");
+    }
+
+    #[test]
+    fn smart_truncate_multibyte_does_not_panic() {
+        // Regression: byte-index slicing used to panic when the cut point
+        // landed inside a multi-byte codepoint. These must not panic and
+        // must always return valid UTF-8.
+        let cjk = "あいうえお".repeat(50); // 250 multi-byte chars
+        let r = smart_truncate(&cjk, 150);
+        assert!(r.chars().count() <= 153); // up to 150 chars + "..."
+        assert!(cjk.starts_with(r.trim_end_matches('.')));
+
+        let emoji = "🎉🎊✨".repeat(80);
+        let r2 = smart_truncate(&emoji, 100);
+        assert!(!r2.is_empty()); // valid, no panic
+
+        // Mixed ASCII + multibyte with the boundary mid-codepoint.
+        let mixed = format!("hello {}", "λ".repeat(200));
+        let _ = smart_truncate(&mixed, 7); // boundary inside a λ — must not panic
     }
 
     #[test]

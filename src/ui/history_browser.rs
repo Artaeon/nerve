@@ -71,28 +71,46 @@ fn highlight_search_matches_styled<'a>(
         return Line::from(Span::styled(text.to_string(), normal_style));
     }
 
-    let query_lower = query.to_lowercase();
-    let text_lower = text.to_lowercase();
+    // Work entirely in `char` vectors using ASCII case folding (1:1 per char,
+    // so indices stay aligned with the original). This avoids slicing the
+    // original string with byte offsets derived from `to_lowercase()`, which
+    // can change byte length on case-expanding characters (e.g. `İ`, the
+    // Kelvin sign) and panic.
+    let chars: Vec<char> = text.chars().collect();
+    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
+    let q: Vec<char> = query.chars().map(|c| c.to_ascii_lowercase()).collect();
+
+    if q.is_empty() || q.len() > lower.len() {
+        return Line::from(Span::styled(text.to_string(), normal_style));
+    }
 
     let mut spans: Vec<Span<'a>> = Vec::new();
-    let mut cursor = 0;
+    let mut i = 0;
+    let mut seg_start = 0; // start (char index) of the current un-highlighted run
 
-    while let Some(pos) = text_lower[cursor..].find(&query_lower) {
-        let abs_pos = cursor + pos;
-        if abs_pos > cursor {
+    while i + q.len() <= lower.len() {
+        if lower[i..i + q.len()] == q[..] {
+            if i > seg_start {
+                spans.push(Span::styled(
+                    chars[seg_start..i].iter().collect::<String>(),
+                    normal_style,
+                ));
+            }
             spans.push(Span::styled(
-                text[cursor..abs_pos].to_string(),
-                normal_style,
+                chars[i..i + q.len()].iter().collect::<String>(),
+                highlight_style,
             ));
+            i += q.len();
+            seg_start = i;
+        } else {
+            i += 1;
         }
-        spans.push(Span::styled(
-            text[abs_pos..abs_pos + query_lower.len()].to_string(),
-            highlight_style,
-        ));
-        cursor = abs_pos + query_lower.len();
     }
-    if cursor < text.len() {
-        spans.push(Span::styled(text[cursor..].to_string(), normal_style));
+    if seg_start < chars.len() {
+        spans.push(Span::styled(
+            chars[seg_start..].iter().collect::<String>(),
+            normal_style,
+        ));
     }
 
     if spans.is_empty() {
@@ -685,6 +703,20 @@ mod tests {
         // Empty query should not highlight anything
         assert_eq!(line.spans.len(), 1);
         assert_eq!(line.spans[0].content, "hello");
+    }
+
+    #[test]
+    fn highlight_search_matches_case_expanding_unicode_no_panic() {
+        // Regression: byte offsets from `to_lowercase()` (which expands `İ`
+        // to two chars) used to slice the original text and panic. Must not
+        // panic on a title/message containing such characters.
+        let _ = highlight_search_matches("İstanbul Insight", "i");
+        let _ = highlight_search_matches("\u{212A}elvin scale", "k"); // Kelvin sign
+        let _ = highlight_search_matches("İİİ", "i");
+        // Multibyte content highlights without crashing and round-trips text.
+        let line = highlight_search_matches("café CAFÉ", "caf");
+        let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(joined, "café CAFÉ");
     }
 
     #[test]

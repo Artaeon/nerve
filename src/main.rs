@@ -1292,14 +1292,11 @@ async fn handle_normal_mode(
                         }
                     }
                     KeyCode::Char('w') => {
-                        // Delete word before cursor.
+                        // Delete word before cursor. `word_delete_start`
+                        // returns a char-boundary offset so multi-byte
+                        // whitespace can't cause a slicing panic.
                         let pos = app.cursor_position.min(app.input.len());
-                        let before = &app.input[..pos];
-                        let trimmed = before.trim_end();
-                        let new_pos = trimmed
-                            .rfind(|c: char| c.is_whitespace())
-                            .map(|i| i + 1)
-                            .unwrap_or(0);
+                        let new_pos = crate::app::word_delete_start(&app.input[..pos]);
                         app.input.drain(new_pos..pos);
                         app.cursor_position = new_pos;
                         update_autocomplete(app);
@@ -2043,21 +2040,23 @@ fn update_search_results(app: &mut App) {
 }
 
 /// Find the longest common prefix among a set of string slices.
+///
+/// Works in `char` units throughout (not bytes), so a common prefix that ends
+/// inside a multi-byte codepoint can never produce a panicking byte slice.
 fn common_prefix(strings: &[&str]) -> String {
-    if strings.is_empty() {
+    let Some((first, rest)) = strings.split_first() else {
         return String::new();
-    }
-    let first = strings[0];
-    let mut prefix_len = first.len();
-    for s in &strings[1..] {
-        prefix_len = first
+    };
+    let mut prefix_chars = first.chars().count();
+    for s in rest {
+        let common = first
             .chars()
             .zip(s.chars())
             .take_while(|(a, b)| a == b)
-            .count()
-            .min(prefix_len);
+            .count();
+        prefix_chars = prefix_chars.min(common);
     }
-    first[..prefix_len].to_string()
+    first.chars().take(prefix_chars).collect()
 }
 
 // ─── Inline autocomplete ────────────────────────────────────────────────────
@@ -2550,20 +2549,22 @@ fn list_file_matches(partial: &str) -> Vec<String> {
 
 /// Find the longest common prefix among a vec of owned strings.
 fn find_common_prefix_strings(strings: &[String]) -> String {
-    if strings.is_empty() {
+    let Some((first, rest)) = strings.split_first() else {
         return String::new();
-    }
-    let first = &strings[0];
-    let mut prefix_len = first.len();
-    for s in &strings[1..] {
-        prefix_len = first
+    };
+    // Count in `char` units so a prefix ending mid-codepoint (e.g. two
+    // filenames sharing a leading multi-byte char like "日記"/"日付") can't
+    // produce a panicking byte slice.
+    let mut prefix_chars = first.chars().count();
+    for s in rest {
+        let common = first
             .chars()
             .zip(s.chars())
             .take_while(|(a, b)| a == b)
-            .count()
-            .min(prefix_len);
+            .count();
+        prefix_chars = prefix_chars.min(common);
     }
-    first[..prefix_len].to_string()
+    first.chars().take(prefix_chars).collect()
 }
 
 // ─── Smart title generation ────────────────────────────────────────────────
@@ -3849,6 +3850,23 @@ mod tests {
     fn find_common_prefix_strings_empty() {
         let strs: Vec<String> = vec![];
         assert_eq!(find_common_prefix_strings(&strs), "");
+    }
+
+    #[test]
+    fn find_common_prefix_strings_multibyte_no_panic() {
+        // Regression: a char-count was used as a byte index, so two filenames
+        // sharing a leading multi-byte char that diverge at the next char
+        // panicked (e.g. Tab-completing "日記.txt" / "日付.txt").
+        let strs = vec!["日記.txt".into(), "日付.txt".into()];
+        assert_eq!(find_common_prefix_strings(&strs), "日"); // shared first char
+        let strs2 = vec!["ék.md".into(), "él.md".into()];
+        assert_eq!(find_common_prefix_strings(&strs2), "é");
+    }
+
+    #[test]
+    fn common_prefix_multibyte_no_panic() {
+        assert_eq!(common_prefix(&["café_a", "café_b"]), "café_");
+        assert_eq!(common_prefix(&["日記", "日付"]), "日");
     }
 
     // ── provider_help_message tests ──────────────────────────────────
