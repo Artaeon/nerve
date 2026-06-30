@@ -254,17 +254,38 @@ impl Config {
             return Ok(config);
         }
 
-        let contents = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read config: {}", path.display()))?;
+        // A read failure (non-UTF8 bytes, permissions, …) must NOT abort
+        // startup — fall back to defaults like the parse-error path does,
+        // backing up the raw bytes first so nothing is silently lost.
+        let contents = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                if let Ok(bytes) = fs::read(&path) {
+                    let _ = fs::write(path.with_extension("toml.bak"), &bytes);
+                }
+                tracing::warn!(
+                    "failed to read config ({}): {e}. Backed up and using defaults.",
+                    path.display()
+                );
+                return Ok(Config::default());
+            }
+        };
         match toml::from_str::<Config>(&contents) {
             Ok(config) => Ok(config),
             Err(e) => {
-                tracing::warn!(
-                    "Config parse error ({}): {e}. Using defaults.",
-                    path.display()
-                );
                 // Old config format or corrupt file — fall back to defaults
-                // so the app can still start.
+                // so the app can still start. Back up the original first so a
+                // later save() can't silently overwrite (and lose) the user's
+                // real settings, including API keys.
+                let backup = path.with_extension("toml.bak");
+                if let Err(be) = fs::write(&backup, &contents) {
+                    tracing::warn!("failed to back up unparseable config: {be}");
+                }
+                tracing::warn!(
+                    "Config parse error ({}): {e}. Backed up to {} and using defaults.",
+                    path.display(),
+                    backup.display()
+                );
                 Ok(Config::default())
             }
         }
@@ -280,7 +301,7 @@ impl Config {
 
         let path = Self::config_file();
         let contents = self.to_commented_toml();
-        fs::write(&path, &contents)
+        crate::files::atomic_write(&path, &contents)
             .with_context(|| format!("failed to write config: {}", path.display()))?;
 
         // Restrict file permissions on Unix (config contains API keys)

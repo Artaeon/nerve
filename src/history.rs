@@ -75,7 +75,9 @@ pub fn save_conversation(record: &ConversationRecord) -> anyhow::Result<()> {
 
     let path = conversation_path(&record.id);
     let json = serde_json::to_string_pretty(record)?;
-    fs::write(path, json)?;
+    // Atomic write so a crash mid-save can't truncate a conversation into an
+    // unparseable file (which `list_conversations` would then silently skip).
+    crate::files::atomic_write(&path, &json)?;
     Ok(())
 }
 

@@ -38,18 +38,39 @@ fn last_session_path() -> PathBuf {
 }
 
 /// Write JSON to a file atomically (write to .tmp, then rename).
-/// Prevents corruption if the app crashes mid-write. Uses PID in the
-/// temp filename to avoid collisions with stale temp files from
-/// crashed processes or concurrent writes.
+/// Prevents corruption if the app crashes mid-write.
 fn atomic_write(path: &std::path::Path, json: &str) -> anyhow::Result<()> {
-    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-    fs::write(&tmp, json)?;
-    // If rename fails, clean up the temp file.
-    if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(e.into());
+    crate::files::atomic_write(path, json)
+}
+
+/// Keep at most `keep` of the most recently modified `session_*.json` named
+/// copies, deleting the rest. `session_from_app` assigns a fresh UUID on every
+/// save, so without this the sessions directory would grow without bound.
+fn prune_named_sessions(dir: &std::path::Path, keep: usize) {
+    let mut named: Vec<(std::time::SystemTime, PathBuf)> = match fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("session_") && n.ends_with(".json"))
+            })
+            .filter_map(|p| {
+                let mtime = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+                Some((mtime, p))
+            })
+            .collect(),
+        Err(_) => return,
+    };
+    if named.len() <= keep {
+        return;
     }
-    Ok(())
+    // Newest first; delete everything past `keep`.
+    named.sort_by_key(|(mtime, _)| std::cmp::Reverse(*mtime));
+    for (_, path) in named.into_iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
 }
 
 /// Save the current session
@@ -67,6 +88,9 @@ pub fn save_session(session: &Session) -> anyhow::Result<()> {
         session.id.chars().take(8).collect::<String>()
     ));
     atomic_write(&named_path, &serde_json::to_string(session)?)?;
+
+    // Bound the number of named copies so they can't accumulate forever.
+    prune_named_sessions(&dir, 25);
 
     Ok(())
 }
@@ -184,6 +208,34 @@ pub fn restore_session_to_app(session: &Session, app: &mut crate::app::App) {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn prune_named_sessions_bounds_count() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create 30 named session files plus an unrelated file.
+        for i in 0..30 {
+            std::fs::write(dir.path().join(format!("session_{i:08x}.json")), "{}").unwrap();
+        }
+        std::fs::write(dir.path().join("last_session.json"), "{}").unwrap();
+
+        prune_named_sessions(dir.path(), 25);
+
+        let named = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| {
+                let n = e.file_name();
+                let n = n.to_string_lossy();
+                n.starts_with("session_") && n.ends_with(".json")
+            })
+            .count();
+        assert!(
+            named <= 25,
+            "named session copies must be capped, got {named}"
+        );
+        // The unrelated file is untouched.
+        assert!(dir.path().join("last_session.json").exists());
+    }
 
     /// Tests that read/write `last_session.json` must hold this lock to avoid
     /// racing each other (Rust runs tests in parallel by default).

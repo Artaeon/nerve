@@ -51,7 +51,18 @@ impl ClipboardManager {
     /// Entries larger than 1 MB are truncated.
     pub fn add(&mut self, content: String, source: ClipboardSource) {
         let content = if content.len() > Self::MAX_ENTRY_BYTES {
-            let mut truncated: String = content.chars().take(Self::MAX_ENTRY_BYTES).collect();
+            // Truncate to the BYTE budget on a char boundary. (The old code
+            // took MAX_ENTRY_BYTES *chars*, so multi-byte content could keep
+            // up to ~4 MB — defeating the cap.)
+            let mut budget = 0usize;
+            let mut truncated = String::new();
+            for ch in content.chars() {
+                if budget + ch.len_utf8() > Self::MAX_ENTRY_BYTES {
+                    break;
+                }
+                budget += ch.len_utf8();
+                truncated.push(ch);
+            }
             truncated.push_str("\n... (truncated)");
             truncated
         } else {
@@ -134,7 +145,7 @@ impl ClipboardManager {
         }
         let json =
             serde_json::to_string_pretty(&self.entries).context("failed to serialize clipboard")?;
-        std::fs::write(&path, &json).context("failed to write clipboard file")?;
+        crate::files::atomic_write(&path, &json).context("failed to write clipboard file")?;
 
         // Restrict permissions — clipboard may contain secrets.
         #[cfg(unix)]
@@ -152,12 +163,19 @@ impl ClipboardManager {
     pub fn load() -> anyhow::Result<Self> {
         let path = data_file_path()?;
         let json = std::fs::read_to_string(&path).context("failed to read clipboard file")?;
-        let entries: Vec<ClipboardEntry> =
-            serde_json::from_str(&json).context("failed to parse clipboard file")?;
-        Ok(Self {
-            entries,
-            max_entries: 100,
-        })
+        match serde_json::from_str::<Vec<ClipboardEntry>>(&json) {
+            Ok(entries) => Ok(Self {
+                entries,
+                max_entries: 100,
+            }),
+            Err(e) => {
+                // Corrupt file: back it up before the caller starts empty and
+                // overwrites it on the next save, so the data isn't lost for good.
+                let _ = std::fs::write(path.with_extension("json.bak"), &json);
+                Err(anyhow::Error::from(e)
+                    .context("failed to parse clipboard file (backed up to .json.bak)"))
+            }
+        }
     }
 }
 
@@ -180,6 +198,20 @@ fn data_file_path() -> anyhow::Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn add_truncates_to_byte_budget_on_multibyte() {
+        // A 2-MB multibyte string must be capped to ~1 MB BYTES (not chars),
+        // and truncation must land on a char boundary (no panic, valid UTF-8).
+        let mut cm = ClipboardManager::new(10);
+        let big = "λ".repeat(1_000_000); // 2 MB (2 bytes/char)
+        cm.add(big, ClipboardSource::ManualCopy);
+        let stored = &cm.entries()[0].content;
+        assert!(stored.ends_with("... (truncated)"));
+        // Content (minus the marker) is within the byte cap.
+        assert!(stored.len() < ClipboardManager::MAX_ENTRY_BYTES + 64);
+        assert!(stored.is_char_boundary(stored.len())); // valid UTF-8
+    }
 
     #[test]
     fn new_clipboard_manager_is_empty() {

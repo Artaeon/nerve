@@ -3,6 +3,26 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+/// Write `contents` to `path` atomically: write to a unique temp file in the
+/// same directory, then rename over the destination. A crash or full disk
+/// mid-write leaves the original file intact instead of a truncated/corrupt
+/// one. The PID in the temp name avoids collisions between concurrent writers.
+pub fn atomic_write(path: &Path, contents: &str) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp, contents)
+        .with_context(|| format!("failed to write temp file: {}", tmp.display()))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(anyhow::Error::from(e)
+            .context(format!("failed to rename into place: {}", path.display())));
+    }
+    Ok(())
+}
+
 /// Result of reading a file for context
 #[derive(Debug, Clone)]
 pub struct FileContext {
@@ -242,6 +262,27 @@ fn read_directory_listing(path: &Path) -> anyhow::Result<FileContext> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── atomic_write ───────────────────────────────────────────────────
+
+    #[test]
+    fn atomic_write_creates_and_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub/dir/file.json");
+        // Creates missing parent dirs.
+        atomic_write(&path, "first").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        // Overwrites in place.
+        atomic_write(&path, "second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        // No leftover temp files in the directory.
+        let leftovers: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains("tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temp file should be renamed away");
+    }
 
     // ── resolve_path ───────────────────────────────────────────────────
 

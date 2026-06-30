@@ -2,6 +2,29 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Reduce a knowledge-base name to a safe filename stem: keep alphanumerics,
+/// `-` and `_`; collapse everything else to `-`. This prevents path separators
+/// or `..` segments from escaping the knowledge directory. Falls back to
+/// "default" if nothing usable remains.
+fn sanitize_kb_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('-');
+    if trimmed.is_empty() {
+        "default".to_string()
+    } else {
+        trimmed.chars().take(64).collect()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     pub id: String,
@@ -69,16 +92,19 @@ impl KnowledgeBase {
     /// Persist this knowledge base to disk as JSON.
     pub fn save(&self) -> anyhow::Result<()> {
         let dir = Self::storage_dir()?;
-        let path = dir.join(format!("{}.json", self.name));
+        // Sanitize the name so it can't escape the storage directory via path
+        // separators or `..` (defense-in-depth; callers currently pass a fixed
+        // literal, but the field is otherwise free-form).
+        let path = dir.join(format!("{}.json", sanitize_kb_name(&self.name)));
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)?;
+        crate::files::atomic_write(&path, &json)?;
         Ok(())
     }
 
     /// Load a knowledge base from disk by name.
     pub fn load(name: &str) -> anyhow::Result<Self> {
         let dir = Self::storage_dir()?;
-        let path = dir.join(format!("{name}.json"));
+        let path = dir.join(format!("{}.json", sanitize_kb_name(name)));
         let data = std::fs::read_to_string(&path)?;
         let kb: Self = serde_json::from_str(&data)?;
         Ok(kb)
@@ -120,6 +146,19 @@ impl KnowledgeBase {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_kb_name_blocks_traversal() {
+        assert_eq!(sanitize_kb_name("default"), "default");
+        assert_eq!(sanitize_kb_name("my_notes-1"), "my_notes-1");
+        // Path separators and `..` cannot escape the directory.
+        assert!(!sanitize_kb_name("../../etc/passwd").contains('/'));
+        assert!(!sanitize_kb_name("../../etc/passwd").contains(".."));
+        assert!(!sanitize_kb_name("a/b\\c").contains(['/', '\\']));
+        // Empty-after-cleaning falls back to a safe default.
+        assert_eq!(sanitize_kb_name("///"), "default");
+        assert_eq!(sanitize_kb_name(""), "default");
+    }
 
     fn make_test_kb() -> KnowledgeBase {
         let mut kb = KnowledgeBase::new("test".into());
