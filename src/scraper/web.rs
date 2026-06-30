@@ -24,7 +24,9 @@ fn is_private_url(url: &str) -> bool {
     };
 
     let host_str = match parsed.host_str() {
-        Some(h) => h.to_lowercase(),
+        // Strip a trailing dot (FQDN form): `localhost.` resolves to
+        // `localhost` but would otherwise slip past the name checks below.
+        Some(h) => h.to_lowercase().trim_end_matches('.').to_string(),
         None => return true,
     };
 
@@ -37,7 +39,11 @@ fn is_private_url(url: &str) -> bool {
         return true;
     }
 
-    // Try parsing as IPv4 — handles dotted, integer, hex, and octal formats.
+    // Canonical dotted-quad IPv4. NOTE: Rust's parser only accepts canonical
+    // dotted-decimal; non-canonical encodings (decimal `2130706433`, hex
+    // `0x7f000001`, octal `0177.0.0.1`, short `127.1`) are NOT caught here —
+    // they are caught by the resolve-and-check + pinning in `scrape_url`,
+    // which normalises them through the system resolver before connecting.
     if let Ok(ip) = host_str.parse::<std::net::Ipv4Addr>() {
         return is_private_ipv4(ip);
     }
@@ -102,16 +108,64 @@ fn is_private_ipv6(ip: std::net::Ipv6Addr) -> bool {
     false
 }
 
+/// Maximum response body we will read into memory (defends against a hostile
+/// or misconfigured server streaming a multi-GB body within the timeout).
+const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
+
+/// Resolve a URL's host and verify EVERY resolved address is public, returning
+/// the host and a single pinned `SocketAddr`. Resolving ourselves normalises
+/// non-canonical IP encodings (decimal/hex/octal/short) the same way the OS
+/// connect would, closing the SSRF bypass where `is_private_url`'s string
+/// check is fooled. Pinning the verified address on the client also prevents
+/// a DNS-rebind between check and connect for this host.
+async fn resolve_checked(parsed: &reqwest::Url) -> anyhow::Result<(String, std::net::SocketAddr)> {
+    use std::net::IpAddr;
+    let host = parsed
+        .host_str()
+        .context("URL has no host")?
+        .trim_end_matches('.')
+        .to_string();
+    let port = parsed
+        .port_or_known_default()
+        .context("URL has no port/scheme")?;
+
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .with_context(|| format!("failed to resolve {host}"))?
+        .collect();
+    if addrs.is_empty() {
+        anyhow::bail!("could not resolve {host}");
+    }
+    for sa in &addrs {
+        let private = match sa.ip() {
+            IpAddr::V4(v4) => is_private_ipv4(v4),
+            IpAddr::V6(v6) => is_private_ipv6(v6),
+        };
+        if private {
+            anyhow::bail!("{host} resolves to a private/internal address");
+        }
+    }
+    Ok((host, addrs[0]))
+}
+
 /// Fetch a URL and extract readable text content from the HTML.
 pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
+    use futures::StreamExt;
+
     if is_private_url(url) {
         anyhow::bail!("Cannot scrape private/internal URLs");
     }
 
+    let parsed = reqwest::Url::parse(url).context("invalid URL")?;
+    let (host, pinned) = resolve_checked(&parsed).await?;
+
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
-        .user_agent("Nerve/0.1.0")
+        .user_agent(concat!("Nerve/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::limited(5))
+        // Pin the validated public address for this host so a rebind between
+        // our check and reqwest's own resolution can't redirect the connect.
+        .resolve(&host, pinned)
         .build()
         .context("failed to build HTTP client")?;
 
@@ -130,10 +184,19 @@ pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
         anyhow::bail!("HTTP {} when fetching {url}", response.status());
     }
 
-    let html = response
-        .text()
-        .await
-        .with_context(|| format!("failed to read response body from {url}"))?;
+    // Read the body with a hard size cap instead of `.text()` (which is
+    // unbounded and could OOM the process).
+    let mut stream = response.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("error reading body from {url}"))?;
+        if buf.len() + chunk.len() > MAX_BODY_BYTES {
+            buf.extend_from_slice(&chunk[..MAX_BODY_BYTES - buf.len()]);
+            break;
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    let html = String::from_utf8_lossy(&buf).into_owned();
 
     let title = extract_title(&html);
     let text = strip_html(&html);
@@ -159,30 +222,31 @@ pub async fn scrape_urls(urls: &[&str]) -> Vec<anyhow::Result<ScrapeResult>> {
 
 /// Extract the content of the first `<title>` tag, if present.
 ///
-/// Uses char-index arithmetic so that positions are valid for both
-/// the lowercased and original strings, even when multibyte UTF-8
-/// characters appear before the `<title>` tag.
+/// Matches tag names case-insensitively using ASCII case folding, which is
+/// 1:1 per character. That keeps the lowercased view exactly aligned with the
+/// original `chars`, so indexing the original can never go out of bounds —
+/// unlike `str::to_lowercase()`, which can change the character count (e.g.
+/// `İ` → two chars) and produce a panicking index mismatch.
 fn extract_title(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    let chars: Vec<char> = html.chars().collect();
+    let lower: Vec<char> = chars.iter().map(|c| c.to_ascii_lowercase()).collect();
 
-    let start_byte = lower.find("<title")?;
-    // Convert byte offset to char offset so we can safely index both strings.
-    let start_char = lower[..start_byte].chars().count();
+    let open: Vec<char> = "<title".chars().collect();
+    let start = lower
+        .windows(open.len())
+        .position(|w| w == open.as_slice())?;
 
-    let chars_orig: Vec<char> = html.chars().collect();
-    let chars_lower: Vec<char> = lower.chars().collect();
+    // Closing `>` of the opening tag.
+    let tag_end = lower[start..].iter().position(|&c| c == '>')? + start + 1;
 
-    // Find the closing `>` of the opening tag.
-    let tag_end_char = chars_lower[start_char..].iter().position(|&c| c == '>')? + start_char + 1;
-
-    // Find `</title` in the lowercased chars after the opening tag.
+    // `</title` after the opening tag.
     let closing: Vec<char> = "</title".chars().collect();
-    let end_char = chars_lower[tag_end_char..]
+    let end = lower[tag_end..]
         .windows(closing.len())
         .position(|w| w == closing.as_slice())?
-        + tag_end_char;
+        + tag_end;
 
-    let raw: String = chars_orig[tag_end_char..end_char].iter().collect();
+    let raw: String = chars[tag_end..end].iter().collect();
     let decoded = decode_html_entities(&raw);
     let trimmed = decoded.trim().to_string();
     if trimmed.is_empty() {
@@ -504,6 +568,15 @@ mod tests {
     }
 
     #[test]
+    fn blocks_trailing_dot_hostnames() {
+        // FQDN trailing-dot form resolves to the same internal name but used
+        // to slip past the string checks.
+        assert!(is_private_url("http://localhost./secret"));
+        assert!(is_private_url("http://foo.internal./"));
+        assert!(is_private_url("http://bar.local./"));
+    }
+
+    #[test]
     fn blocks_loopback_ip() {
         assert!(is_private_url("http://127.0.0.1/secret"));
     }
@@ -735,6 +808,18 @@ mod tests {
     fn extract_title_with_emoji_before_title() {
         let html = "<html><!-- 🎉🎊 --><head><title>Emoji OK</title></head></html>";
         assert_eq!(extract_title(html), Some("Emoji OK".into()));
+    }
+
+    #[test]
+    fn extract_title_case_expanding_unicode_no_panic() {
+        // Regression: `to_lowercase()` expands `İ` (U+0130) to TWO chars, so
+        // lowercased-string indices used to overflow the original `chars` and
+        // panic. ASCII case folding keeps them aligned.
+        let html = "İİİİ<TITLE>Title Here</TITLE>İİİ";
+        assert_eq!(extract_title(html), Some("Title Here".into()));
+        // Kelvin sign (U+212A) lowercases to ASCII 'k' (shorter) — also fine.
+        let html2 = "\u{212A}\u{212A}<title>K Test</title>";
+        assert_eq!(extract_title(html2), Some("K Test".into()));
     }
 
     #[test]
