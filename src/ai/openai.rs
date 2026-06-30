@@ -204,21 +204,26 @@ impl OpenAiProvider {
     /// sensitive information from provider error responses.
     async fn extract_api_error(response: reqwest::Response) -> String {
         let status = response.status();
-        match response.text().await {
-            Ok(body) => {
-                if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body)
-                    && let Some(detail) = err.error
-                    && let Some(msg) = detail.message
-                {
-                    return format!("API error ({status}): {msg}");
-                }
-                // Truncate raw bodies to avoid leaking sensitive details.
-                let preview: String = body.chars().take(200).collect();
-                let suffix = if body.len() > 200 { "..." } else { "" };
-                format!("API error ({status}): {preview}{suffix}")
-            }
-            Err(_) => format!("API error ({status})"),
+        // Bound the error-body read: in the streaming path the client has no
+        // overall timeout, so a server that returns an error status then
+        // stalls the body would otherwise hang the call (and the UI, since
+        // this runs inside retry_async).
+        let body =
+            match tokio::time::timeout(std::time::Duration::from_secs(15), response.text()).await {
+                Ok(Ok(body)) => body,
+                Ok(Err(_)) => return format!("API error ({status})"),
+                Err(_) => return format!("API error ({status}): error body read timed out"),
+            };
+        if let Ok(err) = serde_json::from_str::<ApiErrorResponse>(&body)
+            && let Some(detail) = err.error
+            && let Some(msg) = detail.message
+        {
+            return format!("API error ({status}): {msg}");
         }
+        // Truncate raw bodies to avoid leaking sensitive details.
+        let preview: String = body.chars().take(200).collect();
+        let suffix = if body.len() > 200 { "..." } else { "" };
+        format!("API error ({status}): {preview}{suffix}")
     }
 }
 
@@ -273,9 +278,15 @@ impl AiProvider for OpenAiProvider {
                 e
             })?;
 
-            // Read the byte stream and parse SSE lines.
+            // Read the byte stream and parse SSE lines. We buffer RAW BYTES
+            // and decode only complete (newline-terminated) lines: decoding
+            // each network chunk independently would turn a multi-byte UTF-8
+            // sequence split across a chunk boundary into mojibake.
             let mut byte_stream = response.bytes_stream();
-            let mut buffer = String::new();
+            let mut buffer: Vec<u8> = Vec::new();
+            // Cap the length of a single un-terminated line so a server that
+            // never sends a newline can't grow the buffer until OOM.
+            const MAX_LINE_BYTES: usize = 1024 * 1024;
             // Per-chunk read timeout: if the server accepts the connection
             // then stalls (dead proxy, broken upstream, flaky network), the
             // stream would otherwise block forever. 60s is generous for
@@ -304,14 +315,17 @@ impl AiProvider for OpenAiProvider {
                     }
                 };
 
-                // Append raw bytes to buffer (UTF-8).
-                let text = String::from_utf8_lossy(&chunk);
-                buffer.push_str(&text);
+                // Append raw bytes; decode per complete line below.
+                buffer.extend_from_slice(&chunk);
 
                 // Process complete lines from the buffer.
-                while let Some(newline_pos) = buffer.find('\n') {
-                    let line = buffer[..newline_pos].trim_end_matches('\r').to_string();
-                    buffer = buffer[newline_pos + 1..].to_string();
+                while let Some(newline_pos) = buffer.iter().position(|&b| b == b'\n') {
+                    // Drain through the newline (cheaper than reallocating the
+                    // tail each time); decode the line bytes, which are now
+                    // guaranteed to hold whole UTF-8 sequences.
+                    let line_bytes: Vec<u8> = buffer.drain(..=newline_pos).collect();
+                    let decoded = String::from_utf8_lossy(&line_bytes);
+                    let line = decoded.trim_end_matches('\n').trim_end_matches('\r');
 
                     // Skip empty lines and SSE comments (lines starting with ':')
                     if line.is_empty() || line.starts_with(':') {
@@ -360,6 +374,15 @@ impl AiProvider for OpenAiProvider {
                             tracing::warn!("failed to parse SSE chunk: {e} — data: {data}");
                         }
                     }
+                }
+
+                // After draining complete lines, whatever remains is a single
+                // un-terminated line. If it exceeds the cap, the server is
+                // misbehaving (or hostile) — abort rather than buffer forever.
+                if buffer.len() > MAX_LINE_BYTES {
+                    let msg = "SSE line exceeded 1 MB without a newline — aborting".to_string();
+                    let _ = tx.send(StreamEvent::Error(msg.clone()));
+                    return Err(anyhow!(msg));
                 }
             }
 
