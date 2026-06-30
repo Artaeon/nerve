@@ -155,6 +155,14 @@ pub struct App {
 
     // -- viewport --
     pub scroll_offset: u16,
+    /// Max scroll offset from the last chat render, used to clamp `scroll_up`
+    /// so the offset can't run away past the top of the content. Interior
+    /// mutability because the renderer only has `&App`.
+    pub last_max_scroll: std::cell::Cell<u16>,
+    /// Vertical scroll offset for the Help overlay (Ctrl+H / `?`).
+    pub help_scroll: u16,
+    /// Max help scroll offset from the last Help render, for clamping.
+    pub help_max_scroll: std::cell::Cell<u16>,
 
     // -- model selection --
     pub selected_model: String,
@@ -329,6 +337,9 @@ impl App {
             stream_abort: None,
 
             scroll_offset: 0,
+            last_max_scroll: std::cell::Cell::new(0),
+            help_scroll: 0,
+            help_max_scroll: std::cell::Cell::new(0),
 
             selected_model: "sonnet".into(),
             available_models: vec![
@@ -634,7 +645,11 @@ impl App {
     // ── Scrolling ───────────────────────────────────────────────────────
 
     pub fn scroll_up(&mut self) {
-        self.scroll_offset = self.scroll_offset.saturating_add(3);
+        // Clamp to the last rendered maximum so the offset can't run away
+        // past the top (which would otherwise make scroll_down feel "stuck"
+        // for several presses and show a nonsense ↑N counter).
+        let max = self.last_max_scroll.get();
+        self.scroll_offset = self.scroll_offset.saturating_add(3).min(max);
     }
 
     pub fn scroll_down(&mut self) {
@@ -648,8 +663,8 @@ impl App {
 
     /// Jump to the oldest message (top of conversation).
     pub fn scroll_to_top(&mut self) {
-        // Set a very large offset — rendering will clamp it naturally.
-        self.scroll_offset = u16::MAX / 2;
+        // Clamp to the last rendered maximum (set during chat render).
+        self.scroll_offset = self.last_max_scroll.get();
     }
 
     // ── Branching ───────────────────────────────────────────────────────
@@ -1261,11 +1276,27 @@ mod tests {
     #[test]
     fn scroll_up_increments_by_three() {
         let mut app = App::new();
+        // scroll_up is bounded by the last rendered max; simulate a tall
+        // conversation so there is room to scroll.
+        app.last_max_scroll.set(1000);
         assert_eq!(app.scroll_offset, 0);
         app.scroll_up();
         assert_eq!(app.scroll_offset, 3);
         app.scroll_up();
         assert_eq!(app.scroll_offset, 6);
+    }
+
+    #[test]
+    fn scroll_up_clamps_to_rendered_max() {
+        // Regression: scroll_offset used to grow unbounded past the top,
+        // making scroll_down feel stuck. It must now clamp to the last
+        // rendered maximum.
+        let mut app = App::new();
+        app.last_max_scroll.set(5);
+        for _ in 0..20 {
+            app.scroll_up();
+        }
+        assert_eq!(app.scroll_offset, 5, "must not exceed the rendered max");
     }
 
     #[test]
@@ -1297,9 +1328,11 @@ mod tests {
     #[test]
     fn scroll_up_near_max_u16() {
         let mut app = App::new();
+        // Even with a huge rendered max, scroll_up uses saturating_add and
+        // then clamps, so it never overflows.
+        app.last_max_scroll.set(u16::MAX);
         app.scroll_offset = u16::MAX - 1;
         app.scroll_up();
-        // saturating_add should clamp at u16::MAX
         assert_eq!(app.scroll_offset, u16::MAX);
     }
 
@@ -1588,11 +1621,12 @@ mod tests {
     #[test]
     fn scroll_offset_large_values() {
         let mut app = App::new();
-        // Scroll up many times
+        app.last_max_scroll.set(3000);
+        // Scroll up many times — bounded by the rendered max.
         for _ in 0..1000 {
             app.scroll_up();
         }
-        assert_eq!(app.scroll_offset, 3000); // 1000 * 3
+        assert_eq!(app.scroll_offset, 3000); // 1000 * 3, capped at max
 
         // Scroll down many times
         for _ in 0..1000 {
@@ -2096,15 +2130,18 @@ mod tests {
     }
 
     #[test]
-    fn scroll_to_top_sets_large_offset() {
+    fn scroll_to_top_jumps_to_rendered_max() {
         let mut app = App::new();
+        app.last_max_scroll.set(420);
         app.scroll_to_top();
-        assert!(app.scroll_offset > 10_000);
+        // Jumps exactly to the top of the content, not an arbitrary huge value.
+        assert_eq!(app.scroll_offset, 420);
     }
 
     #[test]
     fn scroll_up_then_to_bottom() {
         let mut app = App::new();
+        app.last_max_scroll.set(1000);
         app.scroll_up();
         app.scroll_up();
         assert!(app.scroll_offset > 0);

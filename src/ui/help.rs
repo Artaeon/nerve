@@ -7,9 +7,11 @@ use ratatui::{
 };
 
 use super::utils::centered_rect_fixed;
+use crate::app::App;
 
-/// Render the help overlay as a centred floating popup.
-pub fn render_help(frame: &mut Frame) {
+/// Render the help overlay as a centred floating popup. Scrolls vertically
+/// (j/k, arrows, PageUp/PageDown) when the content is taller than the popup.
+pub fn render_help(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ── Popup dimensions ─────────────────────────────────────────────
@@ -76,7 +78,7 @@ pub fn render_help(frame: &mut Frame) {
         ("i", "Enter insert mode"),
         ("Esc", "Return to normal mode"),
         ("Enter", "Send message"),
-        ("Shift+Enter", "New line in input"),
+        ("Shift+Enter / Alt+Enter", "New line in input"),
         ("Ctrl+W", "Delete word before cursor"),
         ("Ctrl+V", "Paste from clipboard"),
         ("q (Normal mode)", "Quit"),
@@ -84,7 +86,6 @@ pub fn render_help(frame: &mut Frame) {
         // -- Clipboard & Copy --
         ("", "Clipboard"),
         ("Ctrl+Y", "Copy last AI response"),
-        ("Ctrl+Shift+V", "Clipboard manager"),
         ("1-9 (Normal mode)", "Copy message #N from bottom"),
         ("", ""),
         // -- Copy commands --
@@ -137,13 +138,23 @@ pub fn render_help(frame: &mut Frame) {
     // Footer
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Press Esc to close",
+        "j/k or \u{2191}\u{2193}: scroll   \u{2022}   Esc: close",
         Style::default().fg(Color::DarkGray),
     )));
 
+    // ── Scroll handling ──────────────────────────────────────────────
+    // Inner height = popup height minus the top/bottom borders (2) and the
+    // top/bottom padding (2).
+    let inner_height = popup_height.saturating_sub(4);
+    let total_lines = lines.len() as u16;
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    app.help_max_scroll.set(max_scroll);
+    let scroll = app.help_scroll.min(max_scroll);
+
     let paragraph = Paragraph::new(lines)
         .block(block)
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
 
     frame.render_widget(paragraph, popup_area);
 }

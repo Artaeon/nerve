@@ -257,7 +257,7 @@ fn handle_status(app: &mut App) -> bool {
 
     let agent_status = if app.agent_mode { "ON" } else { "OFF" };
     let mut status = format!(
-        "Nerve v0.1.0\n{}\n\
+        "Nerve v{}\n{}\n\
          Provider:   {}\n\
          Model:      {}\n\
          Code Mode:  {}\n\
@@ -272,6 +272,7 @@ fn handle_status(app: &mut App) -> bool {
          \n\
          Config:  {}\n\
          History: {}",
+        env!("CARGO_PKG_VERSION"),
         "=".repeat(25),
         app.selected_provider,
         app.selected_model,

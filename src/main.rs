@@ -1099,6 +1099,7 @@ async fn handle_key_event(
                     app.mode = AppMode::Normal;
                 } else {
                     app.mode = AppMode::Help;
+                    app.help_scroll = 0;
                 }
                 return Ok(());
             }
@@ -1121,9 +1122,24 @@ async fn handle_key_event(
         AppMode::ModelSelect => handle_model_select(app, key),
         AppMode::ProviderSelect => handle_provider_select(app, key),
         AppMode::Help => {
-            // Any key besides Ctrl+H (handled above) closes help.
-            if code == KeyCode::Esc {
-                app.mode = AppMode::Normal;
+            // Scroll the help content; Esc (or q) closes.
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') => app.mode = AppMode::Normal,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    app.help_scroll = (app.help_scroll + 1).min(app.help_max_scroll.get());
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    app.help_scroll = app.help_scroll.saturating_sub(1);
+                }
+                KeyCode::Char('g') | KeyCode::Home => app.help_scroll = 0,
+                KeyCode::Char('G') | KeyCode::End => {
+                    app.help_scroll = app.help_max_scroll.get();
+                }
+                KeyCode::PageDown => {
+                    app.help_scroll = (app.help_scroll + 10).min(app.help_max_scroll.get());
+                }
+                KeyCode::PageUp => app.help_scroll = app.help_scroll.saturating_sub(10),
+                _ => {}
             }
         }
         AppMode::Settings => handle_settings(app, key),
@@ -1248,6 +1264,13 @@ async fn handle_normal_mode(
 
             match code {
                 KeyCode::Char('i') => app.input_mode = InputMode::Insert,
+                KeyCode::Char('?') => {
+                    // `?` opens help (advertised in the status bar/hints) —
+                    // a reliable alternative to Ctrl+H, which some terminals
+                    // swallow as Backspace.
+                    app.mode = AppMode::Help;
+                    app.help_scroll = 0;
+                }
                 KeyCode::Char('/') => {
                     // Switch to Insert mode and insert '/' so the user can
                     // type slash commands directly (e.g. /help, /agent on).
@@ -1578,6 +1601,7 @@ fn handle_command_bar(app: &mut App, key: crossterm::event::KeyEvent) {
                         }
                         "@action:help" => {
                             app.mode = AppMode::Help;
+                            app.help_scroll = 0;
                             app.set_status("Opened help");
                             return;
                         }

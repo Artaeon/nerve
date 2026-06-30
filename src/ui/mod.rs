@@ -145,7 +145,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // ── Overlays (drawn on top of the base layout) ──────────────────
     match app.mode {
         AppMode::CommandBar => command_bar::render_command_bar(frame, app),
-        AppMode::Help => help::render_help(frame),
+        AppMode::Help => help::render_help(frame, app),
         AppMode::ModelSelect => render_model_selector(frame, app),
         AppMode::ProviderSelect => render_provider_selector(frame, app),
         AppMode::ClipboardManager => clipboard_manager::render_clipboard_manager(frame, app),
@@ -227,7 +227,10 @@ fn render_top_bar(frame: &mut Frame, app: &App, area: Rect) {
                 .bg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" v0.1", Style::default().fg(theme.dim)),
+        Span::styled(
+            concat!(" v", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(theme.dim),
+        ),
     ];
     if !badge_spans.is_empty() {
         brand_spans.push(Span::raw(" "));
@@ -525,7 +528,7 @@ fn render_input(frame: &mut Frame, app: &App, area: Rect) {
     // Hint text for bottom border of the input box.
     let hint = match app.input_mode {
         InputMode::Insert => {
-            "Enter: send | Shift+Enter: newline | Esc: normal | /: commands | @: files"
+            "Enter: send | Alt+Enter: newline | Esc: normal | /: commands | @: files"
         }
         InputMode::Normal => "i: insert | /: commands | ?: help | Ctrl+K: Nerve Bar | q: quit",
     };
@@ -851,7 +854,7 @@ fn format_number(n: usize) -> String {
 /// Returns (display_name, provider_group, context) for a known model ID.
 pub fn model_info(id: &str) -> (&str, &str, &str) {
     match id {
-        "opus" => ("Claude Opus 4.6", "Claude Code", "1M ctx"),
+        "opus" => ("Claude Opus 4.8", "Claude Code", "1M ctx"),
         "sonnet" => ("Claude Sonnet 4.6", "Claude Code", "200K ctx"),
         "haiku" => ("Claude Haiku 4.5", "Claude Code", "200K ctx"),
         "gpt-4o" => ("GPT-4o", "OpenAI", "128K ctx"),
