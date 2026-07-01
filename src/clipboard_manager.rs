@@ -191,8 +191,17 @@ fn make_preview(content: &str) -> String {
 
 /// Return the path to `~/.local/share/nerve/clipboard.json`.
 fn data_file_path() -> anyhow::Result<std::path::PathBuf> {
-    let data_dir = dirs::data_dir().context("could not determine XDG data directory")?;
-    Ok(data_dir.join("nerve").join("clipboard.json"))
+    // In test builds, isolate to a per-process temp file so the save/load
+    // round-trip test never writes into the developer's real nerve data dir.
+    #[cfg(test)]
+    let path =
+        std::env::temp_dir().join(format!("nerve_test_clipboard_{}.json", std::process::id()));
+    #[cfg(not(test))]
+    let path = dirs::data_dir()
+        .context("could not determine XDG data directory")?
+        .join("nerve")
+        .join("clipboard.json");
+    Ok(path)
 }
 
 #[cfg(test)]
