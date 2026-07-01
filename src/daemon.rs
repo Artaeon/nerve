@@ -3,10 +3,22 @@ use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 
-const SOCKET_PATH: &str = "/tmp/nerve.sock";
-
+/// Path to the daemon's control socket.
+///
+/// Never a fixed path in a world-writable shared root like `/tmp`: any local
+/// user could then connect and send `__SHUTDOWN__`. We prefer the per-user XDG
+/// runtime dir (mode 0700, per-user) and fall back to a per-user subdirectory
+/// of the temp dir (created 0700 in `start_daemon`).
 pub fn socket_path() -> PathBuf {
-    PathBuf::from(SOCKET_PATH)
+    if let Some(rt) = dirs::runtime_dir() {
+        return rt.join("nerve.sock");
+    }
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_else(|_| "default".into());
+    std::env::temp_dir()
+        .join(format!("nerve-{user}"))
+        .join("nerve.sock")
 }
 
 #[allow(dead_code)]
@@ -15,13 +27,31 @@ pub fn is_daemon_running() -> bool {
 }
 
 pub async fn start_daemon() -> anyhow::Result<()> {
-    // Remove stale socket
     let path = socket_path();
+
+    // Ensure the parent directory exists and is private to this user (0700).
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    // Remove stale socket
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
 
     let listener = UnixListener::bind(&path)?;
+    // Restrict the socket to the owning user so no other local account can send
+    // control commands like __SHUTDOWN__.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
     println!("Nerve daemon listening on {}", path.display());
 
     loop {
@@ -111,9 +141,14 @@ mod tests {
     }
 
     #[test]
-    fn socket_path_is_in_tmp_directory() {
+    fn socket_is_not_in_world_shared_root() {
+        // The socket must live in a dedicated per-user directory, never
+        // directly in a world-writable shared root like /tmp, so another local
+        // user can't send it control commands.
         let path = socket_path();
-        assert!(path.starts_with("/tmp"), "socket should be in /tmp");
+        let parent = path.parent().expect("socket has a parent dir");
+        assert_ne!(parent, std::path::Path::new("/tmp"));
+        assert_ne!(parent, std::env::temp_dir());
     }
 
     #[test]

@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Padding, Paragraph},
 };
 
-use super::utils::{centered_rect_fixed, display_width, truncate_with_ellipsis};
+use super::utils::{centered_rect_fixed, display_width, sanitize_display, truncate_with_ellipsis};
 use crate::app::App;
 
 /// Render the clipboard manager overlay.
@@ -15,10 +15,11 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ── Dimensions: centered popup ~70% wide, ~60% tall ─────────────
-    let popup_width = (area.width * 70 / 100)
+    // u32 intermediate: `area.width * 70` overflows u16 past ~936 columns.
+    let popup_width = ((area.width as u32 * 70 / 100) as u16)
         .max(40)
         .min(area.width.saturating_sub(4));
-    let popup_height = (area.height * 60 / 100)
+    let popup_height = ((area.height as u32 * 60 / 100) as u16)
         .max(10)
         .min(area.height.saturating_sub(4));
     let popup_area = centered_rect_fixed(popup_width, popup_height, area);
@@ -120,7 +121,9 @@ pub fn render_clipboard_manager(frame: &mut Frame, app: &App) {
             // Layout: "{badge} {preview}  {time}"
             let overhead = display_width(badge) + 1 + 2 + display_width(&time_str);
             let max_preview = content_width.saturating_sub(overhead);
-            let preview = truncate_with_ellipsis(&entry.preview, max_preview);
+            // Strip ANSI/control escapes from clipboard content before rendering
+            // so a copied hostile string can't manipulate the terminal.
+            let preview = truncate_with_ellipsis(&sanitize_display(&entry.preview), max_preview);
 
             let line = Line::from(vec![
                 Span::styled(badge, badge_style),
