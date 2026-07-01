@@ -116,47 +116,48 @@ impl Plugin {
             .env("NERVE_ARGS", args)
             .spawn()?;
 
+        // Drain stdout/stderr on dedicated threads WHILE the child runs.
+        // Reading only after exit deadlocks any plugin that writes more than the
+        // OS pipe buffer (~64KB): it blocks on write, never exits, hits the
+        // timeout, and its output is lost. The readers keep draining past the
+        // cap so the child never blocks, but only retain MAX_OUTPUT_BYTES.
+        const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+        // Close our handle to the child's stdin so a plugin that reads stdin
+        // sees EOF instead of hanging forever.
+        drop(child.stdin.take());
+
+        fn drain(
+            pipe: Option<impl std::io::Read + Send + 'static>,
+        ) -> Option<std::thread::JoinHandle<Vec<u8>>> {
+            pipe.map(|mut s| {
+                std::thread::spawn(move || {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 8192];
+                    loop {
+                        match s.read(&mut chunk) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if buf.len() < MAX_OUTPUT_BYTES {
+                                    let take = n.min(MAX_OUTPUT_BYTES - buf.len());
+                                    buf.extend_from_slice(&chunk[..take]);
+                                }
+                            }
+                        }
+                    }
+                    buf
+                })
+            })
+        }
+
+        let stdout_reader = drain(child.stdout.take());
+        let stderr_reader = drain(child.stderr.take());
+
         // Timeout: plugins get 30 seconds max.
         let timeout = std::time::Duration::from_secs(30);
         let start = std::time::Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(status)) => {
-                    let stdout_buf = child
-                        .stdout
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = Vec::new();
-                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                            buf
-                        })
-                        .unwrap_or_default();
-                    let stderr_buf = child
-                        .stderr
-                        .take()
-                        .map(|mut s| {
-                            let mut buf = Vec::new();
-                            std::io::Read::read_to_end(&mut s, &mut buf).ok();
-                            buf
-                        })
-                        .unwrap_or_default();
-                    let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
-                    let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
-
-                    if !status.success() {
-                        anyhow::bail!(
-                            "Plugin '{}' failed (exit {}): {}",
-                            self.manifest.name,
-                            status,
-                            stderr
-                        );
-                    }
-                    // Strip control characters and ANSI escape sequences
-                    // from output to prevent terminal manipulation.
-                    let output = if stdout.is_empty() { stderr } else { stdout };
-                    let sanitized = strip_ansi_and_control(&output);
-                    return Ok(sanitized);
-                }
+                Ok(Some(status)) => break status,
                 Ok(None) => {
                     if start.elapsed() >= timeout {
                         let _ = child.kill();
@@ -173,7 +174,31 @@ impl Plugin {
                     anyhow::bail!("Error running plugin '{}': {e}", self.manifest.name);
                 }
             }
+        };
+
+        // The child has exited (or was killed); the pipes are now closed, so the
+        // reader threads will hit EOF and return their buffered output.
+        let stdout_buf = stdout_reader
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
+        let stderr_buf = stderr_reader
+            .and_then(|h| h.join().ok())
+            .unwrap_or_default();
+        let stdout = String::from_utf8_lossy(&stdout_buf).to_string();
+        let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
+
+        if !status.success() {
+            anyhow::bail!(
+                "Plugin '{}' failed (exit {}): {}",
+                self.manifest.name,
+                status,
+                stderr
+            );
         }
+        // Strip control characters and ANSI escape sequences from output to
+        // prevent terminal manipulation.
+        let output = if stdout.is_empty() { stderr } else { stdout };
+        Ok(strip_ansi_and_control(&output))
     }
 }
 

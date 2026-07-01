@@ -64,18 +64,22 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             Some(pos) => (&cmd[..pos], cmd[pos..].trim()),
             None => (cmd, ""),
         };
-        for plugin in &app.plugins {
-            if plugin.manifest.command == plugin_cmd {
-                match plugin.execute(plugin_args, "") {
-                    Ok(output) => {
-                        app.add_assistant_message(output);
-                    }
-                    Err(e) => {
-                        app.set_status(format!("Plugin error: {e}"));
-                    }
-                }
-                return true;
+        if let Some(plugin) = app
+            .plugins
+            .iter()
+            .find(|p| p.manifest.command == plugin_cmd)
+        {
+            // Plugin::execute spawns a subprocess and blocks for up to 30s.
+            // Running it inline would freeze the entire event loop (UI + input)
+            // for that whole time, so offload it to a blocking thread.
+            let plugin = plugin.clone();
+            let args = plugin_args.to_string();
+            match tokio::task::spawn_blocking(move || plugin.execute(&args, "")).await {
+                Ok(Ok(output)) => app.add_assistant_message(output),
+                Ok(Err(e)) => app.set_status(format!("Plugin error: {e}")),
+                Err(e) => app.set_status(format!("Plugin task failed: {e}")),
             }
+            return true;
         }
     }
 

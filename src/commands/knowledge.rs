@@ -485,13 +485,18 @@ async fn run_automation(
             let messages = vec![ChatMessage::user(&prompt)];
             let (tx, rx) = mpsc::unbounded_channel();
 
+            // Abort any prior in-flight stream and store this task's abort
+            // handle, so Esc / new-conversation can cancel it. Without the
+            // handle the streaming task is uncancellable and leaks (mirrors
+            // send_to_ai_from_history).
+            app.cancel_active_stream();
             app.stream_rx = Some(rx);
             app.is_streaming = true;
             app.streaming_response.clear();
             app.streaming_start = Some(std::time::Instant::now());
 
             let provider = Arc::clone(provider);
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 if let Err(e) = provider
                     .chat_stream(&messages, &model_owned, tx.clone())
                     .await
@@ -499,6 +504,7 @@ async fn run_automation(
                     let _ = tx.send(StreamEvent::Error(e.to_string()));
                 }
             });
+            app.stream_abort = Some(handle.abort_handle());
 
             let elapsed = start.elapsed().as_millis();
             app.set_status(format!(

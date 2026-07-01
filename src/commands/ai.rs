@@ -26,7 +26,7 @@ pub async fn handle(app: &mut App, trimmed: &str) -> bool {
     }
 
     if crate::shell::matches_command(trimmed, "/ollama") {
-        return handle_ollama(app, trimmed);
+        return handle_ollama(app, trimmed).await;
     }
 
     if crate::shell::matches_command(trimmed, "/agent") {
@@ -176,7 +176,7 @@ fn handle_provider_switch(app: &mut App, rest: &str) -> bool {
     true
 }
 
-fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
+async fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
     let ollama_rest = trimmed.strip_prefix("/ollama").unwrap_or("").trim();
     let ollama_args: Vec<String> = ollama_rest
         .split_whitespace()
@@ -221,9 +221,12 @@ fn handle_ollama(app: &mut App, trimmed: &str) -> bool {
         }
         "remove" | "rm" => {
             if let Some(model_name) = ollama_args.get(1) {
-                match std::process::Command::new("ollama")
+                // Async subprocess so a slow/hung `ollama rm` doesn't freeze the
+                // event loop the way std::process::Command::output() would.
+                match tokio::process::Command::new("ollama")
                     .args(["rm", model_name])
                     .output()
+                    .await
                 {
                     Ok(output) if output.status.success() => {
                         app.set_status(format!("Removed {model_name}"));
