@@ -8,6 +8,13 @@ use crate::clipboard_manager::ClipboardSource;
 use crate::config::Config;
 use crate::{clipboard, commands, files, knowledge};
 
+/// Prefix of the synthetic "user" message that carries aggregated tool-run
+/// output back to the model. Single source of truth so the post-tool rebuild
+/// can reliably distinguish this dump from a real user request (and so
+/// compaction can recognise it). Used by `run_agent_tools_task` and the
+/// `AgentToolsComplete` handler in main.rs.
+pub(crate) const TOOL_RESULTS_PREFIX: &str = "I executed your tool calls. Here are the results:";
+
 // ─── Smart title generation ────────────────────────────────────────────────
 
 /// Generate a concise, meaningful title from the user's first message.
@@ -128,7 +135,8 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
         app.current_conversation_mut().messages.retain(|(r, c)| {
             !(r == "system"
                 && (c.contains("You have access to the following tools")
-                    || c.contains("You are Nerve, an AI coding assistant")))
+                    || c.contains("You are Nerve, an AI coding assistant")
+                    || c.starts_with("Current project context:")))
         });
         app.current_conversation_mut()
             .messages
@@ -548,7 +556,7 @@ pub(crate) async fn run_agent_tools_task(
     // ReadOnly roles may call everything else.
     const WRITE_TOOLS: &[&str] = &["write_file", "edit_file", "run_command", "create_directory"];
 
-    let mut results = String::from("I executed your tool calls. Here are the results:\n\n");
+    let mut results = format!("{TOOL_RESULTS_PREFIX}\n\n");
     let mut all_success = true;
     let total = tool_calls.len();
 
@@ -718,38 +726,21 @@ pub(crate) async fn regenerate_response(
         return;
     }
 
-    // Apply context management based on provider (halved in Efficient mode)
-    let base_limit = crate::agent::context::ContextManager::effective_limit(
-        &app.selected_provider,
-        app.context_limit_override,
-    );
-    let limit = if app.active_mode == app::NerveMode::Efficient {
-        base_limit / 2
-    } else {
-        base_limit
-    };
-    let cm = crate::agent::context::ContextManager::new(limit);
-
-    let conversation_messages = if app.agent_mode {
-        cm.compact_tool_results(&app.current_conversation().messages)
-    } else {
-        app.current_conversation().messages.clone()
-    };
-    let final_messages = cm.compact_messages(&conversation_messages);
-
-    // Rebuild messages and re-send (expand @file references in user messages)
-    let messages: Vec<ChatMessage> = final_messages
+    // Rebuild the outgoing messages via the shared helper so a regenerated
+    // response carries the SAME context as the original send — mode/pipeline
+    // system prompt, KB results, auto-context, and @file expansion (on the
+    // newest turn only) — and records last_sent_tokens for accurate usage.
+    // Previously this duplicated only compaction + @file (and re-expanded every
+    // historical @file), silently dropping the persona and knowledge base.
+    let search_query = app
+        .current_conversation()
+        .messages
         .iter()
-        .filter_map(|(role, content)| match role.as_str() {
-            "user" => {
-                let expanded = files::expand_file_references(content);
-                Some(ChatMessage::user(expanded))
-            }
-            "assistant" => Some(ChatMessage::assistant(content)),
-            "system" => Some(ChatMessage::system(content)),
-            _ => None,
-        })
-        .collect();
+        .rev()
+        .find(|(role, _)| role == "user")
+        .map(|(_, c)| c.clone())
+        .unwrap_or_default();
+    let messages = build_context_messages(app, &search_query);
 
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();

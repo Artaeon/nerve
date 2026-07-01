@@ -508,13 +508,6 @@ async fn event_loop(
                     StreamEvent::Done => {
                         // Grab the content before finish_streaming moves it.
                         let response_content = app.streaming_response.clone();
-                        // Snapshot the auto-agent flag BEFORE finish_streaming,
-                        // which clears it (app.rs). The cleanup block below
-                        // needs to know whether this turn was an auto-agent
-                        // activation so it can revert agent mode when no tools
-                        // ran — otherwise agent mode would leak into the next
-                        // message.
-                        let was_auto_agent_active = app.auto_agent_active;
                         app.finish_streaming();
                         app.scroll_offset = 0; // Auto-scroll to show the new response
 
@@ -654,12 +647,13 @@ async fn event_loop(
                             }
                         }
 
-                        // Auto-agent cleanup: if agent mode was activated by
-                        // intent detection and no tools were actually invoked,
-                        // turn it back off so the next message starts clean.
-                        // Uses the snapshot taken before finish_streaming,
-                        // which already reset app.auto_agent_active.
-                        app.revert_auto_agent_activation(was_auto_agent_active);
+                        // Auto-agent cleanup: once the whole request has
+                        // finished (this Done carries no outstanding tool
+                        // calls, so agent_iterations is back to 0), revert an
+                        // intent-detected activation so the next plain message
+                        // starts clean. Correctly handles turns that DID run
+                        // tools (the flag now survives the tool loop).
+                        app.revert_auto_agent_activation();
 
                         // Pipeline: the current role's turn is complete
                         // (no tool calls outstanding — those take the
@@ -672,7 +666,6 @@ async fn event_loop(
                         break;
                     }
                     StreamEvent::Error(e) => {
-                        let was_auto_agent_active = app.auto_agent_active;
                         app.streaming_response.push_str(&format!("\n[Error: {e}]"));
                         app.finish_streaming();
                         // If a stream errors mid-workflow, tear the pipeline
@@ -683,9 +676,11 @@ async fn event_loop(
                             app.agent_mode = false;
                             app.set_status("Workflow stopped (stream error)");
                         } else {
-                            // A stream error must also revert a silent auto-agent
-                            // activation, or it leaks into the next message.
-                            app.revert_auto_agent_activation(was_auto_agent_active);
+                            // A stream error ends the request; force the tool
+                            // loop closed so a silent auto-agent activation is
+                            // reverted even if the error hit mid-loop.
+                            app.agent_iterations = 0;
+                            app.revert_auto_agent_activation();
                         }
                         finished = true;
                         break;
@@ -711,7 +706,8 @@ async fn event_loop(
                             .iter()
                             .rev()
                             .find(|(role, content)| {
-                                role == "user" && !content.starts_with("Tool execution results:")
+                                role == "user"
+                                    && !content.starts_with(conversation::TOOL_RESULTS_PREFIX)
                             })
                             .map(|(_, c)| c.clone())
                             .unwrap_or_default();

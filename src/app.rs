@@ -506,6 +506,7 @@ impl App {
         self.stream_rx = None;
         self.streaming_start = None;
         self.agent_iterations = 0;
+        self.auto_agent_active = false;
         // A new conversation abandons any in-progress multi-agent
         // workflow; the next message should start clean.
         self.pipeline = None;
@@ -525,20 +526,26 @@ impl App {
         }
     }
 
-    /// Revert an automatic (intent-detected) agent-mode activation when the turn
-    /// produced no tool calls, so the activation and its injected system prompts
-    /// don't leak into the next message. `was_active` must be the value of
-    /// `auto_agent_active` snapshotted *before* `finish_streaming` cleared it.
+    /// Revert an automatic (intent-detected) agent-mode activation once the
+    /// whole request — including any tool loop — has finished, so the activation
+    /// and its injected system prompts don't leak into the next message.
     ///
-    /// Called from every turn-terminating path — normal completion, Esc-cancel,
-    /// and stream error — so a silently-activated agent turn can never linger.
-    pub fn revert_auto_agent_activation(&mut self, was_active: bool) {
-        if was_active && self.agent_iterations == 0 {
+    /// Uses the persistent `auto_agent_active` flag (which now survives the tool
+    /// loop) and only fires when no tool iterations are outstanding
+    /// (`agent_iterations == 0`), i.e. the request is truly done. Called from
+    /// every turn-terminating path — normal completion, Esc-cancel, and stream
+    /// error. Strips ALL system context injected on activation: the tools/Nerve
+    /// prompts AND the "Current project context:" map (which previously lingered
+    /// and accumulated across activations).
+    pub fn revert_auto_agent_activation(&mut self) {
+        if self.auto_agent_active && self.agent_iterations == 0 {
+            self.auto_agent_active = false;
             self.agent_mode = false;
             self.current_conversation_mut().messages.retain(|(r, c)| {
                 !(r == "system"
                     && (c.contains("You have access to the following tools")
-                        || c.contains("You are Nerve, an AI coding assistant")))
+                        || c.contains("You are Nerve, an AI coding assistant")
+                        || c.starts_with("Current project context:")))
             });
         }
     }
@@ -590,9 +597,11 @@ impl App {
         self.is_streaming = false;
         self.stream_rx = None;
         self.streaming_start = None;
-        // Reset auto-agent flag so it doesn't leak into the next message
-        // (e.g. if the user cancelled streaming with Esc).
-        self.auto_agent_active = false;
+        // NOTE: auto_agent_active is deliberately NOT cleared here. It must
+        // survive the agent tool loop (finish_streaming runs on every Done,
+        // including mid-loop) so the activation can be reverted only once the
+        // whole request completes. revert_auto_agent_activation() is the sole
+        // consumer/clearer; new_conversation() also resets it.
     }
 
     // ── Cursor / editing ────────────────────────────────────────────────
@@ -993,6 +1002,59 @@ mod tests {
         app.finish_streaming();
 
         assert!(app.stream_rx.is_none());
+    }
+
+    #[test]
+    fn finish_streaming_preserves_auto_agent_flag_across_tool_loop() {
+        // finish_streaming runs on EVERY Done (incl. mid-tool-loop); it must NOT
+        // clear auto_agent_active, or the activation can't be reverted once the
+        // whole request (with tools) completes.
+        let mut app = App::new();
+        app.auto_agent_active = true;
+        app.streaming_response = "partial".into();
+        app.finish_streaming();
+        assert!(
+            app.auto_agent_active,
+            "auto_agent_active must survive finish_streaming"
+        );
+    }
+
+    #[test]
+    fn revert_auto_agent_strips_all_injected_context_when_done() {
+        let mut app = App::new();
+        app.agent_mode = true;
+        app.auto_agent_active = true;
+        app.agent_iterations = 0; // request finished (no tools outstanding)
+        app.current_conversation_mut().messages = vec![
+            (
+                "system".into(),
+                "You are Nerve, an AI coding assistant. Tools: ...".into(),
+            ),
+            ("system".into(), "Current project context:\n\n<map>".into()),
+            ("user".into(), "fix the bug".into()),
+            ("assistant".into(), "done".into()),
+        ];
+        app.revert_auto_agent_activation();
+        assert!(!app.agent_mode);
+        assert!(!app.auto_agent_active);
+        let systems = app
+            .current_conversation()
+            .messages
+            .iter()
+            .filter(|(r, _)| r == "system")
+            .count();
+        assert_eq!(systems, 0, "all injected system context must be stripped");
+    }
+
+    #[test]
+    fn revert_auto_agent_is_noop_while_tools_outstanding() {
+        let mut app = App::new();
+        app.agent_mode = true;
+        app.auto_agent_active = true;
+        app.agent_iterations = 2; // mid tool loop — request not finished
+        app.revert_auto_agent_activation();
+        assert!(app.agent_mode, "must not revert mid-tool-loop");
+        assert!(app.auto_agent_active);
     }
 
     // ── move_cursor_left() ──────────────────────────────────────────────

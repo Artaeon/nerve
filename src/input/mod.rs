@@ -38,7 +38,6 @@ pub(crate) async fn handle_key_event(
     // workflow so the next user turn doesn't accidentally resume as a
     // pipeline role.
     if app.is_streaming && code == KeyCode::Esc {
-        let was_auto_agent_active = app.auto_agent_active;
         app.finish_streaming();
         let was_in_pipeline = app.pipeline.take().is_some();
         let msg = if was_in_pipeline {
@@ -47,8 +46,10 @@ pub(crate) async fn handle_key_event(
             app.agent_mode = false;
             "Workflow cancelled"
         } else {
-            // Cancelling a silently-activated auto-agent turn must revert it too.
-            app.revert_auto_agent_activation(was_auto_agent_active);
+            // Cancelling ends the request; force the tool loop closed so a
+            // silently-activated auto-agent turn is reverted even mid-loop.
+            app.agent_iterations = 0;
+            app.revert_auto_agent_activation();
             "Generation stopped"
         };
         app.set_status(msg);
