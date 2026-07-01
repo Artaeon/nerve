@@ -4,6 +4,7 @@ pub mod clipboard_manager;
 pub mod command_bar;
 pub mod help;
 pub mod history_browser;
+pub mod markdown;
 pub mod prompt_picker;
 pub mod search;
 pub mod settings;
