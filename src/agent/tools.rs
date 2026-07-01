@@ -802,13 +802,11 @@ fn execute_create_dir(call: &ToolCall) -> ToolResult {
         Err(e) => return e,
     };
 
-    // Security: block creating directories in protected system paths
-    if crate::shell::is_protected_path(path) {
-        return ToolResult {
-            tool: "create_directory".into(),
-            success: false,
-            output: format!("Blocked: cannot create directory in protected path: {path}"),
-        };
+    // Security: use the same path validation as write_file/edit_file, which
+    // also normalizes `..` traversal and canonicalizes symlinks. A raw
+    // is_protected_path check alone is bypassed by e.g. `/tmp/x/../../etc`.
+    if let Err(blocked) = validate_write_path(path, "create_directory") {
+        return blocked;
     }
 
     match std::fs::create_dir_all(path) {
@@ -2012,6 +2010,38 @@ Also here is some json: {"tool": "read_file", "path": "b.rs"}"#;
         reset_tool_counter();
         let result = validate_write_path("/etc/evil.conf", "write_file");
         assert!(result.is_err(), "Should block direct /etc/ writes");
+    }
+
+    #[test]
+    fn create_dir_blocks_protected_path() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "create_directory".into(),
+            args: [("path".to_string(), "/etc/nerve_evil".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let result = execute_create_dir(&call);
+        assert!(
+            !result.success,
+            "create_directory into /etc must be blocked"
+        );
+    }
+
+    #[test]
+    fn create_dir_blocks_dotdot_traversal() {
+        reset_tool_counter();
+        let call = ToolCall {
+            tool: "create_directory".into(),
+            args: [("path".to_string(), "/tmp/x/../../etc/evil".to_string())]
+                .into_iter()
+                .collect(),
+        };
+        let result = execute_create_dir(&call);
+        assert!(
+            !result.success,
+            "create_directory `..` traversal to /etc must be blocked"
+        );
     }
 
     // ── parse_tool_calls edge cases ─────────────────────────────────

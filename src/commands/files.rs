@@ -131,6 +131,22 @@ fn handle_template(app: &mut App, trimmed: &str) -> bool {
     let template_name = args[0];
     let project_name = args.get(1).copied().unwrap_or(template_name).to_string();
 
+    // A project name must be a single, safe directory component. Without this
+    // an absolute path or one containing `/`, `\`, or `..` would let /template
+    // write files outside the workspace — potentially into system paths.
+    if project_name.is_empty()
+        || std::path::Path::new(&project_name).is_absolute()
+        || project_name.contains('/')
+        || project_name.contains('\\')
+        || project_name == ".."
+        || project_name == "."
+    {
+        app.report_error(format!(
+            "Invalid project name '{project_name}': use a single directory name (no '/', '\\', or '..')."
+        ));
+        return true;
+    }
+
     match scaffold::get_template(template_name) {
         Some(mut template) => {
             for file in &mut template.files {
