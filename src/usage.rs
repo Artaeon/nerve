@@ -321,4 +321,103 @@ mod tests {
         stats.estimated_cost_usd = 12.456;
         assert_eq!(stats.format_cost(), "$12.46"); // Rounded to 2 decimals
     }
+
+    // ── Exact per-model cost values ─────────────────────────────────────
+
+    #[test]
+    fn cost_exact_values_per_model() {
+        // (provider, model, expected $ per 1M tokens)
+        let cases: &[(&str, &str, f64)] = &[
+            ("openai", "gpt-4o", 7.50),
+            ("openai", "gpt-4o-mini", 0.30),
+            ("openai", "gpt-3.5-turbo", 5.00), // openai default estimate
+            ("openrouter", "anthropic/claude-3.5-sonnet", 6.00),
+            ("openrouter", "openai/gpt-4o", 7.50),
+            ("openrouter", "meta-llama/llama-3-70b", 0.20),
+            ("openrouter", "mistralai/mixtral", 3.00), // openrouter default
+            ("claude_code", "sonnet", 0.0),
+            ("claude", "opus", 0.0),
+            ("ollama", "llama3", 0.0),
+            ("copilot", "gpt-4", 0.0),
+        ];
+        for (provider, model, expected) in cases {
+            let got = cost_per_million_tokens(provider, model);
+            assert!(
+                (got - expected).abs() < f64::EPSILON,
+                "cost({provider}, {model}) = {got}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn record_request_exact_cost_for_gpt4o() {
+        let mut stats = UsageStats::new();
+        // 1M total tokens at $7.50/1M => exactly $7.50.
+        stats.record_request(500_000, 500_000, "openai", "gpt-4o");
+        assert!((stats.estimated_cost_usd - 7.50).abs() < 1e-9);
+    }
+
+    // ── would_exceed boundary: strictly-greater, so equal is allowed ────
+
+    #[test]
+    fn would_exceed_cost_exactly_at_limit_is_allowed() {
+        // estimated_cost_usd + new_cost == max_cost_usd. The check is
+        // `> max_cost_usd` (strict), so being exactly at the limit is OK.
+        let limit = SpendingLimit {
+            max_cost_usd: 7.50,
+            enabled: true,
+            ..Default::default()
+        };
+        let mut stats = UsageStats::new();
+        stats.estimated_cost_usd = 0.0;
+        // 1M gpt-4o tokens cost exactly $7.50 == the limit.
+        let result = limit.would_exceed(&stats, 1_000_000, "openai", "gpt-4o");
+        assert!(result.is_none(), "exactly-at-limit must be allowed");
+    }
+
+    #[test]
+    fn would_exceed_cost_just_over_limit_blocks() {
+        let limit = SpendingLimit {
+            max_cost_usd: 7.50,
+            enabled: true,
+            ..Default::default()
+        };
+        let mut stats = UsageStats::new();
+        stats.estimated_cost_usd = 0.01; // pushes the projected total over
+        let msg = limit.would_exceed(&stats, 1_000_000, "openai", "gpt-4o");
+        assert!(msg.is_some());
+        assert!(msg.unwrap().contains("Spending limit reached"));
+    }
+
+    #[test]
+    fn would_exceed_token_limit_gating_message() {
+        let limit = SpendingLimit {
+            max_cost_usd: 1000.0,
+            max_requests: None,
+            max_tokens: Some(1000),
+            enabled: true,
+        };
+        let mut stats = UsageStats::new();
+        // 1000 total tokens hits the >= 1000 token gate (free provider so cost
+        // and request gates stay open).
+        stats.record_request(700, 300, "ollama", "llama3");
+        let msg = limit
+            .would_exceed(&stats, 0, "ollama", "llama3")
+            .expect("token gate should trip");
+        assert!(msg.contains("Token limit reached"));
+        assert!(msg.contains("1000/1000"));
+    }
+
+    #[test]
+    fn would_exceed_token_limit_just_under_is_allowed() {
+        let limit = SpendingLimit {
+            max_cost_usd: 1000.0,
+            max_requests: None,
+            max_tokens: Some(1000),
+            enabled: true,
+        };
+        let mut stats = UsageStats::new();
+        stats.record_request(600, 399, "ollama", "llama3"); // 999 < 1000
+        assert!(limit.would_exceed(&stats, 0, "ollama", "llama3").is_none());
+    }
 }

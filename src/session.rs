@@ -237,6 +237,44 @@ mod tests {
         assert!(dir.path().join("last_session.json").exists());
     }
 
+    #[test]
+    fn prune_named_sessions_removes_oldest_keeps_newest() {
+        use std::time::{Duration, SystemTime};
+
+        let dir = tempfile::tempdir().unwrap();
+        let base = SystemTime::now();
+        // Create 5 named sessions with strictly increasing mtimes.
+        // file 0 is the oldest, file 4 is the newest.
+        for i in 0..5u64 {
+            let path = dir.path().join(format!("session_{i:08x}.json"));
+            std::fs::write(&path, "{}").unwrap();
+            let mtime = base + Duration::from_secs(i * 100);
+            let f = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+            f.set_modified(mtime).unwrap();
+        }
+
+        prune_named_sessions(dir.path(), 2);
+
+        let survives = |i: u64| dir.path().join(format!("session_{i:08x}.json")).exists();
+        // The two newest (3, 4) are kept; the three oldest (0, 1, 2) are gone.
+        assert!(!survives(0), "oldest should be pruned");
+        assert!(!survives(1));
+        assert!(!survives(2));
+        assert!(survives(3), "second-newest should be kept");
+        assert!(survives(4), "newest should be kept");
+    }
+
+    #[test]
+    fn prune_named_sessions_noop_when_under_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 0..3u64 {
+            std::fs::write(dir.path().join(format!("session_{i:08x}.json")), "{}").unwrap();
+        }
+        prune_named_sessions(dir.path(), 10);
+        let count = std::fs::read_dir(dir.path()).unwrap().count();
+        assert_eq!(count, 3, "nothing removed when count <= keep");
+    }
+
     /// Tests that read/write `last_session.json` must hold this lock to avoid
     /// racing each other (Rust runs tests in parallel by default).
     static FS_LOCK: Mutex<()> = Mutex::new(());
