@@ -62,6 +62,16 @@ pub fn gather_context(message: &str, workspace_root: Option<&Path>) -> GatheredC
             root.join(path_str)
         };
 
+        // Never auto-read files that may contain secrets. The read_file/read_lines
+        // tools enforce this same guard (shell::is_sensitive_file); auto-context
+        // must not become a bypass that silently exfiltrates credentials to the
+        // remote LLM provider. Check both the referenced token and the resolved path.
+        if crate::shell::is_sensitive_file(path_str)
+            || crate::shell::is_sensitive_file(&full_path.to_string_lossy())
+        {
+            continue;
+        }
+
         if !full_path.is_file() {
             continue;
         }
@@ -313,5 +323,36 @@ mod tests {
     fn gather_context_no_file_references() {
         let ctx = gather_context("explain how TCP works", None);
         assert!(ctx.files.is_empty());
+    }
+
+    #[test]
+    fn gather_context_skips_sensitive_files() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("nerve_autoctx_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Write a fake secret file and a benign one.
+        let mut env = std::fs::File::create(dir.join(".env")).unwrap();
+        writeln!(env, "SECRET_API_KEY=supersecret").unwrap();
+        let mut ok = std::fs::File::create(dir.join("notes.md")).unwrap();
+        writeln!(ok, "hello world").unwrap();
+
+        // Referencing the secret file by relative path must NOT read it.
+        let ctx = gather_context("please check .env/config and notes.md", Some(&dir));
+        for f in &ctx.files {
+            assert!(
+                !f.path.contains(".env") && !f.content.contains("supersecret"),
+                "auto-context leaked a sensitive file: {}",
+                f.path
+            );
+        }
+
+        // Direct reference to a sensitive path yields no snippet for it.
+        let ctx2 = gather_context("look at .ssh/id_rsa", Some(&dir));
+        assert!(
+            ctx2.files.iter().all(|f| !f.path.contains("id_rsa")),
+            "auto-context must not read id_rsa"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
