@@ -180,6 +180,33 @@ mod tests {
     }
 
     #[test]
+    fn split_title_long_no_dash_truncates_title() {
+        // > 60 chars and no " - ": the title becomes the first ~40 chars with
+        // an ellipsis, while the snippet keeps the full text.
+        let text = "This is a very long topic description without any dash separators at all";
+        assert!(text.len() > 60);
+        let (title, snippet) = split_title_snippet(text);
+        assert!(
+            title.ends_with("..."),
+            "title should be ellipsised: {title}"
+        );
+        // First 40 ASCII chars plus the 3-char ellipsis.
+        assert_eq!(title, format!("{}...", &text[..40]));
+        assert_eq!(title.len(), 43);
+        assert_eq!(snippet, text, "snippet keeps the full text");
+    }
+
+    #[test]
+    fn split_title_long_no_dash_multibyte_no_panic() {
+        // A long multi-byte string must not panic when the 40-char boundary
+        // lands between byte positions.
+        let text = "café ".repeat(20); // well over 60 bytes, multi-byte 'é'
+        let (title, snippet) = split_title_snippet(&text);
+        assert!(title.ends_with("..."));
+        assert_eq!(snippet, text);
+    }
+
+    #[test]
     fn format_empty_results() {
         let output = format_search_results("test", &[]);
         assert!(output.contains("No results"));

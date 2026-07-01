@@ -296,6 +296,30 @@ mod tests {
         assert!(leftovers.is_empty(), "temp file should be renamed away");
     }
 
+    #[test]
+    fn atomic_write_rename_failure_leaves_no_temp_file() {
+        // Make the destination an existing directory. Renaming a file onto a
+        // directory fails, exercising the error branch which must clean up the
+        // temp file it wrote.
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        let result = atomic_write(&dest, "payload");
+        assert!(result.is_err(), "rename onto a directory should fail");
+
+        // No `.tmp.<pid>` files must remain in the parent directory.
+        let leftovers: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains("tmp."))
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temp file must be removed on rename failure, found: {leftovers:?}"
+        );
+    }
+
     // ── resolve_path ───────────────────────────────────────────────────
 
     #[test]

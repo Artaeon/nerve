@@ -297,4 +297,40 @@ mod tests {
         // Empty filter shows all prompts in the selected category
         assert!(count > 0);
     }
+
+    #[test]
+    fn visible_prompt_count_out_of_bounds_category_is_zero() {
+        let mut app = App::new();
+        // A category index past the end resolves to an empty category name,
+        // which no prompt matches.
+        app.prompt_category_index = 9999;
+        app.prompt_filter.clear();
+        assert_eq!(visible_prompt_count(&app), 0);
+    }
+
+    #[test]
+    fn visible_prompt_count_matches_on_description() {
+        let mut app = App::new();
+        let cats = prompts::categories();
+        let writing_idx = cats
+            .iter()
+            .position(|c| c == "Writing")
+            .expect("Writing category should exist");
+        app.prompt_category_index = writing_idx;
+
+        app.prompt_filter.clear();
+        let total = visible_prompt_count(&app);
+        assert!(total > 0);
+
+        // "supporting" appears in the Expand prompt's *description* but not its
+        // name, so a positive count proves descriptions are part of the filter
+        // haystack.
+        app.prompt_filter = "supporting".into();
+        let filtered = visible_prompt_count(&app);
+        assert!(
+            filtered >= 1,
+            "a description-only word should still match at least one prompt"
+        );
+        assert!(filtered <= total, "filtering never grows the set");
+    }
 }

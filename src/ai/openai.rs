@@ -876,4 +876,70 @@ mod tests {
         assert_eq!(preview.len(), 200);
         assert!(long_body.len() > 200);
     }
+
+    // ── base_url normalisation ──────────────────────────────────────────
+
+    #[test]
+    fn new_trims_trailing_slash_from_base_url() {
+        let p = OpenAiProvider::new("k".into(), "http://x/v1/".into(), "T".into());
+        assert_eq!(p.base_url, "http://x/v1");
+    }
+
+    #[test]
+    fn new_trims_multiple_trailing_slashes() {
+        let p = OpenAiProvider::new("k".into(), "http://x/v1///".into(), "T".into());
+        assert_eq!(p.base_url, "http://x/v1");
+    }
+
+    #[test]
+    fn new_leaves_url_without_trailing_slash_untouched() {
+        let p = OpenAiProvider::new("k".into(), "http://x/v1".into(), "T".into());
+        assert_eq!(p.base_url, "http://x/v1");
+    }
+
+    // ── max_tokens default & override ───────────────────────────────────
+
+    #[test]
+    fn new_defaults_max_tokens_to_4096() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into());
+        assert_eq!(p.max_tokens, Some(4096));
+    }
+
+    #[test]
+    fn with_max_tokens_overrides_default() {
+        let p = OpenAiProvider::new("k".into(), "http://x".into(), "T".into()).with_max_tokens(256);
+        assert_eq!(p.max_tokens, Some(256));
+    }
+
+    // ── max_tokens serialization (None omission) ────────────────────────
+
+    #[test]
+    fn serialized_request_omits_none_max_tokens() {
+        let req = ChatCompletionRequest {
+            model: "test",
+            messages: &[],
+            stream: false,
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(!json.contains("max_tokens"));
+    }
+
+    #[test]
+    fn serialized_request_includes_set_max_tokens() {
+        let req = ChatCompletionRequest {
+            model: "test",
+            messages: &[],
+            stream: true,
+            max_tokens: Some(4096),
+            temperature: None,
+            top_p: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"max_tokens\":4096"));
+        // stream is not skippable and should always be present.
+        assert!(json.contains("\"stream\":true"));
+    }
 }

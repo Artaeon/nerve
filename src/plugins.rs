@@ -550,4 +550,70 @@ enabled = true
         // ESC N → consumed, "b" passes through, ESC O → consumed, "c" passes through
         assert_eq!(strip_ansi_and_control(input), "abc");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_uses_stderr_when_stdout_empty() {
+        // When a successful plugin writes nothing to stdout, execute() falls
+        // back to using stderr as the output.
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("run.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'diagnostic on stderr' 1>&2\nexit 0\n",
+        )
+        .unwrap();
+
+        let plugin = Plugin {
+            manifest: PluginManifest {
+                name: "StderrPlugin".into(),
+                description: "test".into(),
+                version: "1.0.0".into(),
+                author: None,
+                command: "stderrtest".into(),
+                run: "run.sh".into(),
+                enabled: true,
+            },
+            dir: dir.path().to_path_buf(),
+        };
+
+        let out = plugin.execute("", "").expect("plugin should succeed");
+        assert!(
+            out.contains("diagnostic on stderr"),
+            "stderr should be used as output when stdout is empty, got: {out:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execute_prefers_stdout_over_stderr() {
+        // When stdout is non-empty it takes precedence over stderr.
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("run.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\necho 'the real output'\necho 'noise' 1>&2\nexit 0\n",
+        )
+        .unwrap();
+
+        let plugin = Plugin {
+            manifest: PluginManifest {
+                name: "StdoutPlugin".into(),
+                description: "test".into(),
+                version: "1.0.0".into(),
+                author: None,
+                command: "stdouttest".into(),
+                run: "run.sh".into(),
+                enabled: true,
+            },
+            dir: dir.path().to_path_buf(),
+        };
+
+        let out = plugin.execute("", "").expect("plugin should succeed");
+        assert!(out.contains("the real output"));
+        assert!(
+            !out.contains("noise"),
+            "stderr must be ignored when stdout present"
+        );
+    }
 }

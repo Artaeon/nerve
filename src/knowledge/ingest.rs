@@ -317,6 +317,23 @@ mod tests {
     }
 
     #[test]
+    fn non_utf8_content_skipped() {
+        // A supported extension (.txt) but binary/non-UTF-8 bytes: read_to_string
+        // fails, so the file is skipped rather than ingested.
+        let tmp = tempfile::Builder::new()
+            .suffix(".txt")
+            .tempfile()
+            .expect("create tmp");
+        // Invalid UTF-8 byte sequence.
+        std::fs::write(tmp.path(), [0xff, 0xfe, 0x00, 0x80, 0x81]).expect("write");
+        let mut kb = KnowledgeBase::new("test".into());
+        let result = ingest_file(tmp.path(), &mut kb).expect("ingest should not error");
+        assert_eq!(result, 0, "non-UTF-8 file must be skipped");
+        assert!(kb.documents.is_empty());
+        assert!(kb.chunks.is_empty());
+    }
+
+    #[test]
     fn ingest_directory_skips_hidden() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("visible.txt"), "hello").unwrap();

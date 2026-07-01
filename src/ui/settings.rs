@@ -710,4 +710,48 @@ mod tests {
     fn git_item_count_is_positive() {
         assert!(git_item_count() > 0);
     }
+
+    // ── mask_api_key ────────────────────────────────────────────────────
+
+    #[test]
+    fn mask_api_key_none_and_empty() {
+        assert_eq!(mask_api_key(None), "(not set)");
+        assert_eq!(mask_api_key(Some("")), "(not set)");
+    }
+
+    #[test]
+    fn mask_api_key_short_keys_are_fully_masked() {
+        // 1..=8 bytes: not empty but <= 8 => generic mask.
+        assert_eq!(mask_api_key(Some("a")), "****");
+        assert_eq!(mask_api_key(Some("shortkey")), "****"); // exactly 8, boundary
+    }
+
+    #[test]
+    fn mask_api_key_long_keys_show_prefix_and_suffix() {
+        // 9+ bytes: first 4 and last 4 shown.
+        assert_eq!(mask_api_key(Some("sk-abcdef")), "sk-a...cdef");
+        assert_eq!(mask_api_key(Some("sk-1234567890abcdef")), "sk-1...cdef");
+    }
+
+    #[test]
+    fn mask_api_key_aligned_multibyte_does_not_panic() {
+        // Four-byte emoji chars land exactly on the byte-4 / len-4 boundaries,
+        // so slicing is valid and masking succeeds.
+        let masked = mask_api_key(Some("\u{1f511}\u{1f511}\u{1f511}"));
+        assert!(masked.contains("..."));
+    }
+
+    #[test]
+    fn mask_api_key_misaligned_multibyte_panics_known_bug() {
+        // KNOWN BUG: mask_api_key slices by byte index (&k[..4] / &k[len-4..])
+        // without checking char boundaries. A >8-byte key whose byte-4 boundary
+        // falls inside a multi-byte char panics. This test documents the current
+        // (buggy) behaviour; it is NOT a desired outcome.
+        let key = "aa\u{20ac}aaaaaa"; // '€' is 3 bytes at positions 2..5
+        let result = std::panic::catch_unwind(|| mask_api_key(Some(key)));
+        assert!(
+            result.is_err(),
+            "documents that misaligned multibyte keys currently panic"
+        );
+    }
 }

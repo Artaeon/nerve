@@ -356,4 +356,34 @@ mod tests {
             "no-match={score} should be less than exact={exact_score}"
         );
     }
+
+    #[test]
+    fn score_is_additive_per_query_word() {
+        // Each query word contributes independently: the same word listed twice
+        // yields exactly double the score of listing it once (both the +10
+        // exact-match and the fuzzy component scale linearly, and the
+        // length-normaliser is identical for a fixed chunk).
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let single = calculate_score("rust programming", &["rust"], &matcher);
+        let double = calculate_score("rust programming", &["rust", "rust"], &matcher);
+        assert!(single > 0.0);
+        assert!(
+            (double - 2.0 * single).abs() < 1e-9,
+            "double={double} should be exactly 2x single={single}"
+        );
+    }
+
+    #[test]
+    fn score_counts_word_presence_not_frequency_in_chunk() {
+        // The exact-match bonus is presence-based (chunk.contains), not a count.
+        // Comparing chunks of the SAME word length isolates this: repeating the
+        // keyword within the chunk does not compound the +10 exact bonus.
+        let matcher = fuzzy_matcher::skim::SkimMatcherV2::default();
+        let once = calculate_score("rust alpha beta gamma", &["rust"], &matcher);
+        let twice = calculate_score("rust rust beta gamma", &["rust"], &matcher);
+        // Both contain "rust" and have 4 words, so the exact bonus (10) and the
+        // normaliser match; any difference comes only from fuzzy scoring, which
+        // stays small relative to the 10-point exact bonus.
+        assert!((once - twice).abs() < 5.0, "once={once} twice={twice}");
+    }
 }

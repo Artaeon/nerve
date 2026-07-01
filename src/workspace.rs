@@ -1240,4 +1240,71 @@ pub enum Mode {
         let symbols = extract_symbols_from_content("", "rs");
         assert!(symbols.is_empty());
     }
+
+    // ── C# / C++ / Zig detection ────────────────────────────────────────
+
+    #[test]
+    fn detect_csharp_project_via_csproj() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("App.csproj"), "<Project></Project>").unwrap();
+        let ws = detect_workspace_at(dir.path()).expect("should detect C#");
+        assert_eq!(ws.project_type, ProjectType::CSharp);
+        assert!(ws.tech_stack.iter().any(|t| t == "C#"));
+    }
+
+    #[test]
+    fn detect_csharp_project_via_sln() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Solution.sln"), "Microsoft Visual Studio").unwrap();
+        let ws = detect_workspace_at(dir.path()).expect("should detect C# via sln");
+        assert_eq!(ws.project_type, ProjectType::CSharp);
+    }
+
+    #[test]
+    fn detect_cpp_project_via_cmake() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CMakeLists.txt"), "project(demo)").unwrap();
+        let ws = detect_workspace_at(dir.path()).expect("should detect C/C++");
+        assert_eq!(ws.project_type, ProjectType::Cpp);
+        assert!(ws.tech_stack.iter().any(|t| t == "C/C++"));
+        assert!(ws.key_files.iter().any(|f| f == "CMakeLists.txt"));
+    }
+
+    #[test]
+    fn detect_cpp_project_via_makefile() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("Makefile"), "all:\n\techo hi").unwrap();
+        let ws = detect_workspace_at(dir.path()).expect("should detect C/C++ via Makefile");
+        assert_eq!(ws.project_type, ProjectType::Cpp);
+    }
+
+    #[test]
+    fn detect_zig_project() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("build.zig"), "pub fn build() void {}").unwrap();
+        let ws = detect_workspace_at(dir.path()).expect("should detect Zig");
+        assert_eq!(ws.project_type, ProjectType::Zig);
+        assert!(ws.tech_stack.iter().any(|t| t == "Zig"));
+    }
+
+    // ── Walk-up to a parent workspace root ──────────────────────────────
+
+    #[test]
+    fn detect_walks_up_to_parent_root() {
+        let root = tempfile::tempdir().unwrap();
+        // Marker lives at the root, but detection starts from a nested subdir.
+        fs::write(
+            root.path().join("Cargo.toml"),
+            "[package]\nname = \"parentapp\"\nversion = \"0.1.0\"",
+        )
+        .unwrap();
+        let nested = root.path().join("src").join("deep").join("module");
+        fs::create_dir_all(&nested).unwrap();
+
+        let ws = detect_workspace_at(&nested).expect("should walk up to parent");
+        assert_eq!(ws.project_type, ProjectType::Rust);
+        assert_eq!(ws.name, "parentapp");
+        // The detected root is the ancestor holding Cargo.toml, not the subdir.
+        assert_eq!(ws.root, root.path());
+    }
 }

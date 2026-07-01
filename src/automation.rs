@@ -408,6 +408,25 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_filename_empty_is_empty() {
+        assert_eq!(sanitize_filename(""), "");
+    }
+
+    #[test]
+    fn sanitize_filename_all_symbols_become_dashes() {
+        // Every non-alphanumeric (and non - / _) char maps to a dash.
+        assert_eq!(sanitize_filename("!@#$%"), "-----");
+        assert_eq!(sanitize_filename("   "), "---");
+        // Underscores and dashes are preserved; symbols around them become dashes.
+        assert_eq!(sanitize_filename("a b_c"), "a-b_c");
+    }
+
+    #[test]
+    fn sanitize_filename_lowercases() {
+        assert_eq!(sanitize_filename("MixedCASE"), "mixedcase");
+    }
+
+    #[test]
     fn automation_serialization_roundtrip() {
         let mut a = Automation::new("Test Ser".to_string(), "Serialization test".to_string());
         a.add_step(AutomationStep {
