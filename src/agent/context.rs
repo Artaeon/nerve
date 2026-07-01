@@ -19,8 +19,13 @@ pub fn smart_truncate(text: &str, max_chars: usize) -> String {
     // Take up to `max_chars` characters; the result is always valid UTF-8.
     let truncated: String = text.chars().take(max_chars).collect();
 
-    // Try to break at the last sentence-ending punctuation within the range.
-    if let Some(pos) = truncated.rfind(['.', '!', '?']) {
+    // Try to break at the last sentence-ending punctuation within the range —
+    // but only if doing so retains a reasonable fraction of the window.
+    // Otherwise a '.' inside a filename / version / abbreviation near the start
+    // (e.g. "see config.rs line 5 ...") would throw away most of the message.
+    if let Some(pos) = truncated.rfind(['.', '!', '?'])
+        && pos >= truncated.len() / 2
+    {
         // Include the punctuation character itself.
         return truncated[..=pos].to_string();
     }
@@ -129,29 +134,32 @@ impl ContextManager {
             return messages.to_vec();
         }
 
-        // Keep system messages, last 4 messages, and summarize the rest
         let mut result = Vec::new();
 
-        // Collect system messages
-        for (role, content) in messages {
-            if role == "system" {
-                result.push((role.clone(), content.clone()));
-            }
+        // Preserve only the LEADING system prompt(s) verbatim at the front —
+        // the base instructions that shape the whole conversation. System
+        // messages injected mid-conversation (File:/Command:/directory-listing
+        // context) must NOT be hoisted ahead of earlier turns, and must NOT
+        // escape compaction; they stay in chronological position and are
+        // summarized like any other old message.
+        let lead_system = messages.iter().take_while(|(r, _)| r == "system").count();
+        for m in &messages[..lead_system] {
+            result.push(m.clone());
         }
 
-        // Non-system messages
-        let non_system: Vec<&(String, String)> =
-            messages.iter().filter(|(r, _)| r != "system").collect();
+        // Remaining messages in chronological order (may include mid-stream
+        // system context, which is now treated like any other turn).
+        let rest: Vec<&(String, String)> = messages[lead_system..].iter().collect();
 
-        if non_system.len() <= 4 {
-            result.extend(non_system.iter().map(|(r, c)| (r.clone(), c.clone())));
+        if rest.len() <= 4 {
+            result.extend(rest.iter().map(|(r, c)| (r.clone(), c.clone())));
             return result;
         }
 
         // Summarize older messages
         let keep_count = 4;
-        let to_summarize = &non_system[..non_system.len() - keep_count];
-        let to_keep = &non_system[non_system.len() - keep_count..];
+        let to_summarize = &rest[..rest.len() - keep_count];
+        let to_keep = &rest[rest.len() - keep_count..];
 
         // Create summary
         let summary = Self::summarize_messages(to_summarize);
@@ -200,6 +208,12 @@ impl ContextManager {
                         let brief = smart_truncate(content, 150);
                         let _ = writeln!(summary, "  AI: {brief}");
                     }
+                }
+                "system" => {
+                    // Mid-stream injected context (File:/Command:/directory
+                    // listings). Summarize it too so it isn't silently lost.
+                    let brief = smart_truncate(content, 150);
+                    let _ = writeln!(summary, "- Context: {brief}");
                 }
                 _ => {}
             }
@@ -290,6 +304,99 @@ mod tests {
         let text = "no period here just words going on and on and on and on";
         let result = smart_truncate(text, 20);
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn smart_truncate_ignores_early_period_in_filename() {
+        // A '.' inside a filename near the START must not throw away most of
+        // the message — it should keep going to a word boundary instead.
+        let text = "config.rs contains the bug we should fix immediately today please";
+        let result = smart_truncate(text, 44);
+        assert_ne!(result, "config.", "must not truncate at the filename dot");
+        assert!(result.starts_with("config.rs contains"));
+        assert!(
+            result.len() > 20,
+            "should retain a reasonable fraction, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn compact_does_not_hoist_or_drop_midstream_system() {
+        let cm = ContextManager::new(50); // low limit forces summarization
+        let mut messages = vec![("system".into(), "BASE PROMPT".into())];
+        for i in 0..8 {
+            messages.push((
+                "user".into(),
+                format!("question {i} with enough text to add up"),
+            ));
+            messages.push((
+                "assistant".into(),
+                format!("answer {i} with enough text to add up"),
+            ));
+        }
+        // Inject mid-stream system context early so it lands in the summarized
+        // (old) region, after at least one non-system message.
+        messages.insert(3, ("system".into(), "File: MIDMARKER.rs context".into()));
+
+        let compacted = cm.compact_messages(&messages);
+
+        // Leading base prompt stays first, verbatim.
+        assert_eq!(compacted[0].0, "system");
+        assert!(compacted[0].1.contains("BASE PROMPT"));
+        // The mid-stream marker must NOT survive as its own verbatim system
+        // message (the old behavior hoisted every system message to the front,
+        // exempt from compaction). It was in the old region, so it's folded
+        // into the summary instead.
+        assert!(
+            !compacted
+                .iter()
+                .any(|(r, c)| r == "system" && c == "File: MIDMARKER.rs context"),
+            "mid-stream system context survived compaction verbatim (hoisted): {compacted:?}"
+        );
+        // ...but it must not be dropped either — the summary references it.
+        let summarized = compacted
+            .iter()
+            .any(|(_, c)| c.contains("Previous conversation summary") && c.contains("MIDMARKER"));
+        assert!(
+            summarized,
+            "mid-stream system context was lost during compaction"
+        );
+    }
+
+    #[test]
+    fn compact_keeps_recent_midstream_system_in_chronological_tail() {
+        let cm = ContextManager::new(50);
+        let mut messages = vec![("system".into(), "BASE PROMPT".into())];
+        for i in 0..8 {
+            messages.push((
+                "user".into(),
+                format!("question {i} with enough text to add up"),
+            ));
+            messages.push((
+                "assistant".into(),
+                format!("answer {i} with enough text to add up"),
+            ));
+        }
+        // Recent mid-stream system context (within the kept tail).
+        messages.push(("system".into(), "File: RECENTMARKER.rs context".into()));
+        messages.push(("user".into(), "the latest question here".into()));
+
+        let compacted = cm.compact_messages(&messages);
+        assert!(compacted[0].1.contains("BASE PROMPT"));
+        let pos = compacted
+            .iter()
+            .position(|(_, c)| c.contains("RECENTMARKER"))
+            .expect("recent mid-stream context must be preserved");
+        // Preserved in the recent tail, NOT hoisted to the front (old behavior
+        // would have moved it to index 1 right after the base prompt).
+        assert!(
+            pos > 1,
+            "recent mid-stream system context was hoisted to front"
+        );
+        assert!(
+            pos >= compacted.len().saturating_sub(4),
+            "recent mid-stream context should stay in the chronological tail"
+        );
     }
 
     #[test]
