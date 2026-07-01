@@ -225,6 +225,31 @@ impl OpenAiProvider {
         let suffix = if body.len() > 200 { "..." } else { "" };
         format!("API error ({status}): {preview}{suffix}")
     }
+
+    /// Read a JSON response body with a hard size cap, then deserialize.
+    ///
+    /// `response.json()`/`.text()` buffer the entire body unbounded; a hostile
+    /// or misconfigured endpoint could stream a multi-GB body and OOM the
+    /// process. This mirrors the `MAX_LINE_BYTES` guard on the streaming path.
+    async fn read_json_capped<T: serde::de::DeserializeOwned>(
+        response: reqwest::Response,
+        what: &str,
+    ) -> anyhow::Result<T> {
+        const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+        let mut stream = response.bytes_stream();
+        let mut buf: Vec<u8> = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("error reading {what}"))?;
+            if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                anyhow::bail!(
+                    "{what} exceeded the {} MB response size limit",
+                    MAX_RESPONSE_BYTES / (1024 * 1024)
+                );
+            }
+            buf.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&buf).with_context(|| format!("failed to parse {what}"))
+    }
 }
 
 impl AiProvider for OpenAiProvider {
@@ -257,12 +282,20 @@ impl AiProvider for OpenAiProvider {
                         top_p: self.top_p,
                     };
 
-                    let response = self
+                    // Bound the header-receipt phase: the client only sets a
+                    // connect_timeout, so a server that accepts the TCP
+                    // connection but never returns response headers would hang
+                    // send() indefinitely (the per-chunk read timeout below only
+                    // starts once we have a response). 60s covers slow upstreams.
+                    let send_fut = self
                         .auth_request(reqwest::Method::POST, &url)
                         .json(&body)
-                        .send()
-                        .await
-                        .context("failed to send streaming request")?;
+                        .send();
+                    let response =
+                        tokio::time::timeout(std::time::Duration::from_secs(60), send_fut)
+                            .await
+                            .context("streaming request timed out waiting for response headers")?
+                            .context("failed to send streaming request")?;
 
                     if !response.status().is_success() {
                         let msg = Self::extract_api_error(response).await;
@@ -429,10 +462,8 @@ impl AiProvider for OpenAiProvider {
                         return Err(anyhow!(msg));
                     }
 
-                    let resp: ChatCompletionResponse = response
-                        .json()
-                        .await
-                        .context("failed to parse chat completion response")?;
+                    let resp: ChatCompletionResponse =
+                        Self::read_json_capped(response, "chat completion response").await?;
 
                     let content = resp
                         .choices
@@ -466,10 +497,7 @@ impl AiProvider for OpenAiProvider {
                 return Err(anyhow!(msg));
             }
 
-            let resp: ModelsResponse = response
-                .json()
-                .await
-                .context("failed to parse models response")?;
+            let resp: ModelsResponse = Self::read_json_capped(response, "models response").await?;
 
             let models = resp
                 .data

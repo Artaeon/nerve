@@ -43,26 +43,7 @@ pub fn read_file_context(path: &str) -> anyhow::Result<FileContext> {
         return read_directory_listing(&path_buf);
     }
 
-    // Block device files, sockets, and FIFOs — reading /dev/zero etc. would
-    // hang or exhaust memory.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::FileTypeExt;
-        let ft = metadata.file_type();
-        if ft.is_char_device() || ft.is_block_device() || ft.is_fifo() || ft.is_socket() {
-            anyhow::bail!("Cannot read special file: {}", path_buf.display());
-        }
-    }
-
-    // Block symlinks to prevent reading through symlinks to sensitive files.
-    if metadata.file_type().is_symlink() {
-        anyhow::bail!("Cannot read symlink: {}", path_buf.display());
-    }
-
-    // Reject files over 1MB
-    if metadata.len() > 1_048_576 {
-        anyhow::bail!("File too large ({} bytes). Max 1MB.", metadata.len());
-    }
+    guard_readable_file(&path_buf, &metadata)?;
 
     let content = fs::read_to_string(&path_buf)
         .with_context(|| format!("Cannot read: {}", path_buf.display()))?;
@@ -101,9 +82,40 @@ pub fn format_file_for_context(fc: &FileContext) -> String {
     }
 }
 
+/// Shared read guards: reject device/socket/FIFO special files (reading
+/// `/dev/zero` would hang or exhaust memory), symlinks (behavioral parity with
+/// `read_file_context` — `fs::metadata` follows the link, so a symlink to a
+/// regular file still reads, matching the existing tested behavior), and files
+/// over 1 MB (OOM defense). `metadata` must come from `fs::metadata` on `path`.
+fn guard_readable_file(path_buf: &Path, metadata: &fs::Metadata) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileTypeExt;
+        let ft = metadata.file_type();
+        if ft.is_char_device() || ft.is_block_device() || ft.is_fifo() || ft.is_socket() {
+            anyhow::bail!("Cannot read special file: {}", path_buf.display());
+        }
+    }
+    if metadata.file_type().is_symlink() {
+        anyhow::bail!("Cannot read symlink: {}", path_buf.display());
+    }
+    if metadata.len() > 1_048_576 {
+        anyhow::bail!("File too large ({} bytes). Max 1MB.", metadata.len());
+    }
+    Ok(())
+}
+
 /// Read a file with line range (start..end, 1-indexed)
 pub fn read_file_range(path: &str, start: usize, end: usize) -> anyhow::Result<FileContext> {
     let path_buf = resolve_path(path);
+    // Apply the same guards as read_file_context: a range read must not be a
+    // way to hang on a device file or OOM on a huge file.
+    let metadata = fs::metadata(&path_buf)
+        .with_context(|| format!("Cannot access: {}", path_buf.display()))?;
+    if metadata.is_dir() {
+        anyhow::bail!("Not a file: {}", path_buf.display());
+    }
+    guard_readable_file(&path_buf, &metadata)?;
     let content = fs::read_to_string(&path_buf)
         .with_context(|| format!("Cannot read: {}", path_buf.display()))?;
 
@@ -718,6 +730,22 @@ mod tests {
             let fc = read_file_context(link.to_str().unwrap()).unwrap();
             assert!(fc.content.contains("content via symlink"));
         }
+    }
+
+    #[test]
+    fn read_file_range_rejects_directory() {
+        // A range read of a directory must error, not attempt to read it as text.
+        let dir = tempfile::tempdir().unwrap();
+        let result = read_file_range(dir.path().to_str().unwrap(), 1, 10);
+        assert!(result.is_err(), "range read of a directory should error");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_file_range_rejects_device_file() {
+        // Reading /dev/zero as a range would hang/OOM without the guard.
+        let result = read_file_range("/dev/zero", 1, 10);
+        assert!(result.is_err(), "range read of a device file should error");
     }
 
     #[test]
