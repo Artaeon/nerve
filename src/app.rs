@@ -258,6 +258,11 @@ pub struct App {
     // -- context tracking --
     /// Running count of estimated tokens in the current conversation.
     pub total_tokens_used: usize,
+    /// Estimated tokens in the payload ACTUALLY sent on the last request
+    /// (post-expansion, post-compaction, including injected system prompts).
+    /// Set by `build_context_messages`; used for usage accounting so recorded
+    /// tokens reflect what was sent, not the raw stored conversation.
+    pub last_sent_tokens: usize,
 
     // -- plugins --
     pub plugins: Vec<crate::plugins::Plugin>,
@@ -408,6 +413,7 @@ impl App {
             branches: Vec::new(),
 
             total_tokens_used: 0,
+            last_sent_tokens: 0,
 
             plugins: Vec::new(),
 

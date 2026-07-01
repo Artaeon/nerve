@@ -188,6 +188,137 @@ pub(crate) fn inject_pipeline_role_prompts(app: &App, messages: &mut Vec<ChatMes
     messages.insert(0, ChatMessage::system(role.system_prompt.clone()));
 }
 
+/// Build the outgoing `ChatMessage` list for a turn from the current
+/// conversation: context compaction, `@file` expansion on the newest user turn,
+/// knowledge-base + auto-context injection, and the mode / pipeline-role system
+/// prompt.
+///
+/// Shared by the initial send (`send_to_ai_from_history`) and the post-tool
+/// rebuild (`AgentToolsComplete`) so both turns carry IDENTICAL context. Before
+/// this was factored out, the rebuild reconstructed messages by hand and
+/// silently dropped the mode prompt, KB context, and file expansion after the
+/// first tool round.
+///
+/// `search_query` is the text used for KB search / auto-context gathering (the
+/// user's actual request — not tool-result payloads).
+pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<ChatMessage> {
+    // Apply context management based on provider (halved in Efficient mode).
+    let base_limit = crate::agent::context::ContextManager::effective_limit(
+        &app.selected_provider,
+        app.context_limit_override,
+    );
+    let limit = if app.active_mode == app::NerveMode::Efficient {
+        base_limit / 2
+    } else {
+        base_limit
+    };
+    let cm = crate::agent::context::ContextManager::new(limit);
+
+    // Expand @file references on ONLY the most recent user turn.
+    //
+    // Expanding every historical user message re-read each @file from disk (up
+    // to 1 MB each) and re-injected its full contents on *every* request —
+    // quadratic token growth as the conversation grew. The file content was
+    // already delivered to the model on the turn it was referenced; re-sending
+    // it every turn thereafter is pure waste. We expand BEFORE compaction so
+    // the token-limit decision reflects the true payload actually sent, not the
+    // pre-expansion `@path` placeholder text.
+    let raw = &app.current_conversation().messages;
+    let last_user_idx = raw.iter().rposition(|(role, _)| role == "user");
+    let expanded: Vec<(String, String)> = raw
+        .iter()
+        .enumerate()
+        .map(|(i, (role, content))| {
+            if role == "user" && Some(i) == last_user_idx {
+                (role.clone(), files::expand_file_references(content))
+            } else {
+                (role.clone(), content.clone())
+            }
+        })
+        .collect();
+
+    // First compact tool results if in agent mode, then compact overall.
+    let conversation_messages = if app.agent_mode {
+        cm.compact_tool_results(&expanded)
+    } else {
+        expanded
+    };
+    let final_messages = cm.compact_messages(&conversation_messages);
+
+    let mut messages: Vec<ChatMessage> = final_messages
+        .iter()
+        .filter_map(|(role, content)| match role.as_str() {
+            "user" => Some(ChatMessage::user(content)),
+            "assistant" => Some(ChatMessage::assistant(content)),
+            "system" => Some(ChatMessage::system(content)),
+            _ => None,
+        })
+        .collect();
+
+    // If a knowledge base exists, search for relevant context and inject it.
+    if !search_query.is_empty()
+        && let Ok(kb) = knowledge::KnowledgeBase::load("default")
+        && !kb.chunks.is_empty()
+    {
+        let results = knowledge::search_knowledge(&kb, search_query, 3);
+        if !results.is_empty() {
+            let context = results
+                .iter()
+                .map(|r| format!("[From: {}]\n{}", r.document_title, r.chunk.content))
+                .collect::<Vec<_>>()
+                .join("\n\n---\n\n");
+
+            messages.insert(
+                0,
+                ChatMessage::system(format!(
+                    "The following knowledge base context may be relevant \
+                     to the user's query:\n\n{context}\n\n\
+                     Use this context to inform your response if relevant."
+                )),
+            );
+        }
+    }
+
+    // Auto-context: gather relevant files when NOT in agent mode
+    // (agent mode reads files on demand via tools).
+    if !app.agent_mode && app.auto_agent {
+        let ws_root = crate::workspace::detect_workspace().map(|w| w.root);
+        let ctx = crate::agent::auto_context::gather_context(search_query, ws_root.as_deref());
+        if let Some(context_msg) = crate::agent::auto_context::format_context(&ctx) {
+            messages.insert(0, ChatMessage::system(context_msg));
+        }
+    }
+
+    // Inject mode-specific system prompt at position 0 so it shapes the
+    // entire conversation. If a multi-agent pipeline is active, its
+    // current role's prompt REPLACES the mode prompt — the role fully
+    // owns the system context for that turn.
+    if let Some(role) = app.pipeline.as_ref().and_then(|p| p.step.role()) {
+        // Re-inject the role + tools prompt (shared with the post-tool
+        // AgentToolsComplete path so both turns carry the same context).
+        inject_pipeline_role_prompts(app, &mut messages);
+
+        // Align agent_mode with the role so the Done handler's tool-call
+        // parsing kicks in for Coder and Reviewer.
+        app.agent_mode = !matches!(role.tool_policy, crate::agent::pipeline::ToolPolicy::None);
+    } else if let Some(mode_prompt) = app.active_mode.system_prompt() {
+        messages.insert(0, ChatMessage::system(mode_prompt.to_string()));
+    }
+
+    // Update the context-usage tracker (raw conversation) for the status bar,
+    // and record the ACTUAL sent-payload size (post-expansion/compaction plus
+    // injected system prompts) for usage accounting.
+    app.total_tokens_used = crate::agent::context::ContextManager::conversation_tokens(
+        &app.current_conversation().messages,
+    );
+    app.last_sent_tokens = messages
+        .iter()
+        .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
+        .sum();
+
+    messages
+}
+
 /// Start a streaming AI request using the current conversation history.
 /// Assumes the caller has already added the user message to the conversation.
 pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn AiProvider>) {
@@ -226,97 +357,7 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
         .map(|(_, content)| content.clone())
         .unwrap_or_default();
 
-    // Apply context management based on provider (halved in Efficient mode)
-    let base_limit = crate::agent::context::ContextManager::effective_limit(
-        &app.selected_provider,
-        app.context_limit_override,
-    );
-    let limit = if app.active_mode == app::NerveMode::Efficient {
-        base_limit / 2
-    } else {
-        base_limit
-    };
-    let cm = crate::agent::context::ContextManager::new(limit);
-
-    // First compact tool results if in agent mode
-    let conversation_messages = if app.agent_mode {
-        cm.compact_tool_results(&app.current_conversation().messages)
-    } else {
-        app.current_conversation().messages.clone()
-    };
-
-    // Then compact the overall conversation if needed
-    let final_messages = cm.compact_messages(&conversation_messages);
-
-    let mut messages: Vec<ChatMessage> = final_messages
-        .iter()
-        .filter_map(|(role, content)| match role.as_str() {
-            // Expand @file references in user messages so the AI sees file
-            // contents while the conversation history keeps the original text.
-            "user" => {
-                let expanded = files::expand_file_references(content);
-                Some(ChatMessage::user(expanded))
-            }
-            "assistant" => Some(ChatMessage::assistant(content)),
-            "system" => Some(ChatMessage::system(content)),
-            _ => None,
-        })
-        .collect();
-
-    // If a knowledge base exists, search for relevant context and inject it.
-    if !user_message.is_empty()
-        && let Ok(kb) = knowledge::KnowledgeBase::load("default")
-        && !kb.chunks.is_empty()
-    {
-        let results = knowledge::search_knowledge(&kb, &user_message, 3);
-        if !results.is_empty() {
-            let context = results
-                .iter()
-                .map(|r| format!("[From: {}]\n{}", r.document_title, r.chunk.content))
-                .collect::<Vec<_>>()
-                .join("\n\n---\n\n");
-
-            messages.insert(
-                0,
-                ChatMessage::system(format!(
-                    "The following knowledge base context may be relevant \
-                     to the user's query:\n\n{context}\n\n\
-                     Use this context to inform your response if relevant."
-                )),
-            );
-        }
-    }
-
-    // Auto-context: gather relevant files when NOT in agent mode
-    // (agent mode reads files on demand via tools).
-    if !app.agent_mode && app.auto_agent {
-        let ws_root = crate::workspace::detect_workspace().map(|w| w.root);
-        let ctx = crate::agent::auto_context::gather_context(&user_message, ws_root.as_deref());
-        if let Some(context_msg) = crate::agent::auto_context::format_context(&ctx) {
-            messages.insert(0, ChatMessage::system(context_msg));
-        }
-    }
-
-    // Inject mode-specific system prompt at position 0 so it shapes the
-    // entire conversation. If a multi-agent pipeline is active, its
-    // current role's prompt REPLACES the mode prompt — the role fully
-    // owns the system context for that turn.
-    if let Some(role) = app.pipeline.as_ref().and_then(|p| p.step.role()) {
-        // Re-inject the role + tools prompt (shared with the post-tool
-        // AgentToolsComplete path so both turns carry the same context).
-        inject_pipeline_role_prompts(app, &mut messages);
-
-        // Align agent_mode with the role so the Done handler's tool-call
-        // parsing kicks in for Coder and Reviewer.
-        app.agent_mode = !matches!(role.tool_policy, crate::agent::pipeline::ToolPolicy::None);
-    } else if let Some(mode_prompt) = app.active_mode.system_prompt() {
-        messages.insert(0, ChatMessage::system(mode_prompt.to_string()));
-    }
-
-    // Update total_tokens_used tracker
-    app.total_tokens_used = crate::agent::context::ContextManager::conversation_tokens(
-        &app.current_conversation().messages,
-    );
+    let messages = build_context_messages(app, &user_message);
 
     let model = app.selected_model.clone();
     let (tx, rx) = mpsc::unbounded_channel();

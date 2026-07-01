@@ -50,11 +50,15 @@ pub(crate) use completion::{
     autocomplete_file_paths, find_common_prefix_strings, strip_autocomplete_description,
 };
 pub(crate) use conversation::{
-    advance_pipeline_if_active, clear_conversation, copy_last_assistant_message,
-    cycle_conversation, cycle_conversation_back, delete_last_exchange, edit_last_message,
-    format_agent_action_summary, generate_title, inject_pipeline_role_prompts, regenerate_response,
+    advance_pipeline_if_active, build_context_messages, clear_conversation,
+    copy_last_assistant_message, cycle_conversation, cycle_conversation_back, delete_last_exchange,
+    edit_last_message, format_agent_action_summary, generate_title, regenerate_response,
     run_agent_tools_task, send_to_ai_from_history, submit_message,
 };
+// Used only by the in-file test module now that the AgentToolsComplete rebuild
+// goes through build_context_messages.
+#[cfg(test)]
+pub(crate) use conversation::inject_pipeline_role_prompts;
 pub(crate) use input::handle_key_event;
 #[cfg(test)]
 pub(crate) use input::update_search_results;
@@ -499,15 +503,19 @@ async fn event_loop(
                         app.finish_streaming();
                         app.scroll_offset = 0; // Auto-scroll to show the new response
 
-                        // Track usage (estimate tokens from message lengths).
+                        // Track usage. Use the token estimate of the payload
+                        // ACTUALLY sent (recorded by build_context_messages:
+                        // post-expansion/compaction, incl. injected system
+                        // prompts) rather than re-summing the raw stored
+                        // conversation, which ignored @file expansion and
+                        // injected prompts and double-counted pre-compaction
+                        // history.
                         {
-                            let tokens_sent: usize = app
-                                .current_conversation()
-                                .messages
-                                .iter()
-                                .map(|(_, c)| c.len() / 4 + 1)
-                                .sum();
-                            let tokens_received = response_content.len() / 4 + 1;
+                            let tokens_sent = app.last_sent_tokens;
+                            let tokens_received =
+                                crate::agent::context::ContextManager::estimate_tokens(
+                                    &response_content,
+                                );
                             app.usage_stats.record_request(
                                 tokens_sent,
                                 tokens_received,
@@ -675,35 +683,24 @@ async fn event_loop(
                         // a fresh channel.
                         app.add_user_message(user_message);
 
-                        let base_limit = crate::agent::context::ContextManager::effective_limit(
-                            &app.selected_provider,
-                            app.context_limit_override,
-                        );
-                        let limit = if app.active_mode == app::NerveMode::Efficient {
-                            base_limit / 2
-                        } else {
-                            base_limit
-                        };
-                        let context_mgr = crate::agent::context::ContextManager::new(limit);
-                        let tool_compacted =
-                            context_mgr.compact_tool_results(&app.current_conversation().messages);
-                        let compacted = context_mgr.compact_messages(&tool_compacted);
-                        let mut messages: Vec<ChatMessage> = compacted
+                        // Rebuild the outgoing messages exactly like the initial
+                        // send (shared helper) so the follow-up turn keeps the
+                        // mode/pipeline prompt, KB context and @file expansion —
+                        // previously the hand-rolled rebuild silently dropped
+                        // these after the first tool round. Search KB/auto-context
+                        // on the latest REAL user request, not the tool results we
+                        // just injected as a user message.
+                        let search_query = app
+                            .current_conversation()
+                            .messages
                             .iter()
-                            .filter_map(|(role, content)| match role.as_str() {
-                                "user" => Some(ChatMessage::user(content)),
-                                "assistant" => Some(ChatMessage::assistant(content)),
-                                "system" => Some(ChatMessage::system(content)),
-                                _ => None,
+                            .rev()
+                            .find(|(role, content)| {
+                                role == "user" && !content.starts_with("Tool execution results:")
                             })
-                            .collect();
-
-                        // Re-inject the active pipeline role's system + tools
-                        // prompt. These are ephemeral (never stored in the
-                        // conversation), so without this the coder/reviewer
-                        // would lose its role and stop emitting tool calls
-                        // after the first tool round.
-                        inject_pipeline_role_prompts(app, &mut messages);
+                            .map(|(_, c)| c.clone())
+                            .unwrap_or_default();
+                        let messages = build_context_messages(app, &search_query);
 
                         let model = app.selected_model.clone();
                         let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
