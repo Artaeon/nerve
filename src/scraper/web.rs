@@ -148,37 +148,67 @@ async fn resolve_checked(parsed: &reqwest::Url) -> anyhow::Result<(String, std::
     Ok((host, addrs[0]))
 }
 
+/// Maximum number of redirect hops we will follow manually.
+const MAX_REDIRECTS: usize = 5;
+
 /// Fetch a URL and extract readable text content from the HTML.
 pub async fn scrape_url(url: &str) -> anyhow::Result<ScrapeResult> {
     use futures::StreamExt;
 
-    if is_private_url(url) {
-        anyhow::bail!("Cannot scrape private/internal URLs");
-    }
+    // Follow redirects MANUALLY so every hop is re-validated and re-pinned.
+    // reqwest's built-in redirect following resolves the new host with its own
+    // DNS, which bypasses our resolve-and-pin SSRF guard (the initial `.resolve`
+    // pin only covers the first host). A public-looking hostname whose A-record
+    // points at 169.254.169.254 / 127.0.0.1 / 10.x would otherwise be fetched.
+    let mut current_url = url.to_string();
+    let mut redirects = 0usize;
 
-    let parsed = reqwest::Url::parse(url).context("invalid URL")?;
-    let (host, pinned) = resolve_checked(&parsed).await?;
+    let response = loop {
+        if is_private_url(&current_url) {
+            anyhow::bail!("Cannot scrape private/internal URLs");
+        }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .user_agent(concat!("Nerve/", env!("CARGO_PKG_VERSION")))
-        .redirect(reqwest::redirect::Policy::limited(5))
-        // Pin the validated public address for this host so a rebind between
-        // our check and reqwest's own resolution can't redirect the connect.
-        .resolve(&host, pinned)
-        .build()
-        .context("failed to build HTTP client")?;
+        let parsed = reqwest::Url::parse(&current_url).context("invalid URL")?;
+        let (host, pinned) = resolve_checked(&parsed).await?;
 
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("failed to fetch {url}"))?;
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent(concat!("Nerve/", env!("CARGO_PKG_VERSION")))
+            // Do NOT auto-follow; each hop must go back through resolve_checked.
+            .redirect(reqwest::redirect::Policy::none())
+            // Pin the validated public address for this host so a rebind between
+            // our check and reqwest's own resolution can't redirect the connect.
+            .resolve(&host, pinned)
+            .build()
+            .context("failed to build HTTP client")?;
 
-    // Re-validate the final URL after redirects to prevent SSRF via redirect.
-    if is_private_url(response.url().as_str()) {
-        anyhow::bail!("Redirect target is a private/internal URL");
-    }
+        let resp = client
+            .get(&current_url)
+            .send()
+            .await
+            .with_context(|| format!("failed to fetch {current_url}"))?;
+
+        if resp.status().is_redirection() {
+            if redirects >= MAX_REDIRECTS {
+                anyhow::bail!("too many redirects while fetching {url}");
+            }
+            let location = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .context("redirect response missing a valid Location header")?;
+            // Resolve relative redirects against the current URL, then loop so
+            // the new host is validated and pinned on the next iteration.
+            let next = parsed
+                .join(location)
+                .with_context(|| format!("invalid redirect target: {location}"))?;
+            current_url = next.to_string();
+            redirects += 1;
+            continue;
+        }
+
+        break resp;
+    };
 
     if !response.status().is_success() {
         anyhow::bail!("HTTP {} when fetching {url}", response.status());
