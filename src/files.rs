@@ -23,6 +23,37 @@ pub fn atomic_write(path: &Path, contents: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Like [`atomic_write`], but on Unix restricts the file to `mode` (e.g. 0o600)
+/// on the TEMP file BEFORE the rename makes it visible at `path`. This keeps a
+/// secret-bearing file (e.g. the clipboard history) from ever existing at the
+/// umask-default 0644, even for the brief window a post-hoc chmod would leave
+/// open. `mode` is ignored on non-Unix platforms.
+pub fn atomic_write_mode(path: &Path, contents: &str, mode: u32) -> anyhow::Result<()> {
+    let _ = mode; // used only on unix
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory: {}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp, contents)
+        .with_context(|| format!("failed to write temp file: {}", tmp.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&tmp, fs::Permissions::from_mode(mode)) {
+            let _ = fs::remove_file(&tmp);
+            return Err(anyhow::Error::from(e)
+                .context(format!("failed to restrict temp file: {}", tmp.display())));
+        }
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(anyhow::Error::from(e)
+            .context(format!("failed to rename into place: {}", path.display())));
+    }
+    Ok(())
+}
+
 /// Result of reading a file for context
 #[derive(Debug, Clone)]
 pub struct FileContext {

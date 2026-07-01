@@ -5,20 +5,17 @@ use tokio::net::{UnixListener, UnixStream};
 
 /// Path to the daemon's control socket.
 ///
-/// Never a fixed path in a world-writable shared root like `/tmp`: any local
-/// user could then connect and send `__SHUTDOWN__`. We prefer the per-user XDG
-/// runtime dir (mode 0700, per-user) and fall back to a per-user subdirectory
-/// of the temp dir (created 0700 in `start_daemon`).
+/// Two requirements: (1) it must NOT live in a world-writable shared root like
+/// `/tmp` (any local user could then connect and send `__SHUTDOWN__`), and
+/// (2) the daemon and client must compute the SAME path regardless of how each
+/// was launched. `$XDG_RUNTIME_DIR` and `$TMPDIR` satisfy (1) but not (2): a
+/// systemd/cron-launched daemon and a login-shell client can see different
+/// values, so they'd bind/dial different sockets. So we anchor to the user's
+/// HOME (stable across launch contexts) under a dedicated `~/.nerve` dir that
+/// `start_daemon` locks to 0700, with the socket itself at 0600.
 pub fn socket_path() -> PathBuf {
-    if let Some(rt) = dirs::runtime_dir() {
-        return rt.join("nerve.sock");
-    }
-    let user = std::env::var("USER")
-        .or_else(|_| std::env::var("LOGNAME"))
-        .unwrap_or_else(|_| "default".into());
-    std::env::temp_dir()
-        .join(format!("nerve-{user}"))
-        .join("nerve.sock")
+    let base = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    base.join(".nerve").join("nerve.sock")
 }
 
 #[allow(dead_code)]

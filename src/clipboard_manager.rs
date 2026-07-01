@@ -145,16 +145,11 @@ impl ClipboardManager {
         }
         let json =
             serde_json::to_string_pretty(&self.entries).context("failed to serialize clipboard")?;
-        crate::files::atomic_write(&path, &json).context("failed to write clipboard file")?;
-
-        // Restrict permissions — clipboard may contain secrets.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&path, perms)
-                .context("failed to set restrictive permissions on clipboard file")?;
-        }
+        // Clipboard history may contain secrets (copied API keys/passwords), so
+        // restrict the file to 0600 BEFORE it becomes visible — never even a
+        // brief window at the umask-default 0644 on a shared host.
+        crate::files::atomic_write_mode(&path, &json, 0o600)
+            .context("failed to write clipboard file")?;
 
         Ok(())
     }
