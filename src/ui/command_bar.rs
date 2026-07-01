@@ -354,10 +354,12 @@ pub fn render_command_bar(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ── Dimensions: centered popup 80% wide, 70% tall ───────────────────
-    let popup_width = (area.width * 80 / 100)
+    // Compute the percentage in u32 first: `area.width * 80` overflows u16 for
+    // terminals wider than ~819 columns (panic in debug, wrap in release).
+    let popup_width = ((area.width as u32 * 80 / 100) as u16)
         .max(50)
         .min(area.width.saturating_sub(2));
-    let popup_height = (area.height * 70 / 100)
+    let popup_height = ((area.height as u32 * 70 / 100) as u16)
         .max(16)
         .min(area.height.saturating_sub(2));
     let popup_area = centered_rect_fixed(popup_width, popup_height, area);

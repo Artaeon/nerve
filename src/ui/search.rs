@@ -14,7 +14,8 @@ pub fn render_search(frame: &mut Frame, app: &App) {
     let area = frame.area();
 
     // ~60% width, 3 lines tall, positioned at top-center.
-    let popup_width = (area.width * 60 / 100)
+    // u32 intermediate: `area.width * 60` overflows u16 past ~1092 columns.
+    let popup_width = ((area.width as u32 * 60 / 100) as u16)
         .max(30)
         .min(area.width.saturating_sub(2));
     let popup_height = 3u16;
