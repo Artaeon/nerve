@@ -139,24 +139,26 @@ pub(crate) fn redact_credentials(msg: &str) -> String {
         "X-Api-Key: ",
         "x-api-key: ",
     ] {
-        redact_after(&mut out, prefix, |c| c == '\n' || c == '\r');
+        redact_after(&mut out, prefix, false, |c| c == '\n' || c == '\r');
     }
 
     // `Bearer <token>` in freeform text.
-    redact_after(&mut out, "Bearer ", |c| {
+    redact_after(&mut out, "Bearer ", false, |c| {
         c.is_whitespace() || matches!(c, '"' | '\'')
     });
 
     // Query-string / form-style key=value.
     for prefix in ["api_key=", "api-key=", "apikey=", "API_KEY=", "API-KEY="] {
-        redact_after(&mut out, prefix, |c| {
+        redact_after(&mut out, prefix, false, |c| {
             matches!(c, ' ' | '&' | '"' | '\'' | ',' | '\n' | '\r')
         });
     }
 
     // OpenAI/Anthropic-style secret prefixes in freeform text
-    // (e.g. an error body that echoes back the provided key).
-    redact_after(&mut out, "sk-", |c| {
+    // (e.g. an error body that echoes back the provided key). Require a word
+    // boundary before "sk-" so it isn't matched inside ordinary words like
+    // "Disk-full", "task-123", or "risk-averse".
+    redact_after(&mut out, "sk-", true, |c| {
         c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ')' | ']' | '}')
     });
 
@@ -166,11 +168,29 @@ pub(crate) fn redact_credentials(msg: &str) -> String {
 /// Redact everything between `needle` and the next char for which
 /// `end_of_value` returns true. `needle` itself is kept (so the log
 /// still carries context: "Bearer [REDACTED]"), but the secret portion
-/// is replaced with `[REDACTED]`. Char-boundary safe.
-fn redact_after(buf: &mut String, needle: &str, end_of_value: impl Fn(char) -> bool) {
+/// is replaced with `[REDACTED]`. When `boundary_before` is set, `needle`
+/// only matches when preceded by start-of-string or a non-alphanumeric char,
+/// so a short prefix (e.g. "sk-") isn't matched mid-word. Char-boundary safe.
+fn redact_after(
+    buf: &mut String,
+    needle: &str,
+    boundary_before: bool,
+    end_of_value: impl Fn(char) -> bool,
+) {
     let mut search_from = 0;
     while let Some(rel) = buf[search_from..].find(needle) {
-        let start = search_from + rel + needle.len();
+        let needle_start = search_from + rel;
+        if boundary_before
+            && buf[..needle_start]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric)
+        {
+            // Glued to a preceding word char — not a real credential prefix.
+            search_from = needle_start + needle.len();
+            continue;
+        }
+        let start = needle_start + needle.len();
         let end_idx = buf[start..]
             .char_indices()
             .find(|(_, c)| end_of_value(*c))
@@ -745,6 +765,33 @@ mod tests {
         let plain = "API error (500): internal server error";
         let r = redact_credentials(plain);
         assert_eq!(r, plain);
+    }
+
+    #[test]
+    fn redact_does_not_corrupt_sk_substring_inside_words() {
+        // "sk-" appears inside ordinary words — must NOT be redacted.
+        for msg in [
+            "Disk-full error while writing to /tmp",
+            "task-123 failed and risk-averse retry disabled",
+            "ask-me-later prompt was dismissed",
+        ] {
+            assert_eq!(redact_credentials(msg), msg, "corrupted: {msg}");
+        }
+    }
+
+    #[test]
+    fn redact_still_catches_boundary_sk_key() {
+        // A real key at a boundary is still redacted...
+        let r = redact_credentials("key: sk-abc123 and (sk-def456) plus \"sk-ghi789\"");
+        assert!(!r.contains("abc123"));
+        assert!(!r.contains("def456"));
+        assert!(!r.contains("ghi789"));
+        // ...even when it follows a non-alphanumeric boundary like '(' or '"'.
+        assert!(r.contains("sk-[REDACTED]"));
+        // But the word "Disk-" in the same string would be untouched.
+        let r2 = redact_credentials("Disk-full then sk-secret999");
+        assert!(r2.starts_with("Disk-full"));
+        assert!(!r2.contains("secret999"));
     }
 
     #[test]
