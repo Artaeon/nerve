@@ -177,7 +177,16 @@ async fn main() -> anyhow::Result<()> {
     let provider = match create_provider(&config, cli.provider.as_deref()) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Provider error: {e}");
+            // Show the friendly, provider-specific setup guidance instead of a
+            // bare error — this is the first thing a new user hits if their key
+            // / CLI / local server isn't configured yet.
+            let provider_name = cli.provider.as_deref().unwrap_or(&config.default_provider);
+            eprintln!("Could not start the '{provider_name}' provider: {e}\n");
+            eprintln!("{}", provider_help_message(provider_name));
+            eprintln!(
+                "\nThen re-run nerve, or switch provider with `nerve --provider <name>` \
+                 (claude, openai, openrouter, ollama)."
+            );
             std::process::exit(1);
         }
     };
@@ -403,12 +412,18 @@ async fn event_loop(
     let mut provider: Arc<dyn AiProvider> = Arc::clone(initial_provider);
 
     loop {
-        // Auto-clear status messages after 5 seconds.
-        if let Some(time) = app.status_time
-            && time.elapsed() > std::time::Duration::from_secs(5)
-        {
-            app.status_message = None;
-            app.status_time = None;
+        // Auto-clear status messages. Errors/warnings linger longer (12s) than
+        // transient confirmations (5s) so an actionable failure isn't gone
+        // before the user can read it.
+        if let Some(time) = app.status_time {
+            let ttl = match app.status_message.as_deref() {
+                Some(m) if ui::status_bar::is_error_status(m) => std::time::Duration::from_secs(12),
+                _ => std::time::Duration::from_secs(5),
+            };
+            if time.elapsed() > ttl {
+                app.status_message = None;
+                app.status_time = None;
+            }
         }
 
         // Advance animation frame counter (wraps on overflow).

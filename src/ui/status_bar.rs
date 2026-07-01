@@ -11,6 +11,21 @@ use super::theme::resolve_theme;
 use super::utils::display_width;
 use crate::app::{App, InputMode};
 
+/// Classify a status message as an error/blocked/failure. Single source of
+/// truth shared by the status-bar coloring and the event loop's auto-clear
+/// timer (errors linger longer than transient confirmations).
+pub fn is_error_status(msg: &str) -> bool {
+    msg.starts_with("Error")
+        || msg.starts_with("Blocked")
+        || msg.starts_with("Failed")
+        || msg.starts_with("Cannot")
+        || msg.starts_with("Unable")
+        || msg.starts_with("Invalid")
+        || msg.starts_with("Unknown command")
+        || msg.starts_with("Warning")
+        || msg.contains("error:")
+}
+
 pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let theme = resolve_theme(app);
     let provider_label = provider_display_name(&app.selected_provider);
@@ -143,6 +158,15 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
                 format!("{tok_per_sec:.0} tok/s"),
                 Style::default().fg(Color::DarkGray),
             ),
+            sep.clone(),
+            // Tell the user how to cancel — otherwise "Esc stops generation" is
+            // only discoverable in the Help overlay.
+            Span::styled(
+                "Esc: stop",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -151,14 +175,7 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
         // Context-aware status/hint message.
         let status_span = if let Some(ref msg) = app.status_message {
-            let msg_style = if msg.starts_with("Error")
-                || msg.starts_with("Blocked")
-                || msg.starts_with("Failed")
-                || msg.starts_with("Cannot")
-                || msg.starts_with("Unable")
-                || msg.starts_with("Invalid")
-                || msg.contains("error:")
-            {
+            let msg_style = if is_error_status(msg) {
                 Style::default().fg(theme.error)
             } else if msg.starts_with("Saved")
                 || msg.starts_with("Copied")
@@ -311,6 +328,31 @@ fn format_elapsed(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_error_status_classification() {
+        for m in [
+            "Error: boom",
+            "Blocked: nope",
+            "Failed to save",
+            "Cannot read",
+            "Unable to connect",
+            "Invalid project name",
+            "Unknown command /hepl",
+            "Warning: spending limit",
+            "something with error: inside",
+        ] {
+            assert!(is_error_status(m), "should be error: {m}");
+        }
+        for m in [
+            "Copied to clipboard",
+            "Saved session",
+            "Running tests",
+            "Switched model",
+        ] {
+            assert!(!is_error_status(m), "should NOT be error: {m}");
+        }
+    }
 
     // ── format_number ───────────────────────────────────────────────
 

@@ -83,8 +83,14 @@ pub(crate) fn generate_title(first_user_message: &str) -> String {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/// Submit the user's message and spawn a streaming response task.
-///
+/// True if `text` looks like a slash-command invocation — the first token is
+/// `/word` with no interior path separator — as opposed to a normal message
+/// that merely begins with a path such as `/usr/bin/x` or `/home/me/f.rs`.
+pub(crate) fn looks_like_slash_command(text: &str) -> bool {
+    let first = text.split_whitespace().next().unwrap_or("");
+    first.len() > 1 && first.starts_with('/') && !first[1..].contains('/')
+}
+
 /// Handles slash commands (`/help`, `/clear`, `/new`, `/model`, `/models`,
 /// `/url`, `/run`, `/pipe`, `/diff`, `/test`, `/build`, `/git`) before
 /// falling through to the normal AI chat path.
@@ -95,9 +101,21 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
     }
 
     // ── Slash-command dispatch ──────────────────────────────────────────
-    if text.starts_with('/') && commands::handle(app, text, provider).await {
-        return;
-        // Not a recognised command — treat as a normal message.
+    if text.starts_with('/') {
+        if commands::handle(app, text, provider).await {
+            return;
+        }
+        // Nothing matched. If the message clearly *looks* like a slash-command
+        // attempt, don't silently ship the typo off to the model — tell the
+        // user and stop. A message that merely starts with a path like
+        // `/usr/bin/x` still falls through and is treated as normal chat.
+        if looks_like_slash_command(text) {
+            let first = text.split_whitespace().next().unwrap_or("");
+            app.set_status(format!(
+                "Unknown command {first} — press Ctrl+K or type /help to see commands"
+            ));
+            return;
+        }
     }
 
     // ── Auto-agent: detect intent and temporarily enable tools ────────
@@ -860,5 +878,29 @@ pub(crate) fn cycle_conversation_back(app: &mut App) {
             "Switched to conversation {}",
             app.active_conversation + 1
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::looks_like_slash_command;
+
+    #[test]
+    fn detects_slash_command_attempts() {
+        // Real command shapes (should be caught as command attempts).
+        assert!(looks_like_slash_command("/help"));
+        assert!(looks_like_slash_command("/hepl typo here"));
+        assert!(looks_like_slash_command("/model gpt-4o"));
+    }
+
+    #[test]
+    fn ignores_paths_and_plain_text() {
+        // Messages that merely start with a path must NOT be treated as commands.
+        assert!(!looks_like_slash_command("/usr/bin/env is the path"));
+        assert!(!looks_like_slash_command("/home/me/file.rs please review"));
+        // Not slash-prefixed, or too short.
+        assert!(!looks_like_slash_command("just a normal message"));
+        assert!(!looks_like_slash_command("/"));
+        assert!(!looks_like_slash_command(""));
     }
 }

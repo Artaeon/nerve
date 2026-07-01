@@ -22,7 +22,15 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let estimated_lines = conversation.messages.len() * 5 + 20;
     let mut lines: Vec<Line<'_>> = Vec::with_capacity(estimated_lines);
 
-    if conversation.messages.is_empty() && !app.is_streaming {
+    // Show the welcome screen until there's a real exchange. Check for
+    // user/assistant turns rather than `messages.is_empty()`: on startup a
+    // workspace system prompt is seeded at index 0, so `is_empty()` would be
+    // false and the welcome would never appear on the common in-project first run.
+    let has_conversation = conversation
+        .messages
+        .iter()
+        .any(|(role, _)| role == "user" || role == "assistant");
+    if !has_conversation && !app.is_streaming {
         // Empty state — show a branded welcome screen.
         // Use a compact variant for narrow terminals (< 60 cols).
         let section_style = Style::default()
