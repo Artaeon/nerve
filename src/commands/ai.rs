@@ -967,6 +967,103 @@ mod tests {
         assert!(handle(&mut app, "/ac").await);
     }
 
+    // ── /provider <name> switching ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn provider_switch_unknown_shows_error() {
+        let mut app = App::new();
+        let before = app.selected_provider.clone();
+        assert!(handle(&mut app, "/provider bogusprovider").await);
+        // The provider is unchanged and an error message is shown.
+        assert_eq!(app.selected_provider, before);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Unknown provider: bogusprovider"));
+    }
+
+    #[tokio::test]
+    async fn provider_switch_accepts_aliases() {
+        // "claude" and "gh" are accepted aliases.
+        let mut app = App::new();
+        assert!(handle(&mut app, "/provider claude").await);
+        assert_eq!(app.selected_provider, "claude");
+
+        let mut app2 = App::new();
+        assert!(handle(&mut app2, "/provider gh").await);
+        assert_eq!(app2.selected_provider, "gh");
+    }
+
+    // ── /cwd ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn cwd_bare_shows_working_dir() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/cwd").await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("Working directory"));
+    }
+
+    #[tokio::test]
+    async fn cwd_set_to_valid_dir_updates_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        let mut app = App::new();
+        assert!(handle(&mut app, &format!("/cwd {path}")).await);
+        assert_eq!(app.working_dir.as_deref(), Some(path.as_str()));
+        assert!(app.provider_changed);
+    }
+
+    #[tokio::test]
+    async fn cwd_invalid_dir_is_rejected() {
+        let mut app = App::new();
+        assert!(handle(&mut app, "/cwd /no/such/dir/xyz123").await);
+        assert!(app.working_dir.is_none());
+        let status = app.status_message.as_deref().unwrap();
+        assert!(status.contains("Not a directory"));
+    }
+
+    // ── /mode variants & aliases ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn mode_variants_set_active_mode() {
+        // (input, expected mode_name, expected NerveMode)
+        let cases: &[(&str, &str)] = &[
+            ("/mode efficient", "efficient"),
+            ("/mode eco", "efficient"),
+            ("/mode thorough", "thorough"),
+            ("/mode detailed", "thorough"),
+            ("/mode standard", "standard"),
+            ("/mode default", "standard"),
+            ("/mode reset", "standard"),
+            ("/mode code", "code"),
+            ("/mode review", "review"),
+        ];
+        for (input, expected_name) in cases {
+            let mut app = App::new();
+            assert!(handle(&mut app, input).await, "{input} should be handled");
+            assert_eq!(app.mode_name, *expected_name, "mode_name for {input}");
+        }
+    }
+
+    #[tokio::test]
+    async fn mode_alias_maps_to_expected_enum() {
+        let mut app = App::new();
+        handle(&mut app, "/mode eco").await;
+        assert!(matches!(app.active_mode, app::NerveMode::Efficient));
+
+        let mut app = App::new();
+        handle(&mut app, "/mode detailed").await;
+        assert!(matches!(app.active_mode, app::NerveMode::Thorough));
+
+        let mut app = App::new();
+        handle(&mut app, "/mode reset").await;
+        assert!(matches!(app.active_mode, app::NerveMode::Standard));
+
+        // /mode review uses the Thorough underlying mode.
+        let mut app = App::new();
+        handle(&mut app, "/mode review").await;
+        assert!(matches!(app.active_mode, app::NerveMode::Thorough));
+    }
+
     // ── Unrecognised commands ───────────────────────────────────────────
 
     #[tokio::test]

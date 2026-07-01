@@ -404,6 +404,34 @@ mod tests {
         assert!(last.1.contains("not found"));
     }
 
+    #[tokio::test]
+    async fn template_rejects_path_traversal_project_names() {
+        // Regression: a project name containing '/', '\\', '..', '.', or an
+        // absolute path must be rejected before any files are written.
+        let traversal_names = ["../evil", "/abs", "a/b", "..", ".", "a\\b", "sub/../../etc"];
+        for name in traversal_names {
+            let mut app = App::new();
+            let provider = mock_provider();
+            let cmd = format!("/template rust {name}");
+            assert!(handle(&mut app, &cmd, &provider).await, "{cmd} handled");
+            let status = app.status_message.as_deref().unwrap_or_default();
+            assert!(
+                status.contains("Invalid project name"),
+                "expected rejection for '{name}', got status: {status:?}"
+            );
+            // No scaffold output message should have been produced.
+            let produced_created = app
+                .current_conversation()
+                .messages
+                .iter()
+                .any(|(_, c)| c.contains("Created") && c.contains("project"));
+            assert!(
+                !produced_created,
+                "traversal name '{name}' must not create a project"
+            );
+        }
+    }
+
     // ── /map and /tree ──────────────────────────────────────────────────
 
     #[tokio::test]

@@ -906,4 +906,167 @@ mod tests {
         app.new_conversation();
         assert!(app.pipeline.is_none());
     }
+
+    // ── /delete removes the active conversation & clamps index ───────────
+
+    #[tokio::test]
+    async fn delete_active_conversation_clamps_index_when_last() {
+        let mut app = App::new();
+        // Build three conversations: indices 0, 1, 2.
+        app.new_conversation();
+        app.new_conversation();
+        app.conversations[0].title = "A".into();
+        app.conversations[1].title = "B".into();
+        app.conversations[2].title = "C".into();
+        app.active_conversation = 2; // the last one is active
+
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/delete", &provider).await);
+
+        // One conversation removed, index clamped to the new last valid index.
+        assert_eq!(app.conversations.len(), 2);
+        assert_eq!(app.active_conversation, 1);
+        // The removed conversation ("C") is gone; "A" and "B" remain.
+        let titles: Vec<&str> = app.conversations.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, vec!["A", "B"]);
+        assert_eq!(app.status_message.as_deref(), Some("Conversation deleted"));
+    }
+
+    #[tokio::test]
+    async fn delete_active_middle_conversation_keeps_index_valid() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        app.conversations[0].title = "A".into();
+        app.conversations[1].title = "B".into();
+        app.conversations[2].title = "C".into();
+        app.active_conversation = 1; // middle one active
+
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/delete", &provider).await);
+
+        assert_eq!(app.conversations.len(), 2);
+        // index 1 still valid (< len 2), so it is not clamped down.
+        assert_eq!(app.active_conversation, 1);
+        let titles: Vec<&str> = app.conversations.iter().map(|c| c.title.as_str()).collect();
+        assert_eq!(titles, vec!["A", "C"]);
+    }
+
+    #[tokio::test]
+    async fn delete_single_conversation_clears_instead_of_removing() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("user".into(), "hi".into()));
+        app.current_conversation_mut().title = "Old".into();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/delete", &provider).await);
+        // Never drops below one conversation.
+        assert_eq!(app.conversations.len(), 1);
+        assert!(app.current_conversation().messages.is_empty());
+        assert_eq!(app.current_conversation().title, "New Conversation");
+    }
+
+    #[tokio::test]
+    async fn delete_all_resets_active_index() {
+        let mut app = App::new();
+        app.new_conversation();
+        app.new_conversation();
+        app.active_conversation = 2;
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/delete all", &provider).await);
+        assert_eq!(app.conversations.len(), 1);
+        assert_eq!(app.active_conversation, 0);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("All conversations deleted")
+        );
+    }
+
+    // ── /copy selection logic ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn copy_numeric_index_selects_message_and_attempts_copy() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("user".into(), "question".into()));
+        app.current_conversation_mut()
+            .messages
+            .push(("assistant".into(), "the answer".into()));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy 1", &provider).await);
+        // "/copy 1" selects the last message (non-empty), so it must not be
+        // reported as "Nothing to copy" — a copy was attempted.
+        let status = app.status_message.as_deref().unwrap();
+        assert_ne!(status, "Nothing to copy");
+    }
+
+    #[tokio::test]
+    async fn copy_last_code_block_with_no_code_reports_nothing() {
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("assistant".into(), "no code here".into()));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy code", &provider).await);
+        // No fenced block => empty selection => "Nothing to copy".
+        assert_eq!(app.status_message.as_deref(), Some("Nothing to copy"));
+    }
+
+    #[tokio::test]
+    async fn copy_last_code_block_with_code_attempts_copy() {
+        let mut app = App::new();
+        app.current_conversation_mut().messages.push((
+            "assistant".into(),
+            "first:\n```\nalpha\n```\nsecond:\n```\nbeta\n```".into(),
+        ));
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy code", &provider).await);
+        // A code block exists => selection is non-empty => a copy is attempted.
+        let status = app.status_message.as_deref().unwrap();
+        assert_ne!(status, "Nothing to copy");
+    }
+
+    #[tokio::test]
+    async fn copy_empty_conversation_reports_nothing() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/copy all", &provider).await);
+        assert_eq!(app.status_message.as_deref(), Some("Nothing to copy"));
+    }
+
+    // ── /branch invalid restore handling ────────────────────────────────
+
+    #[tokio::test]
+    async fn branch_restore_out_of_range_is_rejected() {
+        let mut app = App::new();
+        app.create_branch("only".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch restore 99", &provider).await);
+        assert_eq!(app.status_message.as_deref(), Some("Invalid branch number"));
+    }
+
+    #[tokio::test]
+    async fn branch_restore_non_numeric_shows_usage() {
+        let mut app = App::new();
+        app.create_branch("only".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch restore abc", &provider).await);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Usage: /branch restore <number>")
+        );
+    }
+
+    #[tokio::test]
+    async fn branch_list_shows_saved_branch() {
+        let mut app = App::new();
+        app.create_branch("feature-x".into());
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/branch list", &provider).await);
+        let last = app.current_conversation().messages.last().unwrap();
+        assert!(last.1.contains("feature-x"));
+        assert!(last.1.contains("1."));
+    }
 }

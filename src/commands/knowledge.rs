@@ -727,6 +727,30 @@ mod tests {
         assert!(status.contains("Unknown /auto command"));
     }
 
+    #[tokio::test]
+    async fn auto_delete_builtin_is_rejected() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        // "Code Review Pipeline" is a built-in automation and must not be
+        // deletable via /auto delete.
+        assert!(handle(&mut app, "/auto delete Code Review Pipeline", &provider).await);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Cannot delete built-in automations")
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_delete_builtin_is_case_insensitive() {
+        let mut app = App::new();
+        let provider = mock_provider();
+        assert!(handle(&mut app, "/auto delete code review pipeline", &provider).await);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Cannot delete built-in automations")
+        );
+    }
+
     // ── Unrecognised commands ───────────────────────────────────────────
 
     #[tokio::test]

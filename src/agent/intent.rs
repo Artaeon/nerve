@@ -544,4 +544,31 @@ mod tests {
         assert!(!has_path_like("explain sorting"));
         assert!(!has_path_like("what is rust"));
     }
+
+    // ── Additional rule coverage ──────────────────────────────────────────
+
+    #[test]
+    fn commit_and_push_changes_needs_tools() {
+        // "commit" + "change" (in "changes") triggers the git rule.
+        assert!(needs_tools("commit and push my changes"));
+    }
+
+    #[test]
+    fn run_prefix_needs_tools() {
+        // Any message starting with "run " implies execution.
+        assert!(needs_tools("run xyz"));
+        assert!(needs_tools("run the deploy pipeline"));
+    }
+
+    #[test]
+    fn create_a_plan_does_not_need_tools() {
+        // "create" without a code artifact / path is conversational.
+        assert!(!needs_tools("create a plan"));
+    }
+
+    #[test]
+    fn commit_without_change_word_does_not_need_tools() {
+        // "commit" alone (no "change", no "git commit") stays conversational.
+        assert!(!needs_tools("what does commit mean"));
+    }
 }
