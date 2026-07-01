@@ -406,6 +406,42 @@ pub fn is_sensitive_file(path: &str) -> bool {
     sensitive.iter().any(|s| path.contains(s))
 }
 
+/// High-value targets the agent must never WRITE, even when they live in the
+/// user's home or a repo rather than a system dir. These are the classic
+/// persistence / privilege / exfiltration vectors a prompt-injected model would
+/// aim for. Checked (in `validate_write_path`) on the normalized + canonical
+/// path so `..` and symlink tricks can't sneak past it.
+pub fn is_protected_write_target(path: &str) -> bool {
+    // Git hooks execute arbitrary code on the next git operation.
+    if path.contains("/.git/hooks/") {
+        return true;
+    }
+    // Shell startup files — persistence across every new shell.
+    const RC_FILES: &[&str] = &[
+        "/.bashrc",
+        "/.bash_profile",
+        "/.bash_login",
+        "/.profile",
+        "/.zshrc",
+        "/.zshenv",
+        "/.zprofile",
+        "/.config/fish/config.fish",
+    ];
+    if RC_FILES.iter().any(|f| path.ends_with(f)) {
+        return true;
+    }
+    // SSH: authorized_keys grants remote access; config can silently reroute
+    // connections. Credentials files should never be overwritten by the agent.
+    const SUFFIXES: &[&str] = &[
+        "/.ssh/authorized_keys",
+        "/.ssh/config",
+        "/.aws/credentials",
+        "/.netrc",
+        "/.pgpass",
+    ];
+    SUFFIXES.iter().any(|s| path.ends_with(s))
+}
+
 /// Mask an API key for display, showing only the first 4 and last 4 characters.
 #[allow(dead_code)]
 pub fn mask_api_key(key: &str) -> String {
@@ -812,6 +848,32 @@ mod tests {
         assert!(!is_protected_path("Cargo.toml"));
         assert!(!is_protected_path("/home/user/project/file.rs"));
         assert!(!is_protected_path("/tmp/test.txt"));
+    }
+
+    #[test]
+    fn protected_write_targets_blocked() {
+        // Persistence / privilege / exfil vectors.
+        assert!(is_protected_write_target("/home/me/.ssh/authorized_keys"));
+        assert!(is_protected_write_target("/home/me/.ssh/config"));
+        assert!(is_protected_write_target("/home/me/.bashrc"));
+        assert!(is_protected_write_target("/home/me/.zshrc"));
+        assert!(is_protected_write_target("/home/me/.profile"));
+        assert!(is_protected_write_target(
+            "/Users/me/proj/.git/hooks/pre-commit"
+        ));
+        assert!(is_protected_write_target("/home/me/.aws/credentials"));
+        assert!(is_protected_write_target("/home/me/.netrc"));
+    }
+
+    #[test]
+    fn ordinary_write_targets_allowed() {
+        assert!(!is_protected_write_target("/home/me/proj/src/main.rs"));
+        assert!(!is_protected_write_target("/home/me/proj/.gitignore"));
+        assert!(!is_protected_write_target("/home/me/notes.md"));
+        // A file merely named similarly but not the real target.
+        assert!(!is_protected_write_target(
+            "/home/me/proj/bashrc_example.txt"
+        ));
     }
 
     // ── Security: is_sensitive_file ─────────────────────────────────────

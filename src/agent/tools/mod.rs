@@ -360,6 +360,22 @@ fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {
         });
     }
 
+    // Block persistence/exfiltration write targets in the user's home or repo
+    // (SSH keys, shell rc files, git hooks, credential files) — the vectors a
+    // prompt-injected model would use. Check normalized + canonical forms.
+    if crate::shell::is_protected_write_target(&norm_str)
+        || crate::shell::is_protected_write_target(&canon_str)
+    {
+        return Err(ToolResult {
+            tool: tool.into(),
+            success: false,
+            output: format!(
+                "Blocked: {canon_str} is a protected target (SSH keys, shell rc, \
+                 git hooks, and credential files can't be written by the agent)"
+            ),
+        });
+    }
+
     Ok(buf)
 }
 
@@ -1594,6 +1610,23 @@ mod tests {
         reset_tool_counter();
         let result = validate_write_path("/tmp/safe_file.txt", "write_file");
         assert!(result.is_ok(), "Should allow /tmp writes");
+    }
+
+    #[test]
+    fn validate_write_path_blocks_persistence_targets() {
+        reset_tool_counter();
+        // SSH authorized_keys, shell rc, and git hooks in a (non-system) path
+        // must be blocked as persistence/exfil targets.
+        for p in [
+            "/tmp/fakehome/.ssh/authorized_keys",
+            "/tmp/fakehome/.bashrc",
+            "/tmp/fakerepo/.git/hooks/pre-commit",
+        ] {
+            assert!(
+                validate_write_path(p, "write_file").is_err(),
+                "should block protected write target: {p}"
+            );
+        }
     }
 
     #[test]
