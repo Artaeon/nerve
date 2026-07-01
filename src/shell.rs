@@ -342,7 +342,85 @@ pub fn is_dangerous_command(cmd: &str) -> bool {
         }
     }
 
+    // Structural layer: catch a catastrophic recursive-force delete of a system
+    // root / home regardless of flag spelling or order, or a path-prefixed
+    // binary — bypasses the fixed substring patterns miss, e.g.
+    // `rm --recursive --force /`, `rm -r -f ~`, `/bin/rm -rf /`.
+    if has_catastrophic_rm(&normalized) {
+        return true;
+    }
+
     false
+}
+
+/// Detect `rm` invoked with BOTH recursive and force, targeting a catastrophic
+/// root (`/`, `/*`, `~`, `$HOME`, or a top-level system dir), across command
+/// segments. Resistant to flag order (`-rf`/`-fr`/`-r -f`), long flags
+/// (`--recursive --force`), and an absolute path to the binary (`/bin/rm`).
+fn has_catastrophic_rm(normalized: &str) -> bool {
+    // Split into simple-command segments on shell operators.
+    for segment in normalized.split(['|', ';', '&', '\n']) {
+        let mut tokens = segment.split_whitespace().peekable();
+        // Skip common privilege/wrapper prefixes and VAR=val assignments.
+        while let Some(&t) = tokens.peek() {
+            if t == "sudo" || t == "env" || t == "nice" || t == "nohup" || t.contains('=') {
+                tokens.next();
+            } else {
+                break;
+            }
+        }
+        let Some(cmd0) = tokens.next() else { continue };
+        // Basename of argv[0] so `/bin/rm` and `/usr/bin/rm` are caught.
+        let base = cmd0.rsplit('/').next().unwrap_or(cmd0);
+        if base != "rm" {
+            continue;
+        }
+        let mut recursive = false;
+        let mut force = false;
+        let mut targets: Vec<&str> = Vec::new();
+        for tok in tokens {
+            if let Some(long) = tok.strip_prefix("--") {
+                match long {
+                    "recursive" => recursive = true,
+                    "force" => force = true,
+                    _ => {}
+                }
+            } else if let Some(short) = tok.strip_prefix('-') {
+                // Combined short flags like -rf / -fr / -Rf (already lowercased).
+                if short.contains('r') {
+                    recursive = true;
+                }
+                if short.contains('f') {
+                    force = true;
+                }
+            } else {
+                targets.push(tok);
+            }
+        }
+        if recursive && force && targets.iter().any(|t| is_catastrophic_rm_target(t)) {
+            return true;
+        }
+    }
+    false
+}
+
+/// True for delete targets that would be catastrophic: filesystem root, home,
+/// or a top-level system directory (with optional trailing `/` or `/*`).
+/// `t` is expected lowercased. Deep paths like `/usr/local/myapp` are NOT
+/// flagged — only the roots themselves — to avoid false positives.
+fn is_catastrophic_rm_target(t: &str) -> bool {
+    if matches!(
+        t,
+        "/" | "/*" | "~" | "~/" | "~/*" | "$home" | "${home}" | "$home/" | "$home/*"
+    ) {
+        return true;
+    }
+    let base = t.trim_end_matches("/*").trim_end_matches('/');
+    const ROOTS: &[&str] = &[
+        "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var", "/boot", "/sys", "/proc",
+        "/dev", "/root", "/home", "/opt",
+    ];
+    ROOTS.contains(&base)
 }
 
 /// Paths that should never be written to by the agent.
@@ -811,6 +889,37 @@ mod tests {
         assert!(!is_dangerous_command("echo hello"));
         assert!(!is_dangerous_command("cat README.md"));
         assert!(!is_dangerous_command("rm file.txt"));
+    }
+
+    #[test]
+    fn dangerous_rm_structural_bypasses_blocked() {
+        // Long flags, separated flags, path-prefixed binary, home targets —
+        // all missed by the fixed substring list, caught structurally.
+        assert!(is_dangerous_command("rm --recursive --force /"));
+        assert!(is_dangerous_command("rm -r -f /"));
+        assert!(is_dangerous_command("rm -f -r /*"));
+        assert!(is_dangerous_command("/bin/rm -rf /"));
+        assert!(is_dangerous_command("/usr/bin/rm -fr ~"));
+        assert!(is_dangerous_command("rm --force --recursive /etc"));
+        assert!(is_dangerous_command("rm -rf $HOME"));
+        assert!(is_dangerous_command("cd /tmp && sudo rm -r -f /usr"));
+        assert!(is_dangerous_command("rm -rf /root/"));
+    }
+
+    #[test]
+    fn legitimate_rm_not_flagged() {
+        // Recursive-force deletes of RELATIVE project paths must remain allowed.
+        // (Note: the pre-existing substring rule "rm -rf /" conservatively
+        // blocks ANY absolute-path `rm -rf /...`, so we don't assert those.)
+        assert!(!is_dangerous_command("rm -rf ./build"));
+        assert!(!is_dangerous_command("rm -rf node_modules"));
+        assert!(!is_dangerous_command("rm -rf target/debug"));
+        assert!(!is_dangerous_command("rm -rf dist"));
+        assert!(!is_dangerous_command("rm file.txt"));
+        assert!(!is_dangerous_command("rm -r ./old")); // recursive but not force
+        // The structural layer alone must not flag a relative recursive-force.
+        assert!(!has_catastrophic_rm("rm -rf ./build"));
+        assert!(has_catastrophic_rm("rm -r -f /usr"));
     }
 
     #[test]
