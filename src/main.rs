@@ -921,15 +921,7 @@ async fn event_loop(
                         // turn it back off so the next message starts clean.
                         // Uses the snapshot taken before finish_streaming,
                         // which already reset app.auto_agent_active.
-                        if was_auto_agent_active && app.agent_iterations == 0 {
-                            // No tool calls happened — revert to chat-only.
-                            app.agent_mode = false;
-                            app.current_conversation_mut().messages.retain(|(r, c)| {
-                                !(r == "system"
-                                    && (c.contains("You have access to the following tools")
-                                        || c.contains("You are Nerve, an AI coding assistant")))
-                            });
-                        }
+                        app.revert_auto_agent_activation(was_auto_agent_active);
 
                         // Pipeline: the current role's turn is complete
                         // (no tool calls outstanding — those take the
@@ -942,6 +934,7 @@ async fn event_loop(
                         break;
                     }
                     StreamEvent::Error(e) => {
+                        let was_auto_agent_active = app.auto_agent_active;
                         app.streaming_response.push_str(&format!("\n[Error: {e}]"));
                         app.finish_streaming();
                         // If a stream errors mid-workflow, tear the pipeline
@@ -951,6 +944,10 @@ async fn event_loop(
                         if app.pipeline.take().is_some() {
                             app.agent_mode = false;
                             app.set_status("Workflow stopped (stream error)");
+                        } else {
+                            // A stream error must also revert a silent auto-agent
+                            // activation, or it leaks into the next message.
+                            app.revert_auto_agent_activation(was_auto_agent_active);
                         }
                         finished = true;
                         break;
@@ -1045,6 +1042,7 @@ async fn handle_key_event(
     // workflow so the next user turn doesn't accidentally resume as a
     // pipeline role.
     if app.is_streaming && code == KeyCode::Esc {
+        let was_auto_agent_active = app.auto_agent_active;
         app.finish_streaming();
         let was_in_pipeline = app.pipeline.take().is_some();
         let msg = if was_in_pipeline {
@@ -1053,6 +1051,8 @@ async fn handle_key_event(
             app.agent_mode = false;
             "Workflow cancelled"
         } else {
+            // Cancelling a silently-activated auto-agent turn must revert it too.
+            app.revert_auto_agent_activation(was_auto_agent_active);
             "Generation stopped"
         };
         app.set_status(msg);
@@ -1299,8 +1299,12 @@ async fn handle_normal_mode(
                 KeyCode::Char(c @ '1'..='9') => {
                     let n = c.to_digit(10).expect("char matched '1'..='9'") as usize;
                     let conv = app.current_conversation();
-                    let idx = conv.messages.len().saturating_sub(n);
-                    if let Some((role, content)) = conv.messages.get(idx) {
+                    // #n counts back from the newest message (#1 == last). Use
+                    // checked_sub so that when the conversation has fewer than n
+                    // messages we fall through to "No message #n" instead of
+                    // saturating to index 0 and copying/mislabelling the oldest.
+                    let idx = conv.messages.len().checked_sub(n);
+                    if let Some((role, content)) = idx.and_then(|i| conv.messages.get(i)) {
                         let role = role.clone();
                         let content = content.clone();
                         match clipboard::copy_to_clipboard(&content) {
@@ -1896,11 +1900,17 @@ fn handle_history_browser(app: &mut App, key: crossterm::event::KeyEvent) {
                         .collect(),
                     created_at: record.created_at,
                 };
+                // Abort any in-flight stream before switching conversations,
+                // else its tokens keep buffering into an orphaned receiver and
+                // the spawned task leaks (mirrors new_conversation()).
+                app.cancel_active_stream();
                 app.conversations.push(conv);
                 app.active_conversation = app.conversations.len() - 1;
                 app.scroll_offset = 0;
                 app.streaming_response.clear();
                 app.is_streaming = false;
+                app.stream_rx = None;
+                app.streaming_start = None;
 
                 // Restore the model and provider from the history record.
                 if !record.model.is_empty() {
@@ -3532,10 +3542,15 @@ fn copy_last_assistant_message(app: &mut App) {
 
 /// Clear the active conversation's messages and reset streaming state.
 fn clear_conversation(app: &mut App) {
+    // Abort any in-flight provider/agent task first — otherwise the spawned
+    // task (and any subprocess it launched) keeps running detached and its
+    // abort handle dangles, exactly like new_conversation/finish_streaming.
+    app.cancel_active_stream();
     app.current_conversation_mut().messages.clear();
     app.streaming_response.clear();
     app.is_streaming = false;
     app.stream_rx = None;
+    app.streaming_start = None;
     app.scroll_offset = 0;
     app.set_status("Conversation cleared");
 }

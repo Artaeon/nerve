@@ -514,6 +514,24 @@ impl App {
         }
     }
 
+    /// Revert an automatic (intent-detected) agent-mode activation when the turn
+    /// produced no tool calls, so the activation and its injected system prompts
+    /// don't leak into the next message. `was_active` must be the value of
+    /// `auto_agent_active` snapshotted *before* `finish_streaming` cleared it.
+    ///
+    /// Called from every turn-terminating path — normal completion, Esc-cancel,
+    /// and stream error — so a silently-activated agent turn can never linger.
+    pub fn revert_auto_agent_activation(&mut self, was_active: bool) {
+        if was_active && self.agent_iterations == 0 {
+            self.agent_mode = false;
+            self.current_conversation_mut().messages.retain(|(r, c)| {
+                !(r == "system"
+                    && (c.contains("You have access to the following tools")
+                        || c.contains("You are Nerve, an AI coding assistant")))
+            });
+        }
+    }
+
     // ── Status ──────────────────────────────────────────────────────────
 
     /// Set a status message with an auto-clear timestamp.
