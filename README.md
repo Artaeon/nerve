@@ -17,7 +17,7 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-**38K lines of Rust | 1,640 tests | 186 prompts | 10 agent tools | 6 providers | multi-agent /workflow | 7.7 MB binary**
+**44K lines of Rust | 1,760+ tests | 186 prompts | 10 agent tools | 6 providers | multi-agent /workflow | 6.6 MB binary**
 
 [Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 

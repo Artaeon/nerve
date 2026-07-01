@@ -46,16 +46,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Clipboard**: Propagate permission-setting errors instead of silently ignoring
 - **Knowledge search**: Fix ln(0) edge case when scoring empty chunks
 - **Memory**: `truncate_output()` avoids collecting all lines before truncating
+- **SSRF (redirects)**: Redirects are followed manually with per-hop resolve-and-pin — every hop is re-validated against private IPs, closing DNS-rebind/redirect SSRF that a string-only final-URL check missed
+- **Secret-file leak**: Auto-context no longer reads `.env`/`id_rsa`/`.ssh`/credential files and injects them to the LLM (now matches the `read_file` tool guard)
+- **Path traversal**: `create_directory` and `/template` are now validated (previously bypassable with `..`/absolute paths)
+- **Persistence/exfil targets**: Agent writes are blocked to `~/.ssh/authorized_keys`, `~/.ssh/config`, shell rc files, `.git/hooks/*`, and credential files (`.aws/credentials`, `.netrc`, `.pgpass`) — the classic prompt-injection targets
+- **Dangerous-command denylist**: Structural `rm -r -f` detection resists flag-order / long-flag / path-prefixed-binary bypasses (`rm --recursive --force /`, `/bin/rm -rf /`)
+- **Daemon**: Control socket moved off world-shared `/tmp/nerve.sock` to a per-user `~/.nerve` dir (0700) with a 0600 socket, HOME-anchored for a deterministic client/daemon path
+- **Clipboard**: History file written 0600 atomically with no world-readable window; tests never touch the real OS clipboard or data dir
+
+#### Reliability & Context
+- **@file expansion**: Expanded once, on the latest user turn only — was re-reading each referenced file (up to 1 MB) and re-injecting it on *every* request (quadratic token growth); compaction now runs on the true payload
+- **Shared message builder**: The initial send, post-tool follow-up, and regenerate all build context the same way, so the active mode/persona, knowledge-base results, auto-context, and `@file` content are never silently dropped after a tool round or on regenerate
+- **Compaction**: Preserves chronological order and no longer hoists (or silently drops) mid-stream file/command context; notifies the user when it summarizes older turns
+- **Auto-agent**: Reliably reverts after a tool-running turn (no leak into the next plain message); injected project context no longer accumulates across activations
+- **Token accounting**: Unified estimator across the status bar, `/tokens`, `/context`, the spending check, and compaction (was inconsistent — the on-screen % was ~25% off)
+- Panic fixes on multibyte / edge-case input; bounded network and file reads; concurrent plugin pipe draining (fixes >64 KB output deadlock); u16 overflow fix in popup sizing on wide terminals
+
+#### UI/UX
+- Welcome/onboarding screen now appears on the common in-workspace first run
+- Typo'd slash commands are caught (`Unknown command …`) instead of being sent to the model
+- Friendly, provider-specific setup help on first run when no key/CLI/local server is configured
+- Errors/warnings linger longer than transient confirmations; `Esc: stop` hint during streaming; scrollable help overlay; bounded scroll
 
 ### Changed
 - Removed dead `/commit` handler from shell.rs (git.rs handles it)
 - Moved `build_git_author_flag` to git.rs where it's used
+- Split god files into cohesive modules: `main.rs` 5,100 → 2,280 lines (extracted `splash`, `provider_setup`, `completion`, `conversation`, `input`); extracted `ui::markdown`, `ui::{theme,selectors,status_bar,input_box}`, and `agent::tools::parse`
 
 ### Quality
-- Tests: 820 -> 1,345 (+525 tests)
-- 0 clippy warnings
+- Tests: 1,345 -> 1,760+
+- 0 clippy warnings (`-D warnings`)
 - 0 formatting issues
-- 11 security vulnerabilities fixed
+- Extensive additional security, context-management, and reliability hardening; no god files remaining
 
 ## [0.1.0] - 2025-04-01
 
