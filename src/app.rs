@@ -263,6 +263,10 @@ pub struct App {
     /// Set by `build_context_messages`; used for usage accounting so recorded
     /// tokens reflect what was sent, not the raw stored conversation.
     pub last_sent_tokens: usize,
+    /// Whether the last built payload had older turns summarized by compaction.
+    /// Tracked so the user is notified once when compaction begins, not on
+    /// every subsequent send.
+    pub context_compacting: bool,
 
     // -- plugins --
     pub plugins: Vec<crate::plugins::Plugin>,
@@ -414,6 +418,7 @@ impl App {
 
             total_tokens_used: 0,
             last_sent_tokens: 0,
+            context_compacting: false,
 
             plugins: Vec::new(),
 

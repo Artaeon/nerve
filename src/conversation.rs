@@ -263,6 +263,18 @@ pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<C
     };
     let final_messages = cm.compact_messages(&conversation_messages);
 
+    // Transparency: the first time compaction actually summarizes older turns,
+    // tell the user (older detail is now a lossy summary — they may want /new or
+    // a higher context_limit). Only fire on the transition, not every send.
+    let did_compact = final_messages.len() < conversation_messages.len();
+    if did_compact && !app.context_compacting {
+        let summarized = conversation_messages.len() - final_messages.len();
+        app.set_status(format!(
+            "Context compacted: summarized {summarized} older message(s) to fit the window"
+        ));
+    }
+    app.context_compacting = did_compact;
+
     let mut messages: Vec<ChatMessage> = final_messages
         .iter()
         .filter_map(|(role, content)| match role.as_str() {
@@ -347,13 +359,9 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
 
     // Check spending limit before sending.
     {
-        let estimated_tokens: usize = app
-            .current_conversation()
-            .messages
-            .iter()
-            .map(|(_, c)| c.len() / 4 + 1)
-            .sum::<usize>()
-            + 4000; // +4000 for expected response
+        let estimated_tokens = crate::agent::context::ContextManager::conversation_tokens(
+            &app.current_conversation().messages,
+        ) + 4000; // +4000 for expected response
         if let Some(warning) = app.spending_limit.would_exceed(
             &app.usage_stats,
             estimated_tokens,

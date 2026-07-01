@@ -115,8 +115,9 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             });
         }
 
-        let word_count = app.streaming_response.split_whitespace().count();
-        let approx_tokens = word_count * 4 / 3;
+        // Same estimator as the idle bar / compaction, over the partial text.
+        let approx_tokens =
+            crate::agent::context::ContextManager::estimate_tokens(&app.streaming_response);
         let elapsed_secs = app
             .streaming_start
             .map(|start| start.elapsed().as_secs_f64())
@@ -222,13 +223,12 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             )
         };
 
-        // Token/word count for the conversation.
-        let total_tokens: usize = app
-            .current_conversation()
-            .messages
-            .iter()
-            .map(|(_, content)| content.len() / 4 + 1)
-            .sum();
+        // Token count for the conversation. Use the SAME estimator that drives
+        // compaction (ContextManager) so the on-screen % matches the number the
+        // compactor actually acts on — otherwise the bar reads ~25% low.
+        let total_tokens = crate::agent::context::ContextManager::conversation_tokens(
+            &app.current_conversation().messages,
+        );
         let tokens_display = format_number(total_tokens);
         let context_limit = crate::agent::context::ContextManager::effective_limit(
             &app.selected_provider,

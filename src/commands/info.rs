@@ -330,11 +330,8 @@ fn handle_summary(app: &mut App) -> bool {
         .iter()
         .map(|(_, c)| c.split_whitespace().count())
         .sum();
-    let total_tokens = conv
-        .messages
-        .iter()
-        .map(|(_, c)| c.len() / 4 + 1)
-        .sum::<usize>();
+    // Same estimator as the status bar and compaction for a consistent number.
+    let total_tokens = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
 
     summary.push_str(&format!("Messages: {user_count} user, {ai_count} AI\n"));
     summary.push_str(&format!("Words: {total_words}\n"));
