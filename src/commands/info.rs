@@ -111,7 +111,8 @@ AI Provider\n\
   /agent on|off|status Toggle agent mode (AI tool loop)\n\
   /agent undo          Roll back to pre-agent git checkpoint\n\
   /agent diff          Show what the agent changed (git diff)\n\
-  /agent commit [msg]  Commit agent changes\n\
+  /agent commit [msg]  Commit agent changes (runs tests first; blocked on failure)\n\
+  /agent commit force [msg]  Commit without the test gate\n\
   /mode <name>        Switch mode (efficient/thorough/agent/learning/auto/code/review)\n\
   /autocontext        Auto-gather project context (alias: /ac)\n\
   /cwd <dir>          Set working directory\n\
@@ -138,6 +139,7 @@ Project Memory (.nerve/ — injected into every prompt)\n\
   /memory             Show project memory (brief + facts + decisions)\n\
   /decision <text>    Record a decision in the decision log\n\
   /decisions          Show the decision log\n\
+  /changes            Show the agent change journal\n\
   /improve <idea>     Add an idea to the improvement backlog\n\
   /improvements       List backlog (done <id> to close)\n\
   /task <title>       Add a task to the persistent backlog\n\

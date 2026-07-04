@@ -11,6 +11,7 @@
 //!   memory.md         # facts & conventions, one bullet per line (/remember)
 //!   brief.md          # engineering brief of the repo (/init)
 //!   decisions.jsonl   # append-only log of decisions {timestamp, text}
+//!   journal.jsonl     # append-only change journal {timestamp, tool, path, summary}
 //!   improvements.json # improvement backlog [{id, text, status, created}]
 //!   tasks.json        # task backlog [{id, title, status, created, updated}]
 //! ```
@@ -43,6 +44,15 @@ const TASK_STATUSES: [&str; 4] = ["pending", "in_progress", "done", "failed"];
 pub struct Decision {
     pub timestamp: String,
     pub text: String,
+}
+
+/// A single journaled agent change (successful write/edit/mkdir).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangeRecord {
+    pub timestamp: String,
+    pub tool: String,
+    pub path: String,
+    pub summary: String,
 }
 
 /// A backlog entry in the improvements directory.
@@ -186,6 +196,49 @@ impl ProjectStore {
             return Vec::new();
         };
         let all: Vec<Decision> = content
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        let skip = all.len().saturating_sub(n);
+        all.into_iter().skip(skip).collect()
+    }
+
+    // ── journal.jsonl ────────────────────────────────────────────────────
+
+    pub fn journal_path(&self) -> PathBuf {
+        self.dir.join("journal.jsonl")
+    }
+
+    /// Append a change record to the append-only change journal.
+    pub fn record_change(&self, tool: &str, path: &str, summary: &str) -> anyhow::Result<()> {
+        let summary = sanitize_line(summary);
+        if summary.is_empty() {
+            anyhow::bail!("cannot record a change with an empty summary");
+        }
+        self.ensure_dir()?;
+        let record = ChangeRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            tool: tool.to_string(),
+            path: path.to_string(),
+            summary,
+        };
+        let line = serde_json::to_string(&record)?;
+        let journal = self.journal_path();
+        let mut content = std::fs::read_to_string(&journal).unwrap_or_default();
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&line);
+        content.push('\n');
+        atomic_write(&journal, &content)
+    }
+
+    /// The most recent `n` journaled changes, oldest first.
+    pub fn recent_changes(&self, n: usize) -> Vec<ChangeRecord> {
+        let Ok(content) = std::fs::read_to_string(self.journal_path()) else {
+            return Vec::new();
+        };
+        let all: Vec<ChangeRecord> = content
             .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
@@ -434,6 +487,47 @@ mod tests {
         s.record_decision("good two").unwrap();
         let recent = s.recent_decisions(10);
         assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn changes_append_and_recent_returns_last_n() {
+        let (_d, s) = store();
+        for i in 1..=7 {
+            s.record_change("write_file", &format!("src/file{i}.rs"), "wrote 10 bytes")
+                .unwrap();
+        }
+        let recent = s.recent_changes(5);
+        assert_eq!(recent.len(), 5);
+        assert_eq!(recent.first().unwrap().path, "src/file3.rs");
+        assert_eq!(recent.last().unwrap().path, "src/file7.rs");
+        assert!(recent.iter().all(|c| c.tool == "write_file"));
+        assert!(recent.iter().all(|c| c.summary == "wrote 10 bytes"));
+    }
+
+    #[test]
+    fn changes_skip_corrupt_lines() {
+        let (_d, s) = store();
+        s.record_change("write_file", "a.rs", "wrote 1 bytes")
+            .unwrap();
+        // Corrupt the file with a bad line in the middle.
+        let path = s.journal_path();
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str("not json\n");
+        std::fs::write(&path, content).unwrap();
+        s.record_change("edit_file", "b.rs", "replaced snippet")
+            .unwrap();
+        let recent = s.recent_changes(10);
+        assert_eq!(recent.len(), 2);
+    }
+
+    #[test]
+    fn changes_reject_empty_and_flatten_multiline_summary() {
+        let (_d, s) = store();
+        assert!(s.record_change("write_file", "a.rs", "   ").is_err());
+        assert!(s.recent_changes(10).is_empty());
+        s.record_change("write_file", "a.rs", "line one\nline two")
+            .unwrap();
+        assert_eq!(s.recent_changes(10)[0].summary, "line one line two");
     }
 
     #[test]

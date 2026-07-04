@@ -1,5 +1,5 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/improve`, `/improvements`, `/task`, `/tasks`.
+//! `/decisions`, `/changes`, `/improve`, `/improvements`, `/task`, `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -135,6 +135,23 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             for d in &decisions {
                 let date = d.timestamp.split('T').next().unwrap_or("");
                 out.push_str(&format!("- [{date}] {}\n", d.text));
+            }
+            app.add_assistant_message(out);
+            true
+        }
+        "/changes" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            let changes = store.recent_changes(20);
+            if changes.is_empty() {
+                app.set_status("No changes journaled yet — the agent's writes are recorded here");
+                return true;
+            }
+            let mut out = String::from("## Change journal (most recent 20)\n\n");
+            for c in &changes {
+                let ts = format_change_timestamp(&c.timestamp);
+                out.push_str(&format!("- [{ts}] {} {} — {}\n", c.tool, c.path, c.summary));
             }
             app.add_assistant_message(out);
             true
@@ -281,6 +298,17 @@ fn build_analysis_input(ws: &crate::workspace::WorkspaceInfo) -> String {
     input
 }
 
+/// Render an RFC 3339 timestamp as "YYYY-MM-DD HH:MM" for journal listings.
+/// Falls back to the raw string when it isn't the expected simple shape.
+fn format_change_timestamp(ts: &str) -> String {
+    let spaced = ts.replacen('T', " ", 1);
+    if spaced.len() >= 16 && spaced.is_char_boundary(16) {
+        spaced[..16].to_string()
+    } else {
+        spaced
+    }
+}
+
 fn cap_chars(text: &str, max: usize) -> String {
     if text.len() <= max {
         text.to_string()
@@ -391,6 +419,44 @@ mod tests {
         assert!(handle(&mut app, "/decisions", &mock_provider()).await);
         let (_role, content) = app.current_conversation().messages.last().unwrap();
         assert!(content.contains("use ratatui"));
+    }
+
+    #[tokio::test]
+    async fn changes_lists_journal_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        let store = ProjectStore::for_workspace(dir.path());
+        store
+            .record_change("write_file", "src/lib.rs", "wrote 42 bytes")
+            .unwrap();
+        assert!(handle(&mut app, "/changes", &mock_provider()).await);
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("## Change journal"));
+        assert!(content.contains("write_file src/lib.rs — wrote 42 bytes"));
+        // Timestamp is rendered as "YYYY-MM-DD HH:MM" (no 'T', no seconds).
+        assert!(!content.contains('T') || !content.contains("+00:00"));
+    }
+
+    #[tokio::test]
+    async fn changes_empty_sets_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/changes", &mock_provider()).await);
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("No changes journaled yet"))
+        );
+    }
+
+    #[test]
+    fn change_timestamp_is_truncated_to_minutes() {
+        assert_eq!(
+            super::format_change_timestamp("2026-07-04T12:34:56.789Z"),
+            "2026-07-04 12:34"
+        );
+        // Unexpected shapes fall back to the (de-T'd) raw string.
+        assert_eq!(super::format_change_timestamp("bogus"), "bogus");
     }
 
     #[tokio::test]

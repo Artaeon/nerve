@@ -388,11 +388,53 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
         },
         _ if rest.starts_with("commit") => {
             let commit_rest = rest.strip_prefix("commit").unwrap_or("").trim();
-            let msg = if commit_rest.is_empty() {
-                "Changes made by Nerve agent".to_string()
+            let (force, msg) = parse_commit_args(commit_rest);
+
+            // Green gate: run the project's tests before committing, unless
+            // the user forces past it with `/agent commit force [msg]`.
+            let mut status_prefix = "";
+            if force {
+                status_prefix = "(gate skipped) ";
             } else {
-                commit_rest.to_string()
-            };
+                let test_cmd = crate::shell::detect_test_command();
+                if test_cmd.starts_with("echo ") {
+                    // detect_test_command's "no test command" sentinel.
+                    status_prefix = "(no tests detected) ";
+                } else {
+                    app.set_status(format!("Running tests before commit: {test_cmd}"));
+                    match crate::shell::run_command_with_timeout(test_cmd, app.command_timeout_secs)
+                    {
+                        Ok(result) if result.success && !result.timed_out => {}
+                        Ok(result) => {
+                            let combined = format!("{}\n{}", result.stdout, result.stderr);
+                            let blocked = match count_test_failures(&combined) {
+                                Some(n) if n > 0 => {
+                                    format!("Commit blocked: tests failing ({n})")
+                                }
+                                _ if result.timed_out => {
+                                    "Commit blocked: tests timed out".to_string()
+                                }
+                                _ => "Commit blocked: tests failing".to_string(),
+                            };
+                            app.set_status(format!("{blocked}. /agent commit force to override"));
+                            app.add_assistant_message(format!(
+                                "{blocked} — output tail:\n\n```\n{}\n```",
+                                tail_lines(&combined, 30)
+                            ));
+                            app.scroll_offset = 0;
+                            return true;
+                        }
+                        Err(e) => {
+                            app.set_status(format!(
+                                "Commit blocked: could not run tests ({e}). \
+                                 /agent commit force to override"
+                            ));
+                            return true;
+                        }
+                    }
+                }
+            }
+
             let cmd = format!(
                 "git add -A && git commit -m '{}'",
                 msg.replace('\'', "'\\''"),
@@ -401,7 +443,7 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                 Ok(result) => {
                     if result.success {
                         app.agent_has_stash = false;
-                        app.set_status("Agent changes committed");
+                        app.set_status(format!("{status_prefix}Agent changes committed"));
                     } else {
                         app.set_status(format!("Commit failed: {}", result.stderr));
                     }
@@ -418,12 +460,57 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                  - Run shell commands\n\
                  - Search code\n\
                  - Create directories\n\n\
-                 Usage: /agent on | off | status | undo | diff | commit [message]"
+                 Usage: /agent on | off | status | undo | diff | commit [force] [message]\n\
+                 (commit runs the project's tests first; 'force' skips the gate)"
             ));
         }
     }
     app.scroll_offset = 0;
     true
+}
+
+/// Split the arguments of `/agent commit [force] [msg]` into the force flag
+/// and the commit message (with the default message when none is given).
+fn parse_commit_args(rest: &str) -> (bool, String) {
+    let (force, msg_part) = match rest.strip_prefix("force") {
+        Some(r) if r.is_empty() || r.starts_with(char::is_whitespace) => (true, r.trim()),
+        _ => (false, rest),
+    };
+    let msg = if msg_part.is_empty() {
+        "Changes made by Nerve agent".to_string()
+    } else {
+        msg_part.to_string()
+    };
+    (force, msg)
+}
+
+/// Best-effort count of failing tests from runner output. Looks for the
+/// "<n> failed" phrasing shared by cargo test, pytest, jest, go test etc.,
+/// summing across multiple result lines (e.g. one per cargo test binary).
+fn count_test_failures(output: &str) -> Option<usize> {
+    let mut total: usize = 0;
+    let mut found = false;
+    for (idx, _) in output.match_indices(" failed") {
+        let digits: String = output[..idx]
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if digits.is_empty() {
+            continue;
+        }
+        let n: usize = digits.chars().rev().collect::<String>().parse().ok()?;
+        total = total.saturating_add(n);
+        found = true;
+    }
+    found.then_some(total)
+}
+
+/// The last `n` lines of `text`, joined back together.
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let skip = lines.len().saturating_sub(n);
+    lines[skip..].join("\n")
 }
 
 fn handle_cd(app: &mut App, trimmed: &str) -> bool {
@@ -882,6 +969,75 @@ mod tests {
         assert!(handle(&mut app, "/agent").await);
         let last = app.current_conversation().messages.last().unwrap();
         assert!(last.1.contains("Agent mode"));
+    }
+
+    // ── /agent commit argument parsing ──────────────────────────────────
+
+    #[test]
+    fn commit_args_default_message() {
+        assert_eq!(
+            parse_commit_args(""),
+            (false, "Changes made by Nerve agent".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_args_custom_message() {
+        assert_eq!(
+            parse_commit_args("fix the parser"),
+            (false, "fix the parser".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_args_force_without_message() {
+        assert_eq!(
+            parse_commit_args("force"),
+            (true, "Changes made by Nerve agent".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_args_force_with_message() {
+        assert_eq!(
+            parse_commit_args("force ship it"),
+            (true, "ship it".to_string())
+        );
+    }
+
+    #[test]
+    fn commit_args_force_prefix_word_is_message() {
+        // "forceful ..." is a message, not the force flag.
+        assert_eq!(
+            parse_commit_args("forceful refactor"),
+            (false, "forceful refactor".to_string())
+        );
+    }
+
+    #[test]
+    fn count_failures_cargo_style() {
+        let out = "test result: FAILED. 1804 passed; 3 failed; 1 ignored";
+        assert_eq!(count_test_failures(out), Some(3));
+    }
+
+    #[test]
+    fn count_failures_sums_multiple_binaries() {
+        let out = "test result: FAILED. 10 passed; 2 failed;\n\
+                   test result: FAILED. 5 passed; 1 failed;";
+        assert_eq!(count_test_failures(out), Some(3));
+    }
+
+    #[test]
+    fn count_failures_none_when_absent() {
+        assert_eq!(count_test_failures("error: build failed somehow"), None);
+        assert_eq!(count_test_failures(""), None);
+    }
+
+    #[test]
+    fn tail_lines_returns_last_n() {
+        let text = "a\nb\nc\nd";
+        assert_eq!(tail_lines(text, 2), "c\nd");
+        assert_eq!(tail_lines(text, 10), "a\nb\nc\nd");
     }
 
     // ── /code ───────────────────────────────────────────────────────────
