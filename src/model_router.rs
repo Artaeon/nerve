@@ -64,78 +64,129 @@ pub fn tier_for_step(step: PipelineStep) -> Option<ModelTier> {
     }
 }
 
-/// Signals that a single-turn request is hard enough to warrant the strong
-/// model — design, cross-cutting change, or genuine investigation.
-const HEAVY_SIGNALS: &[&str] = &[
+/// Single WORDS that warrant the strong model. Matched on word boundaries (not
+/// as substrings) so e.g. "design" does not fire on "designate"/"designer".
+const HEAVY_WORDS: &[&str] = &[
     "architect",
     "architecture",
     "design",
-    "refactor",
     "redesign",
+    "refactor",
+    "refactoring",
     "rewrite",
+    "rewriting",
     "migrate",
+    "migration",
     "debug",
+    "debugging",
     "investigate",
-    "root cause",
-    "why does",
-    "why is",
     "optimize",
     "optimise",
+    "optimization",
     "performance",
-    "concurren",
-    "race condition",
+    "concurrency",
+    "concurrent",
     "deadlock",
     "security",
-    "vulnerab",
-    "across the",
-    "multiple files",
-    "whole codebase",
-    "entire codebase",
-    "end to end",
-    "end-to-end",
+    "vulnerability",
+    "threadsafe",
 ];
 
-/// Signals that a request is trivial enough for the small model — mechanical,
-/// localized edits with tiny context.
-const LIGHT_SIGNALS: &[&str] = &[
+/// Multi-word PHRASES that warrant the strong model. Matched as substrings —
+/// safe because each phrase is distinctive enough not to false-match.
+const HEAVY_PHRASES: &[&str] = &[
+    "root cause",
+    "race condition",
+    "why does",
+    "why is",
+    "end to end",
+    "end-to-end",
+    "thread safe",
+    "thread-safe",
+];
+
+/// Scope signals: the task spans many files / the whole project. These force at
+/// least the strong model even when a "light" verb (rename/format/…) is present,
+/// so a large cross-cutting change is never downgraded to the small model.
+const SCOPE_PHRASES: &[&str] = &[
+    "across",
+    "codebase",
+    "call site",
+    "throughout",
+    "every file",
+    "all files",
+    "each file",
+    "entire ",
+    "whole project",
+    "multiple files",
+    "everywhere",
+];
+
+/// Single WORDS that mark a trivial, mechanical edit (small context). Matched on
+/// word boundaries. Only downgrade when NO scope signal is present.
+const LIGHT_WORDS: &[&str] = &[
     "typo",
+    "typos",
     "rename",
     "spelling",
     "whitespace",
-    "format ",
     "reformat",
-    "run fmt",
+    "docstring",
+    "docstrings",
+    "capitalize",
+    "lowercase",
+    "uppercase",
+    "indent",
+    "indentation",
+];
+
+/// Trivial multi-word phrases (substring-matched).
+const LIGHT_PHRASES: &[&str] = &[
     "add a comment",
     "add comment",
-    "docstring",
     "bump the version",
     "bump version",
     "print statement",
     "log line",
-    "capitalize",
-    "lowercase",
-    "uppercase",
+    "log message",
+    "run fmt",
 ];
 
-/// Longest single-turn message (chars) still eligible for the small model when
-/// it carries no complexity signal. Deliberately tight: only a genuinely terse
-/// instruction downgrades on length alone, so a normal medium request keeps the
-/// baseline model rather than being quietly starved.
-const SHORT_MESSAGE_CHARS: usize = 35;
+/// The set of lowercase alphanumeric words in a string, for word-boundary
+/// signal matching (so short keywords can't false-match inside longer words).
+fn word_set(lower: &str) -> std::collections::HashSet<&str> {
+    lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect()
+}
 
-/// Classify a single-turn request into a tier from its text. Conservative:
-/// defaults to `Standard`, only escalating or downgrading on clear signals so a
-/// normal request is never quietly starved of capability.
+/// Classify a single-turn request into a tier from its text.
+///
+/// Conservative and quality-first: defaults to `Standard`. Escalates to `Heavy`
+/// on a word-boundary heavy keyword, a heavy phrase, OR any scope signal
+/// (multi-file / whole-project work). Downgrades to `Light` ONLY for an
+/// explicitly trivial, scope-free edit — length alone never downgrades, so a
+/// short-but-real request ("fix the login bug") keeps the baseline model.
 pub fn classify_message(text: &str) -> ModelTier {
     let lower = text.to_lowercase();
-    if HEAVY_SIGNALS.iter().any(|s| lower.contains(s)) {
+    let words = word_set(&lower);
+
+    let has_scope = SCOPE_PHRASES.iter().any(|s| lower.contains(s));
+    let is_heavy = has_scope
+        || HEAVY_WORDS.iter().any(|w| words.contains(w))
+        || HEAVY_PHRASES.iter().any(|p| lower.contains(p));
+    if is_heavy {
         return ModelTier::Heavy;
     }
-    let has_light_signal = LIGHT_SIGNALS.iter().any(|s| lower.contains(s));
-    let is_short = text.trim().chars().count() <= SHORT_MESSAGE_CHARS;
-    if has_light_signal || is_short {
+
+    let is_light = !has_scope
+        && (LIGHT_WORDS.iter().any(|w| words.contains(w))
+            || LIGHT_PHRASES.iter().any(|p| lower.contains(p)));
+    if is_light {
         return ModelTier::Light;
     }
+
     ModelTier::Standard
 }
 
@@ -255,8 +306,10 @@ mod tests {
             ModelTier::Light
         );
         assert_eq!(classify_message("rename foo to bar"), ModelTier::Light);
-        // Very short asks are treated as light even without a keyword.
-        assert_eq!(classify_message("add a test"), ModelTier::Light);
+        assert_eq!(
+            classify_message("add a docstring to this function"),
+            ModelTier::Light
+        );
     }
 
     #[test]
@@ -266,6 +319,47 @@ mod tests {
                 "implement pagination for the users endpoint and return a next-page cursor"
             ),
             ModelTier::Standard
+        );
+        // A short-but-real request must NOT be downgraded on length alone
+        // (regression: the old ≤35-char rule sent these to the weakest model).
+        assert_eq!(classify_message("fix the login bug"), ModelTier::Standard);
+        assert_eq!(classify_message("make the tests pass"), ModelTier::Standard);
+        assert_eq!(classify_message("add rate limiting"), ModelTier::Standard);
+        // "add a test" is real work, not a mechanical edit → baseline, not tiny.
+        assert_eq!(classify_message("add a test"), ModelTier::Standard);
+    }
+
+    #[test]
+    fn classify_scope_overrides_light_verb() {
+        // A "light" verb on a cross-cutting task must escalate, not downgrade
+        // (regression F1: "rename … across all files" was going to haiku).
+        assert_eq!(
+            classify_message(
+                "rename UserService to AccountService across all 40 files and update every call site"
+            ),
+            ModelTier::Heavy
+        );
+        assert_eq!(
+            classify_message("reformat every file in the codebase"),
+            ModelTier::Heavy
+        );
+    }
+
+    #[test]
+    fn classify_heavy_words_match_on_boundaries_not_substrings() {
+        // Regression F3: "design" must not fire on "designate"/"designer".
+        assert_eq!(
+            classify_message("designate the code owners in CODEOWNERS"),
+            ModelTier::Standard
+        );
+        assert_eq!(
+            classify_message("update the designer credits in the footer"),
+            ModelTier::Standard
+        );
+        // But the real word still escalates.
+        assert_eq!(
+            classify_message("design a new caching layer"),
+            ModelTier::Heavy
         );
     }
 
