@@ -98,7 +98,111 @@ fn try_detect(dir: &Path) -> Option<WorkspaceInfo> {
         return Some(detect_cpp(dir));
     }
 
+    // Any git repository is a workspace, even without a language manifest —
+    // "open an existing project and it just works". The language is guessed
+    // from the dominant source-file extension; the per-language detectors all
+    // handle missing manifests gracefully.
+    if dir.join(".git").exists() {
+        return Some(detect_git_repo(dir));
+    }
+
     None
+}
+
+/// Fallback detection for manifest-less git repositories.
+fn detect_git_repo(dir: &Path) -> WorkspaceInfo {
+    match dominant_language(dir) {
+        Some(ProjectType::Rust) => detect_rust(dir),
+        Some(ProjectType::Node) => detect_node(dir),
+        Some(ProjectType::Python) => detect_python(dir),
+        Some(ProjectType::Go) => detect_go(dir),
+        Some(ProjectType::Java) => detect_java(dir),
+        Some(ProjectType::Ruby) => detect_ruby(dir),
+        Some(ProjectType::Elixir) => detect_elixir(dir),
+        Some(ProjectType::Zig) => detect_zig(dir),
+        Some(ProjectType::CSharp) => detect_csharp(dir),
+        Some(ProjectType::Cpp) => detect_cpp(dir),
+        _ => {
+            // Generic repository: name + README first paragraph.
+            let mut description = String::new();
+            if let Ok(content) = fs::read_to_string(dir.join("README.md"))
+                && let Some(line) = content
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && !l.starts_with('#'))
+            {
+                description = line.chars().take(200).collect();
+            }
+            let key_files = ["README.md", ".gitignore", "LICENSE", "Dockerfile"]
+                .iter()
+                .filter(|f| dir.join(f).exists())
+                .map(|s| (*s).to_string())
+                .collect();
+            WorkspaceInfo {
+                root: dir.to_path_buf(),
+                project_type: ProjectType::Unknown,
+                name: dir_name(dir),
+                description,
+                key_files,
+                tech_stack: vec!["Git repository".into()],
+            }
+        }
+    }
+}
+
+/// Guess the project language from source-file extensions in the repo root
+/// and common source directories. Cheap: shallow scan, capped entry count.
+fn dominant_language(dir: &Path) -> Option<ProjectType> {
+    use std::collections::HashMap;
+    let mut counts: HashMap<&'static str, usize> = HashMap::new();
+    let mut scanned = 0usize;
+
+    let scan = |d: &Path, counts: &mut HashMap<&'static str, usize>, scanned: &mut usize| {
+        let Ok(entries) = fs::read_dir(d) else { return };
+        for entry in entries.filter_map(Result::ok) {
+            if *scanned >= 400 {
+                return;
+            }
+            *scanned += 1;
+            let path = entry.path();
+            let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            let key = match ext {
+                "rs" => "rs",
+                "js" | "jsx" | "ts" | "tsx" | "mjs" => "js",
+                "py" => "py",
+                "go" => "go",
+                "java" | "kt" => "java",
+                "rb" => "rb",
+                "ex" | "exs" => "ex",
+                "zig" => "zig",
+                "cs" => "cs",
+                "c" | "cc" | "cpp" | "h" | "hpp" => "cpp",
+                _ => continue,
+            };
+            *counts.entry(key).or_default() += 1;
+        }
+    };
+
+    scan(dir, &mut counts, &mut scanned);
+    for sub in ["src", "lib", "app", "tests", "test"] {
+        scan(&dir.join(sub), &mut counts, &mut scanned);
+    }
+
+    let (key, _) = counts.into_iter().max_by_key(|(_, n)| *n)?;
+    Some(match key {
+        "rs" => ProjectType::Rust,
+        "js" => ProjectType::Node,
+        "py" => ProjectType::Python,
+        "go" => ProjectType::Go,
+        "java" => ProjectType::Java,
+        "rb" => ProjectType::Ruby,
+        "ex" => ProjectType::Elixir,
+        "zig" => ProjectType::Zig,
+        "cs" => ProjectType::CSharp,
+        _ => ProjectType::Cpp,
+    })
 }
 
 fn has_extension(dir: &Path, ext: &str) -> bool {
@@ -774,6 +878,71 @@ mod tests {
         // It may detect a parent project — check that it doesn't detect within inner
         // The empty inner dir itself should not be detected
         assert!(try_detect(&inner).is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Git-repo fallback detection ────────────────────────────────────────
+
+    #[test]
+    fn git_repo_without_manifest_detects_python() {
+        let dir = std::env::temp_dir().join("nerve_test_git_py");
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/main.py"), "print('hi')\n").unwrap();
+        fs::write(dir.join("src/util.py"), "x = 1\n").unwrap();
+
+        let ws = try_detect(&dir).expect("git repo must be detected as a workspace");
+        assert_eq!(ws.project_type, ProjectType::Python);
+        assert_eq!(ws.root, dir);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bare_git_repo_detects_generic_workspace() {
+        let dir = std::env::temp_dir().join("nerve_test_git_bare");
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(dir.join("README.md"), "# thing\n\nA generic repo.\n").unwrap();
+
+        let ws = try_detect(&dir).expect("git repo must be detected as a workspace");
+        assert_eq!(ws.project_type, ProjectType::Unknown);
+        assert_eq!(ws.description, "A generic repo.");
+        assert!(ws.key_files.contains(&"README.md".to_string()));
+        assert_eq!(ws.tech_stack, vec!["Git repository".to_string()]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn manifest_beats_git_fallback() {
+        let dir = std::env::temp_dir().join("nerve_test_git_manifest");
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+
+        let ws = try_detect(&dir).unwrap();
+        assert_eq!(ws.project_type, ProjectType::Rust);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dominant_language_prefers_most_common_extension() {
+        let dir = std::env::temp_dir().join("nerve_test_dominant");
+        fs::remove_dir_all(&dir).ok();
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.go"), "").unwrap();
+        fs::write(dir.join("b.go"), "").unwrap();
+        fs::write(dir.join("c.py"), "").unwrap();
+
+        assert_eq!(dominant_language(&dir), Some(ProjectType::Go));
 
         fs::remove_dir_all(&dir).ok();
     }
