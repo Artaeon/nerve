@@ -3,6 +3,11 @@
 
 use crate::app::{self, App};
 
+/// Timeout (seconds) for the `/agent commit` green gate's test run. Sized
+/// for a whole suite, not a single tool command — `command_timeout_secs`
+/// (30s default) is far too short and would time every real suite out.
+const TEST_GATE_TIMEOUT_SECS: u64 = 600;
+
 /// Handle AI-related commands. Returns `true` if the command was handled.
 pub async fn handle(app: &mut App, trimmed: &str) -> bool {
     if trimmed == "/models" {
@@ -402,8 +407,13 @@ fn handle_agent(app: &mut App, trimmed: &str) -> bool {
                     status_prefix = "(no tests detected) ";
                 } else {
                     app.set_status(format!("Running tests before commit: {test_cmd}"));
-                    match crate::shell::run_command_with_timeout(test_cmd, app.command_timeout_secs)
-                    {
+                    // A full test suite routinely runs longer than the
+                    // per-tool command timeout (30s default), so use a much
+                    // larger budget here — otherwise every real suite would
+                    // "time out" and permanently block commits. Honour a
+                    // higher user-configured timeout if they've set one.
+                    let test_timeout = app.command_timeout_secs.max(TEST_GATE_TIMEOUT_SECS);
+                    match crate::shell::run_command_with_timeout(test_cmd, test_timeout) {
                         Ok(result) if result.success && !result.timed_out => {}
                         Ok(result) => {
                             let combined = format!("{}\n{}", result.stdout, result.stderr);

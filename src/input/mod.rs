@@ -56,6 +56,23 @@ pub(crate) async fn handle_key_event(
         return Ok(());
     }
 
+    // Escape while a workflow is parked at the approval gate (not streaming)
+    // cancels it — same as /reject. Without this the paused pipeline can't
+    // be dismissed with Esc and the app looks stuck.
+    if !app.is_streaming
+        && code == KeyCode::Esc
+        && app
+            .pipeline
+            .as_ref()
+            .is_some_and(|p| p.step == crate::agent::pipeline::PipelineStep::AwaitingApproval)
+    {
+        app.pipeline = None;
+        app.agent_mode = false;
+        app.agent_iterations = 0;
+        app.set_status("Workflow cancelled — plan rejected, nothing was executed");
+        return Ok(());
+    }
+
     // ── Global keys (always active) ─────────────────────────────────────
     if mods.contains(KeyModifiers::CONTROL) {
         match code {

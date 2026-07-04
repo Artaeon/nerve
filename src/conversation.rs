@@ -125,6 +125,20 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
         }
     }
 
+    // ── Plan-approval gate: block ordinary messages while parked ──────
+    // When a workflow is paused waiting for the user to review its plan,
+    // a normal chat message must not slip through (it would otherwise get
+    // a plain reply and muddy the paused state). Only /approve and /reject
+    // — handled above as slash commands — may proceed.
+    if app
+        .pipeline
+        .as_ref()
+        .is_some_and(|p| p.step == crate::agent::pipeline::PipelineStep::AwaitingApproval)
+    {
+        app.set_status("Plan awaiting approval — /approve to run it, /reject to cancel");
+        return;
+    }
+
     // ── Auto-agent: detect intent and temporarily enable tools ────────
     // Inside a detected workspace, coding work is the default: any message
     // that isn't clearly conversational activates the agent. Outside a
@@ -449,10 +463,39 @@ pub(crate) async fn advance_pipeline_if_active(
     app: &mut App,
     provider: &Arc<dyn AiProvider>,
 ) -> Option<crate::agent::pipeline::PipelineStep> {
+    advance_pipeline_inner(app, provider, false).await
+}
+
+/// Advance a pipeline that is parked at the plan-approval gate. This is the
+/// ONLY path allowed to move past `AwaitingApproval` — the event-loop Done
+/// handler uses `advance_pipeline_if_active` (approved = false), which leaves
+/// a parked pipeline untouched so a stray interim message can't trigger the
+/// coder without the user's `/approve`.
+pub(crate) async fn approve_and_advance_pipeline(
+    app: &mut App,
+    provider: &Arc<dyn AiProvider>,
+) -> Option<crate::agent::pipeline::PipelineStep> {
+    advance_pipeline_inner(app, provider, true).await
+}
+
+async fn advance_pipeline_inner(
+    app: &mut App,
+    provider: &Arc<dyn AiProvider>,
+    approved: bool,
+) -> Option<crate::agent::pipeline::PipelineStep> {
     use crate::agent::pipeline::{PipelineStep, should_iterate_on_feedback};
 
     // No active workflow — nothing to do.
     let current_step = app.pipeline.as_ref()?.step;
+
+    // A pipeline parked at the approval gate must never be advanced by the
+    // event-loop Done path — only an explicit `/approve` (approved = true)
+    // may move it forward. Without this, sending any ordinary message while
+    // the plan is on screen would stream a turn whose Done handler advances
+    // AwaitingApproval → Coding and executes the plan without consent.
+    if current_step == PipelineStep::AwaitingApproval && !approved {
+        return Some(PipelineStep::AwaitingApproval);
+    }
 
     // Special case: when the Reviewer's turn just finished, look at its
     // verdict. If it asked for fixes and we still have iteration
@@ -597,9 +640,19 @@ pub(crate) async fn run_agent_tools_task(
 ) {
     use crate::agent::pipeline::ToolPolicy;
 
-    // Tools that mutate the filesystem or execute arbitrary commands.
-    // ReadOnly roles may call everything else.
-    const WRITE_TOOLS: &[&str] = &["write_file", "edit_file", "run_command", "create_directory"];
+    // Tools that mutate state (filesystem, shell, or persistent project
+    // memory). ReadOnly roles may call everything else. `remember` and
+    // `update_tasks` write into .nerve/ — which is injected into every
+    // future prompt — so a ReadOnly role (the pre-approval Planner, the
+    // Reviewer) must not be able to use them to plant persistent content.
+    const WRITE_TOOLS: &[&str] = &[
+        "write_file",
+        "edit_file",
+        "run_command",
+        "create_directory",
+        "remember",
+        "update_tasks",
+    ];
 
     let mut results = format!("{TOOL_RESULTS_PREFIX}\n\n");
     let mut all_success = true;

@@ -77,7 +77,7 @@ async fn handle_approve(app: &mut App, provider: &Arc<dyn AiProvider>) -> bool {
     use crate::agent::pipeline::PipelineStep;
     match app.pipeline.as_ref().map(|p| p.step) {
         Some(PipelineStep::AwaitingApproval) => {
-            crate::conversation::advance_pipeline_if_active(app, provider).await;
+            crate::conversation::approve_and_advance_pipeline(app, provider).await;
         }
         Some(_) => app.set_status("Workflow is running — nothing awaiting approval"),
         None => app.set_status("No active workflow — /workflow <task> to start one"),
@@ -113,8 +113,9 @@ async fn handle_workflow(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProv
     // to abandon it or runs Esc-confirmed again.
     if app.pipeline.is_some() {
         app.add_assistant_message(
-            "A workflow is already active (paused). Use /new to abandon it \
-             before starting a fresh one, or resume by sending a message."
+            "A workflow is already active. If it's awaiting approval, use \
+             /approve or /reject; otherwise /new abandons it before you \
+             start a fresh one."
                 .into(),
         );
         return true;
@@ -161,6 +162,13 @@ fn handle_clear(app: &mut App) -> bool {
     app.is_streaming = false;
     app.stream_rx = None;
     app.scroll_offset = 0;
+    // Tear down any active workflow too — clearing the conversation deletes
+    // the plan text, so leaving a parked pipeline alive would strand it
+    // (and a later message could advance it). Mirror /new and /reject.
+    if app.pipeline.take().is_some() {
+        app.agent_mode = false;
+        app.agent_iterations = 0;
+    }
     app.set_status("Conversation cleared");
     true
 }

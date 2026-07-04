@@ -1961,6 +1961,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_agent_tools_read_only_blocks_memory_mutations() {
+        // Regression: `remember` and `update_tasks` mutate .nerve/ (which is
+        // injected into every prompt), so a ReadOnly role — the pre-approval
+        // Planner and the Reviewer — must NOT be able to call them.
+        use crate::agent::pipeline::ToolPolicy;
+        use crate::agent::tools::ToolCall;
+        use std::collections::HashMap;
+
+        for tool in ["remember", "update_tasks"] {
+            let mut args = HashMap::new();
+            args.insert("fact".to_string(), "injected".to_string());
+            args.insert("action".to_string(), "add".to_string());
+            args.insert("title".to_string(), "injected".to_string());
+            let calls = vec![ToolCall {
+                tool: tool.to_string(),
+                args,
+            }];
+
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            run_agent_tools_task(calls, 5, ToolPolicy::ReadOnly, tx).await;
+
+            let mut events = Vec::new();
+            while let Ok(ev) = rx.try_recv() {
+                events.push(ev);
+            }
+            let tool_done = events
+                .iter()
+                .find_map(|e| match e {
+                    StreamEvent::ToolDone { success, .. } => Some(*success),
+                    _ => None,
+                })
+                .expect("ToolDone missing");
+            assert!(!tool_done, "{tool} must be blocked under ReadOnly");
+        }
+    }
+
+    #[tokio::test]
     async fn run_agent_tools_read_only_permits_read_tools() {
         use crate::agent::pipeline::ToolPolicy;
         use crate::agent::tools::ToolCall;
@@ -2124,6 +2161,53 @@ mod tests {
             .unwrap_or_default();
         assert!(last_assistant.contains("/approve"));
         assert!(last_assistant.contains("/reject"));
+    }
+
+    #[tokio::test]
+    async fn parked_pipeline_is_not_advanced_by_event_loop_done() {
+        // Regression: a workflow parked at the approval gate must NOT be
+        // advanced by the ordinary Done path (approved = false) — only by
+        // an explicit /approve. Otherwise a stray interim message executes
+        // the plan without consent.
+        let mut app = App::new();
+        let mut state = crate::agent::pipeline::PipelineState::new("task".into());
+        state.step = crate::agent::pipeline::PipelineStep::AwaitingApproval;
+        app.pipeline = Some(state);
+        let scripted = Arc::new(ScriptedProvider::new(vec![""]));
+        let provider: Arc<dyn crate::ai::provider::AiProvider> = scripted.clone();
+
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+
+        assert_eq!(
+            step,
+            Some(crate::agent::pipeline::PipelineStep::AwaitingApproval),
+            "Done path must leave a parked pipeline parked"
+        );
+        assert_eq!(
+            app.pipeline.as_ref().unwrap().step,
+            crate::agent::pipeline::PipelineStep::AwaitingApproval
+        );
+        assert_eq!(scripted.call_count(), 0, "no coder turn without /approve");
+    }
+
+    #[tokio::test]
+    async fn approve_advances_parked_pipeline_to_coding() {
+        // The /approve path (approved = true) is the ONLY way past the gate.
+        let mut app = App::new();
+        let mut state = crate::agent::pipeline::PipelineState::new("task".into());
+        state.step = crate::agent::pipeline::PipelineStep::AwaitingApproval;
+        app.pipeline = Some(state);
+        app.add_user_message("task".into());
+        let provider: Arc<dyn crate::ai::provider::AiProvider> =
+            Arc::new(ScriptedProvider::new(vec![""]));
+
+        let step = crate::conversation::approve_and_advance_pipeline(&mut app, &provider).await;
+
+        assert_eq!(step, Some(crate::agent::pipeline::PipelineStep::Coding));
+        assert_eq!(
+            app.pipeline.as_ref().unwrap().step,
+            crate::agent::pipeline::PipelineStep::Coding
+        );
     }
 
     #[tokio::test]

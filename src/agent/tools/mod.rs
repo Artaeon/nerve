@@ -113,6 +113,8 @@ pub fn tools_system_prompt() -> String {
     let mut prompt = String::from(
 "You are Nerve, an AI coding assistant with direct access to the user's filesystem and terminal. You can read files, write code, edit existing files, run commands, and search the codebase.
 
+IMPORTANT — HOW TOOLS WORK HERE: Any built-in/native tool mechanism you may have is DISABLED in this session. Do NOT try to use native tools, do NOT ask the user to grant permissions, and NEVER claim you are blocked or lack write access — you are not. The ONLY way to read or modify files or run commands is the <tool_call> text format below; Nerve executes it and returns results.
+
 TOOL FORMAT — You MUST use this exact format to call tools:
 
 <tool_call>
