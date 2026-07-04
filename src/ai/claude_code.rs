@@ -392,12 +392,7 @@ impl AiProvider for ClaudeCodeProvider {
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(anyhow!(
-                    "claude exited with {}: {}{}",
-                    output.status,
-                    stderr,
-                    stdout
-                ));
+                return Err(anyhow!(friendly_cli_error(&stderr, &stdout)));
             }
 
             // The JSON output has a "result" field containing the response text.
@@ -449,9 +444,68 @@ impl AiProvider for ClaudeCodeProvider {
     }
 }
 
+/// Turn a failed `claude` CLI invocation into a human-readable error.
+///
+/// The CLI often prints a full JSON result object on failure; showing that
+/// blob verbatim is unreadable. Extract the `result` message when present and
+/// add actionable guidance for the common "not logged in" case.
+fn friendly_cli_error(stderr: &str, stdout: &str) -> String {
+    // Prefer the JSON `result` field from stdout (the CLI's own message).
+    let json_msg = serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()
+        .and_then(|v| v["result"].as_str().map(str::to_string))
+        .filter(|s| !s.is_empty());
+
+    let msg = json_msg.unwrap_or_else(|| {
+        let s = stderr.trim();
+        if s.is_empty() {
+            "claude CLI failed with no error output".to_string()
+        } else {
+            s.to_string()
+        }
+    });
+
+    if msg.to_lowercase().contains("not logged in") || msg.contains("/login") {
+        format!(
+            "Claude: {msg}\n\nRun `claude` in a terminal and use /login to sign in, then retry."
+        )
+    } else {
+        format!("Claude: {msg}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── friendly_cli_error ───────────────────────────────────────────────
+
+    #[test]
+    fn friendly_error_extracts_json_result() {
+        let stdout = r#"{"type":"result","is_error":true,"result":"Not logged in · Please run /login","session_id":"x"}"#;
+        let msg = friendly_cli_error("", stdout);
+        assert!(msg.contains("Not logged in"));
+        assert!(
+            msg.contains("/login to sign in"),
+            "adds actionable guidance"
+        );
+        assert!(
+            !msg.contains("session_id"),
+            "raw JSON must not leak through"
+        );
+    }
+
+    #[test]
+    fn friendly_error_falls_back_to_stderr() {
+        let msg = friendly_cli_error("command not found: something", "not json");
+        assert!(msg.contains("command not found"));
+    }
+
+    #[test]
+    fn friendly_error_handles_empty_output() {
+        let msg = friendly_cli_error("", "");
+        assert!(msg.contains("no error output"));
+    }
 
     // ── build_prompt: user-only messages ────────────────────────────────
 

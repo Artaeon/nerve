@@ -215,6 +215,192 @@ pub fn needs_tools(message: &str) -> bool {
     false
 }
 
+/// Decide whether the auto-agent should activate for this message.
+///
+/// Strategy: `needs_tools` catches strong positive signals anywhere. Inside a
+/// detected workspace we go further — coding work is the default, so any
+/// message that is *not* clearly conversational (pure knowledge question,
+/// translation, creative writing, greeting) activates the agent. This is the
+/// "paste a prompt and it works" path: the cost of enabling tools for a chat
+/// message is a few hundred prompt tokens; the cost of *not* enabling them for
+/// a task is total failure (the model can't see the code it's asked about).
+pub fn should_activate_agent(message: &str, in_workspace: bool) -> bool {
+    if needs_tools(message) {
+        return true;
+    }
+    if !in_workspace {
+        return false;
+    }
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    !is_conversational(trimmed)
+}
+
+/// Returns `true` when the message is clearly chat-only: a general-knowledge
+/// question, translation/summarization request, creative writing, or greeting
+/// that references no project artifact and asks for no code change.
+pub fn is_conversational(message: &str) -> bool {
+    let lower = message.to_lowercase();
+
+    // Any reference to a concrete project artifact means the model will want
+    // to look at the code — not conversational.
+    if has_path_like(&lower) || references_project_artifact(&lower) {
+        return false;
+    }
+
+    // Imperative coding verbs imply work on the project even without a named
+    // artifact ("make it faster", "investigate", "clean up the warnings").
+    const ACTION_VERBS: &[&str] = &[
+        "fix",
+        "add",
+        "implement",
+        "change",
+        "update",
+        "improve",
+        "remove",
+        "rename",
+        "refactor",
+        "build",
+        "investigate",
+        "debug",
+        "optimize",
+        "optimise",
+        "migrate",
+        "upgrade",
+        "install",
+        "configure",
+        "integrate",
+        "extract",
+        "delete",
+        "document",
+        "bump",
+        "deploy",
+        "run",
+        "commit",
+        "revert",
+        "merge",
+        "rebase",
+        "lint",
+        "format",
+    ];
+    if ACTION_VERBS.iter().any(|v| contains_word(&lower, v)) {
+        return false;
+    }
+
+    // Pure knowledge / conceptual questions.
+    const CONVERSATIONAL_MARKERS: &[&str] = &[
+        "what is",
+        "what are",
+        "what does",
+        "what do you think",
+        "how does",
+        "how do i learn",
+        "why is",
+        "why are",
+        "why do",
+        "explain",
+        "compare",
+        "difference between",
+        "translate",
+        "summarize",
+        "summarise",
+        "define",
+        "tell me about",
+        "help me understand",
+        "suggest",
+        "recommend",
+        "brainstorm",
+        "write a poem",
+        "write an essay",
+        "write a blog",
+        "write an email",
+        "write a story",
+        "thank you",
+    ];
+    if CONVERSATIONAL_MARKERS
+        .iter()
+        .any(|m| contains_phrase(&lower, m))
+    {
+        return true;
+    }
+
+    // Greetings — word-boundary matched so "hey" doesn't fire inside "monkey".
+    const GREETINGS: &[&str] = &["hello", "hi", "hey", "thanks"];
+    if GREETINGS.iter().any(|g| contains_word(&lower, g)) {
+        return true;
+    }
+
+    // Bare questions with no project reference ("is tokio faster than
+    // async-std?") stay conversational; everything else in a workspace is
+    // treated as work.
+    lower.ends_with('?')
+}
+
+/// Does the message reference something that lives in this repository?
+/// ("the tests", "this function", "the build", the status bar, …)
+fn references_project_artifact(lower: &str) -> bool {
+    const ARTIFACTS: &[&str] = &[
+        "function",
+        "module",
+        "struct",
+        "class",
+        "component",
+        "endpoint",
+        "handler",
+        "test",
+        "tests",
+        "file",
+        "files",
+        "code",
+        "codebase",
+        "repo",
+        "repository",
+        "project",
+        "crate",
+        "package",
+        "dependency",
+        "dependencies",
+        "config",
+        "readme",
+        "changelog",
+        "error",
+        "warning",
+        "bug",
+        "crash",
+        "build",
+        "compile",
+        "ci",
+        "pipeline",
+        "branch",
+        "api",
+        "ui",
+        "screen",
+        "overlay",
+        "command",
+    ];
+    // Require a determiner so "what is a class in python?" (abstract) doesn't
+    // count while "the class in models.rs" (concrete) does.
+    for det in &["the ", "this ", "that ", "our ", "my "] {
+        if let Some(mut pos) = lower.find(det) {
+            loop {
+                let after = &lower[pos + det.len()..];
+                let next_word = after.split_whitespace().next().unwrap_or("");
+                let next_word = next_word.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+                if ARTIFACTS.contains(&next_word) {
+                    return true;
+                }
+                match lower[pos + 1..].find(det) {
+                    Some(rel) => pos = pos + 1 + rel,
+                    None => break,
+                }
+            }
+        }
+    }
+    false
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 /// Check whether `haystack` contains `word` at a word boundary.
@@ -570,5 +756,87 @@ mod tests {
     fn commit_without_change_word_does_not_need_tools() {
         // "commit" alone (no "change", no "git commit") stays conversational.
         assert!(!needs_tools("what does commit mean"));
+    }
+
+    // ── should_activate_agent: workspace-default behaviour ────────────────
+
+    #[test]
+    fn investigate_activates_in_workspace() {
+        // The audit's canonical miss: no needs_tools keyword, but clearly work.
+        let msg = "the login endpoint returns 500 for invalid credentials, please investigate";
+        assert!(!needs_tools(msg), "precondition: old gate misses this");
+        assert!(should_activate_agent(msg, true));
+    }
+
+    #[test]
+    fn make_it_faster_activates_in_workspace() {
+        assert!(should_activate_agent("make the startup faster", true));
+    }
+
+    #[test]
+    fn project_question_activates_in_workspace() {
+        // Question form, but about *this* project → agent.
+        assert!(should_activate_agent("why is the build failing?", true));
+    }
+
+    #[test]
+    fn review_the_code_activates_in_workspace() {
+        assert!(should_activate_agent(
+            "review the code for security issues",
+            true
+        ));
+    }
+
+    #[test]
+    fn abstract_question_stays_chat_in_workspace() {
+        assert!(!should_activate_agent("what is Rust?", true));
+        assert!(!should_activate_agent("explain dependency injection", true));
+        assert!(!should_activate_agent("compare Rust and Go", true));
+        assert!(!should_activate_agent("what is a class in python?", true));
+    }
+
+    #[test]
+    fn creative_and_translation_stay_chat_in_workspace() {
+        assert!(!should_activate_agent("write a poem about the ocean", true));
+        assert!(!should_activate_agent("translate this to French", true));
+        assert!(!should_activate_agent("summarize this article", true));
+    }
+
+    #[test]
+    fn greeting_stays_chat_in_workspace() {
+        assert!(!should_activate_agent("hello, how are you?", true));
+        assert!(!should_activate_agent("thanks!", true));
+    }
+
+    #[test]
+    fn bare_question_without_project_reference_stays_chat() {
+        assert!(!should_activate_agent(
+            "is tokio faster than async-std?",
+            true
+        ));
+    }
+
+    #[test]
+    fn outside_workspace_only_strong_signals_activate() {
+        // No workspace → fall back to the conservative gate.
+        assert!(!should_activate_agent(
+            "the login endpoint returns 500, please investigate",
+            false
+        ));
+        assert!(should_activate_agent("fix the bug in main.rs", false));
+    }
+
+    #[test]
+    fn empty_message_never_activates() {
+        assert!(!should_activate_agent("", true));
+        assert!(!should_activate_agent("   ", true));
+    }
+
+    #[test]
+    fn references_project_artifact_needs_determiner() {
+        assert!(references_project_artifact("why is the build failing"));
+        assert!(references_project_artifact("look into this bug"));
+        assert!(!references_project_artifact("what is a monad"));
+        assert!(!references_project_artifact("explain closures"));
     }
 }

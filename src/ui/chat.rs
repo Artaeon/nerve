@@ -153,7 +153,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             // Slash commands
             let commands = [
                 ("/help", "Show all slash commands"),
-                ("/agent on", "Enable coding agent"),
+                ("/agent", "Toggle coding agent (auto-enables in projects)"),
                 ("/mode", "Switch smart mode"),
                 ("/usage", "Show API cost & token usage"),
                 ("/branch save", "Save conversation branch"),
@@ -189,12 +189,12 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "Add file context before asking questions:",
+                    "Just describe a task \u{2014} the agent activates automatically:",
                     Style::default().fg(Color::White),
                 ),
             ]));
             lines.push(Line::from(Span::styled(
-                "      /file src/main.rs  then ask your question",
+                "      \"fix the failing login test\"  (reads, edits & runs code for you)",
                 Style::default().fg(Color::DarkGray),
             )));
             lines.push(Line::from(""));
@@ -246,12 +246,12 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "Enable agent mode for autonomous coding:",
+                    "Add extra file context when you want it:",
                     Style::default().fg(Color::White),
                 ),
             ]));
             lines.push(Line::from(Span::styled(
-                "      /agent on  then describe the task",
+                "      /file src/main.rs  or keep the agent off with /agent off",
                 Style::default().fg(Color::DarkGray),
             )));
             lines.push(Line::from(""));

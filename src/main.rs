@@ -17,6 +17,7 @@ mod keybinds;
 mod knowledge;
 mod plugins;
 mod prompts;
+mod provider_health;
 mod provider_setup;
 mod scaffold;
 mod scraper;
@@ -174,13 +175,53 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::load().context("failed to load configuration")?;
 
-    let provider = match create_provider(&config, cli.provider.as_deref()) {
+    // ── Provider health check + auto-fallback ───────────────────────────
+    // Probe the chosen provider cheaply BEFORE the first prompt can fail.
+    // If the default provider can't work on this machine, fall back to the
+    // best available one so nerve works out of the box. An explicitly
+    // requested provider (--provider) is never silently switched.
+    let mut fallback_provider: Option<String> = None;
+    let mut startup_note: Option<String> = None;
+    {
+        let requested = cli.provider.as_deref().unwrap_or(&config.default_provider);
+        let report = provider_health::check_provider(requested, &config);
+        if !report.healthy {
+            if cli.provider.is_some() {
+                eprintln!(
+                    "Provider '{requested}' is not available: {}\n",
+                    report.detail
+                );
+                eprintln!("{}", provider_help_message(requested));
+                std::process::exit(1);
+            }
+            match provider_health::pick_fallback(requested, &config) {
+                Some((fb, _detail)) => {
+                    startup_note = Some(format!(
+                        "{requested} unavailable ({}) — switched to {fb}. /provider to change",
+                        report.detail
+                    ));
+                    fallback_provider = Some(fb);
+                }
+                None => {
+                    eprintln!(
+                        "Could not start the '{requested}' provider: {}\n",
+                        report.detail
+                    );
+                    eprintln!("{}", provider_health::no_provider_guidance());
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+    let provider_arg = fallback_provider.as_deref().or(cli.provider.as_deref());
+
+    let provider = match create_provider(&config, provider_arg) {
         Ok(p) => p,
         Err(e) => {
             // Show the friendly, provider-specific setup guidance instead of a
             // bare error — this is the first thing a new user hits if their key
             // / CLI / local server isn't configured yet.
-            let provider_name = cli.provider.as_deref().unwrap_or(&config.default_provider);
+            let provider_name = provider_arg.unwrap_or(&config.default_provider);
             eprintln!("Could not start the '{provider_name}' provider: {e}\n");
             eprintln!("{}", provider_help_message(provider_name));
             eprintln!(
@@ -192,11 +233,13 @@ async fn main() -> anyhow::Result<()> {
     };
     let provider: Arc<dyn AiProvider> = Arc::from(provider);
 
-    let model = cli
-        .model
-        .as_deref()
-        .unwrap_or(&config.default_model)
-        .to_string();
+    // When we fell back, the configured default model belongs to the OLD
+    // provider — use the fallback provider's default instead.
+    let model = match (&cli.model, &fallback_provider) {
+        (Some(m), _) => m.clone(),
+        (None, Some(fb)) => provider_setup::default_model_for_provider(fb).to_string(),
+        (None, None) => config.default_model.clone(),
+    };
 
     // --list-models: print and exit.
     if cli.list_models {
@@ -231,14 +274,29 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Interactive TUI.
+    let effective_provider = provider_arg.unwrap_or(&config.default_provider).to_string();
     run_tui(
         provider,
         config,
         cli.continue_session,
         cli.no_splash,
         cli.provider.is_some(),
+        StartupState {
+            provider: effective_provider,
+            model,
+            note: startup_note,
+        },
     )
     .await
+}
+
+/// Provider/model resolution done in `run()` (after health checks and
+/// fallback), handed to the TUI so its initial state matches what was
+/// actually started.
+struct StartupState {
+    provider: String,
+    model: String,
+    note: Option<String>,
 }
 
 // ─── Non-interactive mode ───────────────────────────────────────────────────
@@ -262,6 +320,7 @@ async fn run_tui(
     continue_session: bool,
     no_splash: bool,
     provider_from_cli: bool,
+    startup: StartupState,
 ) -> anyhow::Result<()> {
     // Enter the alternate screen and enable raw mode.
     crossterm::terminal::enable_raw_mode()?;
@@ -289,20 +348,31 @@ async fn run_tui(
         };
 
     let mut app = App::new();
-    app.selected_model = config.default_model.clone();
-    app.selected_provider = config.default_provider.clone();
+    app.selected_model = startup.model.clone();
+    app.selected_provider = startup.provider.clone();
     app.auto_agent = config.auto_agent;
     app.command_timeout_secs = config.command_timeout_secs;
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
     app.context_limit_override = config.context_limit;
 
-    // Load last used provider if not specified via CLI.
-    if !provider_from_cli && let Some((provider_name, model)) = load_last_provider() {
+    // Load last used provider if not specified via CLI — but never restore a
+    // provider that can't work right now (e.g. the claude CLI was removed
+    // since the last run); the health-checked startup provider stays.
+    if !provider_from_cli
+        && let Some((provider_name, model)) = load_last_provider()
+        && provider_health::check_provider(&provider_name, &config).healthy
+    {
         app.selected_provider = provider_name;
         app.selected_model = model;
         app.available_models = models_for_provider(&app.selected_provider);
         app.provider_changed = true;
+    }
+
+    // Surface the auto-fallback decision (if any) in the status bar so the
+    // user knows which provider is actually answering.
+    if let Some(note) = &startup.note {
+        app.set_status(note.clone());
     }
 
     init_status(&mut terminal, "Detecting workspace...");

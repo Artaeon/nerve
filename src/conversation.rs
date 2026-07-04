@@ -126,7 +126,14 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
     }
 
     // ── Auto-agent: detect intent and temporarily enable tools ────────
-    if app.auto_agent && !app.agent_mode && crate::agent::intent::needs_tools(text) {
+    // Inside a detected workspace, coding work is the default: any message
+    // that isn't clearly conversational activates the agent. Outside a
+    // workspace only strong signals do.
+    let in_workspace = app.cached_workspace.is_some();
+    if app.auto_agent
+        && !app.agent_mode
+        && crate::agent::intent::should_activate_agent(text, in_workspace)
+    {
         app.agent_mode = true;
         app.auto_agent_active = true;
 
