@@ -118,6 +118,36 @@ pub fn recall(
     recall_in(&collect_entries(store), query, max_results, min_score)
 }
 
+/// Common English words stripped from a recall query so matching is driven by
+/// meaningful terms. Without this, a query like "what is the database pool size"
+/// scores flat hits on "the"/"is" against *every* stored fact, so unrelated
+/// entries clear the relevance threshold and pollute the prompt.
+const STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "did", "do", "does", "for", "from",
+    "get", "got", "how", "i", "in", "is", "it", "its", "me", "my", "of", "on", "or", "our",
+    "should", "that", "the", "this", "to", "was", "we", "were", "what", "when", "where", "which",
+    "who", "why", "will", "with", "would", "you", "your",
+];
+
+/// Drop stopwords from a query. Falls back to the original when every word is a
+/// stopword, so a terse query never becomes empty (and matches nothing).
+fn meaningful_query(query: &str) -> String {
+    let kept: Vec<&str> = query
+        .split_whitespace()
+        .filter(|w| {
+            let bare = w
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_lowercase();
+            !bare.is_empty() && !STOPWORDS.contains(&bare.as_str())
+        })
+        .collect();
+    if kept.is_empty() {
+        query.to_string()
+    } else {
+        kept.join(" ")
+    }
+}
+
 /// The searchable core of [`recall`], separated so it can be unit-tested
 /// without touching the filesystem.
 fn recall_in(
@@ -129,8 +159,9 @@ fn recall_in(
     if entries.is_empty() || max_results == 0 {
         return Vec::new();
     }
+    let query = meaningful_query(query);
     let kb = build_index(entries);
-    search_knowledge(&kb, query, max_results)
+    search_knowledge(&kb, &query, max_results)
         .into_iter()
         .filter(|r| r.score >= min_score)
         .map(|r| RecalledEntry {
@@ -318,6 +349,30 @@ mod tests {
     fn recall_respects_the_result_cap() {
         let hits = recall_in(&entries(), "the project tests tokio ratatui", 2, 0.0);
         assert!(hits.len() <= 2);
+    }
+
+    #[test]
+    fn stopwords_do_not_pollute_recall() {
+        // Query about the pool must NOT surface the unrelated svelte fact just
+        // because both share the stopwords "the"/"is".
+        let hits = recall_in(
+            &entries(),
+            "what is the async runtime",
+            3,
+            AUTO_RECALL_MIN_SCORE,
+        );
+        assert!(hits.iter().any(|h| h.text.contains("tokio")));
+        assert!(!hits.iter().any(|h| h.text.contains("svelte")));
+    }
+
+    #[test]
+    fn meaningful_query_strips_stopwords_but_keeps_terms() {
+        assert_eq!(
+            meaningful_query("what is the database pool"),
+            "database pool"
+        );
+        // All-stopword queries fall back to the original.
+        assert_eq!(meaningful_query("what is the"), "what is the");
     }
 
     #[test]

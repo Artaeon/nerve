@@ -993,7 +993,81 @@ pub(crate) fn cycle_conversation_back(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::looks_like_slash_command;
+    use super::{build_context_messages, looks_like_slash_command};
+    use crate::app::App;
+    use crate::workspace::{ProjectType, WorkspaceInfo};
+
+    fn app_with_seeded_memory(root: &std::path::Path) -> App {
+        let store = crate::project::ProjectStore::for_workspace(root);
+        store
+            .save_brief("# Payments\n\nA billing microservice in Rust.")
+            .unwrap();
+        store
+            .remember("the database connection pool size is capped at 17 for this service")
+            .unwrap();
+        store
+            .remember("the frontend is built with svelte and vite")
+            .unwrap();
+        store
+            .record_decision("chose postgres over mysql for jsonb support")
+            .unwrap();
+
+        let mut app = App::new();
+        app.cached_workspace = Some(WorkspaceInfo {
+            root: root.to_path_buf(),
+            project_type: ProjectType::Rust,
+            name: "payments".into(),
+            description: String::new(),
+            key_files: vec![],
+            tech_stack: vec![],
+        });
+        app
+    }
+
+    #[test]
+    fn memory_is_retrieved_not_dumped_into_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_seeded_memory(dir.path());
+
+        // A turn about the connection pool should surface ONLY the matching
+        // fact, plus the always-on header — not every unrelated fact.
+        let messages =
+            build_context_messages(&mut app, "what is the database connection pool size");
+        let systems: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Always-on header: project headline + pointer to recall.
+        assert!(systems.contains("A billing microservice in Rust"));
+        assert!(systems.contains("recall"));
+        // Auto-recall surfaced the relevant fact...
+        assert!(systems.contains("capped at 17"));
+        // ...but the unrelated fact was NOT force-fed.
+        assert!(!systems.contains("svelte and vite"));
+    }
+
+    #[test]
+    fn unrelated_turn_injects_no_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_seeded_memory(dir.path());
+
+        let messages = build_context_messages(&mut app, "quantum blockchain cryptography theory");
+        let systems: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // Header still present, but no fact/decision is injected for an
+        // unrelated turn — token cost stays flat.
+        assert!(systems.contains("recall"));
+        assert!(!systems.contains("capped at 17"));
+        assert!(!systems.contains("postgres over mysql"));
+    }
 
     #[test]
     fn detects_slash_command_attempts() {
