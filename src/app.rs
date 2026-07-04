@@ -242,6 +242,15 @@ pub struct App {
     /// the plan immediately. Mirrors `config.workflow_auto_approve`.
     pub workflow_auto_approve: bool,
 
+    /// When `true` (default), each turn is routed to a model tier relative to
+    /// `selected_model` (strong for planning/review/hard work, small for
+    /// trivial). Mirrors `config.auto_model_routing`.
+    pub auto_model_routing: bool,
+    /// The model chosen for the in-flight turn by routing, remembered so that
+    /// agent tool-round continuations — which no longer carry the original
+    /// request text to classify — reuse the same model instead of re-deciding.
+    pub active_turn_model: Option<String>,
+
     /// User-configured context window override (from `config.context_limit`).
     pub context_limit_override: Option<usize>,
 
@@ -410,6 +419,8 @@ impl App {
             agent_has_stash: false,
             auto_agent: true,
             workflow_auto_approve: false,
+            auto_model_routing: true,
+            active_turn_model: None,
             auto_agent_active: false,
             context_limit_override: None,
             pipeline: None,

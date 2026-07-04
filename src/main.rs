@@ -16,6 +16,7 @@ mod input;
 mod keybinds;
 mod knowledge;
 mod memory_recall;
+mod model_router;
 mod plugins;
 mod project;
 mod prompts;
@@ -354,6 +355,7 @@ async fn run_tui(
     app.selected_provider = startup.provider.clone();
     app.auto_agent = config.auto_agent;
     app.workflow_auto_approve = config.workflow_auto_approve;
+    app.auto_model_routing = config.auto_model_routing;
     app.command_timeout_secs = config.command_timeout_secs;
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
@@ -786,7 +788,14 @@ async fn event_loop(
                             .unwrap_or_default();
                         let messages = build_context_messages(app, &search_query);
 
-                        let model = app.selected_model.clone();
+                        // Reuse the model routing picked for this turn so a
+                        // multi-round agent turn never switches models between
+                        // tool rounds (the continuation no longer carries the
+                        // original request text to re-classify).
+                        let model = app
+                            .active_turn_model
+                            .clone()
+                            .unwrap_or_else(|| app.selected_model.clone());
                         let (tx, new_rx) = tokio::sync::mpsc::unbounded_channel();
                         app.cancel_active_stream();
                         app.stream_rx = Some(new_rx);

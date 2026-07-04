@@ -40,6 +40,12 @@ pub struct Config {
     /// nothing runs until the user types `/approve`.
     #[serde(default)]
     pub workflow_auto_approve: bool,
+    /// When `true` (default), Nerve routes each turn to a model tier relative
+    /// to `default_model`: the strong model for planning/review/hard problems,
+    /// the small model for trivial edits. Set `false` to always use the
+    /// selected model. Only Claude and OpenAI providers are routed.
+    #[serde(default = "Config::default_auto_model_routing")]
+    pub auto_model_routing: bool,
     /// Git commit author name (e.g. "Jane Doe").
     /// When set, passed as `--author` to `git commit`.
     #[serde(default)]
@@ -143,6 +149,7 @@ impl Default for Config {
             retry: RetryConfig::default(),
             auto_agent: true,
             workflow_auto_approve: false,
+            auto_model_routing: true,
             git_user_name: None,
             git_user_email: None,
             temperature: None,
@@ -231,6 +238,10 @@ impl Default for KeybindsConfig {
 impl Config {
     /// Default value for the `auto_agent` field (used by serde).
     fn default_auto_agent() -> bool {
+        true
+    }
+
+    fn default_auto_model_routing() -> bool {
         true
     }
 

@@ -11,6 +11,21 @@ use super::markdown::{count_wrapped_rows, parse_assistant_content};
 use super::utils::sanitize_display;
 use crate::app::App;
 
+/// Label for the in-flight stream shown in the streaming/thinking indicator:
+/// the model actually being used this turn (post-routing), prefixed with the
+/// pipeline role when a `/workflow` step is running. Makes model routing
+/// visible at a glance instead of leaving the user guessing which model ran.
+fn active_stream_label(app: &App) -> String {
+    let model = app
+        .active_turn_model
+        .as_deref()
+        .unwrap_or(app.selected_model.as_str());
+    match app.pipeline.as_ref().map(|p| p.step.label()) {
+        Some(role) => format!("{role} · {model}"),
+        None => model.to_string(),
+    }
+}
+
 // ── Public entry point ───────────────────────────────────────────────────────
 
 /// Render the chat message history (and any in-flight streaming response) into
@@ -441,7 +456,10 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  streaming... ({word_count} words)"),
+                format!(
+                    "  streaming... ({word_count} words) · {}",
+                    active_stream_label(app)
+                ),
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC),
@@ -521,7 +539,7 @@ pub fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(vec![
             gutter.clone(),
             Span::styled(
-                thinking_anim.to_string(),
+                format!("{thinking_anim}  · {}", active_stream_label(app)),
                 Style::default()
                     .fg(Color::DarkGray)
                     .add_modifier(Modifier::ITALIC),

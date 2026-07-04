@@ -202,6 +202,32 @@ async fn send_to_ai(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
     send_to_ai_from_history(app, provider).await;
 }
 
+/// Choose the model for the turn that is about to stream and remember it on the
+/// app, applying prompt/role-based routing (see [`crate::model_router`]). The
+/// remembered value lets agent tool-round continuations — which no longer carry
+/// the original request text to classify — reuse the same model. When the
+/// routed model differs from the user's selection, a status line makes it
+/// visible so routing is never silent.
+fn route_turn_model(app: &mut App, message: &str) -> String {
+    let step = app.pipeline.as_ref().map(|p| p.step);
+    let model = crate::model_router::route(
+        app.auto_model_routing,
+        &app.selected_provider,
+        &app.selected_model,
+        step,
+        message,
+    );
+    app.active_turn_model = Some(model.clone());
+    if model != app.selected_model {
+        let why = match step.and_then(crate::model_router::tier_for_step) {
+            Some(_) => "for this step",
+            None => "for this turn",
+        };
+        app.set_status(format!("Routed to {model} {why}"));
+    }
+    model
+}
+
 /// Prepend the active pipeline role's system prompt (and, for tool-capable
 /// roles, the tools-format prompt) to a freshly built message list.
 ///
@@ -437,7 +463,7 @@ pub(crate) async fn send_to_ai_from_history(app: &mut App, provider: &Arc<dyn Ai
 
     let messages = build_context_messages(app, &user_message);
 
-    let model = app.selected_model.clone();
+    let model = route_turn_model(app, &user_message);
     let (tx, rx) = mpsc::unbounded_channel();
 
     // Cancel any prior in-flight stream before we replace the receiver —
@@ -853,7 +879,7 @@ pub(crate) async fn regenerate_response(
         .unwrap_or_default();
     let messages = build_context_messages(app, &search_query);
 
-    let model = app.selected_model.clone();
+    let model = route_turn_model(app, &search_query);
     let (tx, rx) = mpsc::unbounded_channel();
     app.cancel_active_stream();
     app.stream_rx = Some(rx);
