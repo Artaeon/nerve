@@ -494,6 +494,17 @@ pub fn is_protected_write_target(path: &str) -> bool {
     if path.contains("/.git/hooks/") {
         return true;
     }
+    // Project memory (.nerve/) is injected into every future prompt — letting
+    // the agent write it directly would allow prompt-injection to plant
+    // persistent instructions. Writes go through the ProjectStore API only
+    // (user commands + the `remember` tool, which appends sanitized bullets).
+    if path.contains("/.nerve/")
+        || path.starts_with(".nerve/")
+        || path.ends_with("/.nerve")
+        || path == ".nerve"
+    {
+        return true;
+    }
     // Shell startup files — persistence across every new shell.
     const RC_FILES: &[&str] = &[
         "/.bashrc",

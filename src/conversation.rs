@@ -300,6 +300,16 @@ pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<C
         })
         .collect();
 
+    // Per-project memory (.nerve/): engineering brief + remembered facts +
+    // recent decisions. Injected on every prompt so the model always knows
+    // what nerve has learned about this repository across sessions.
+    if let Some(ws) = &app.cached_workspace {
+        let store = crate::project::ProjectStore::for_workspace(&ws.root);
+        if let Some(memory_context) = store.project_memory_context(6000) {
+            messages.insert(0, ChatMessage::system(memory_context));
+        }
+    }
+
     // If a knowledge base exists, search for relevant context and inject it.
     if !search_query.is_empty()
         && let Ok(kb) = knowledge::KnowledgeBase::load("default")

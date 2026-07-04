@@ -10,6 +10,7 @@ pub mod files;
 pub mod git;
 pub mod info;
 pub mod knowledge;
+pub mod project;
 pub mod settings;
 pub mod shell;
 
@@ -50,6 +51,10 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
     }
 
     if knowledge::handle(app, trimmed, provider).await {
+        return true;
+    }
+
+    if project::handle(app, trimmed).await {
         return true;
     }
 

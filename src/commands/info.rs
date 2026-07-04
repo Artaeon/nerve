@@ -132,6 +132,14 @@ Knowledge & Context\n\
   /kb clear           Clear knowledge base\n\
   /url <url> [q]      Scrape URL for context\n\
 \n\
+Project Memory (.nerve/ — injected into every prompt)\n\
+  /remember <fact>    Persist a fact/convention about this project\n\
+  /memory             Show project memory (brief + facts + decisions)\n\
+  /decision <text>    Record a decision in the decision log\n\
+  /decisions          Show the decision log\n\
+  /improve <idea>     Add an idea to the improvement backlog\n\
+  /improvements       List backlog (done <id> to close)\n\
+\n\
 Shell & Git\n\
   /run <command>      Run shell command and show output\n\
   /pipe <command>     Run command and add output as context\n\

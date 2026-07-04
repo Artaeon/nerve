@@ -86,6 +86,14 @@ pub fn available_tools() -> Vec<Tool> {
                 .into(),
             parameters: "query: string (search query)".into(),
         },
+        Tool {
+            name: "remember".into(),
+            description: "Persist a project fact/convention to .nerve/memory.md so it is \
+                          known in all future sessions (use for conventions, gotchas, \
+                          decisions the user confirms)"
+                .into(),
+            parameters: "fact: string (one concise sentence)".into(),
+        },
     ]
 }
 
@@ -183,6 +191,7 @@ pub fn execute_tool(call: &ToolCall, command_timeout_secs: u64) -> ToolResult {
         "find_files" => execute_find_files(call),
         "read_lines" => execute_read_lines(call),
         "web_search" => execute_web_search(call),
+        "remember" => execute_remember(call),
         _ => ToolResult {
             tool: call.tool.clone(),
             success: false,
@@ -769,6 +778,38 @@ fn execute_web_search(call: &ToolCall) -> ToolResult {
             tool: "web_search".into(),
             success: false,
             output: "Web search thread panicked".into(),
+        },
+    }
+}
+
+fn execute_remember(call: &ToolCall) -> ToolResult {
+    let fact = match require_arg(call, "fact") {
+        Ok(f) => f,
+        Err(e) => return e,
+    };
+
+    let Some(ws) = crate::workspace::detect_workspace() else {
+        return ToolResult {
+            tool: "remember".into(),
+            success: false,
+            output: "No workspace detected — project memory needs a git repo or manifest".into(),
+        };
+    };
+
+    // Writes go through the ProjectStore API only: the fact is flattened to a
+    // single sanitized bullet line, so it cannot forge markdown structure or
+    // additional entries in memory.md.
+    let store = crate::project::ProjectStore::for_workspace(&ws.root);
+    match store.remember(fact) {
+        Ok(()) => ToolResult {
+            tool: "remember".into(),
+            success: true,
+            output: format!("Remembered in {}", store.memory_path().display()),
+        },
+        Err(e) => ToolResult {
+            tool: "remember".into(),
+            success: false,
+            output: format!("Could not save memory: {e}"),
         },
     }
 }
@@ -1553,8 +1594,37 @@ mod tests {
     }
 
     #[test]
-    fn exactly_ten_tools() {
-        assert_eq!(available_tools().len(), 10);
+    fn exactly_eleven_tools() {
+        assert_eq!(available_tools().len(), 11);
+    }
+
+    // ── remember tool ─────────────────────────────────────────────────
+
+    #[test]
+    fn remember_requires_fact_arg() {
+        let call = ToolCall {
+            tool: "remember".into(),
+            args: std::collections::HashMap::new(),
+        };
+        let result = execute_remember(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("fact"));
+    }
+
+    // ── .nerve/ write protection ──────────────────────────────────────
+
+    #[test]
+    fn validate_write_path_blocks_project_memory() {
+        for path in [
+            ".nerve/memory.md",
+            ".nerve/decisions.jsonl",
+            "sub/.nerve/brief.md",
+        ] {
+            assert!(
+                validate_write_path(path, "write_file").is_err(),
+                "agent write to {path} must be blocked (prompt-injection persistence)"
+            );
+        }
     }
 
     // ── normalize_path ────────────────────────────────────────────────

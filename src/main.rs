@@ -16,6 +16,7 @@ mod input;
 mod keybinds;
 mod knowledge;
 mod plugins;
+mod project;
 mod prompts;
 mod provider_health;
 mod provider_setup;
