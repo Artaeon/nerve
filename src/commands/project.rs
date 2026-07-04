@@ -1,5 +1,5 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/improve`, `/improvements`.
+//! `/decisions`, `/improve`, `/improvements`, `/task`, `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -188,6 +188,71 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             app.add_assistant_message(out);
             true
         }
+        "/task" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            if args.is_empty() {
+                app.set_status("Usage: /task <title>, or /task done|start|fail <id>");
+                return true;
+            }
+            // "/task done|start|fail <id>" updates a status — check BEFORE
+            // treating the args as a new task title.
+            let (verb, rest) = match args.find(char::is_whitespace) {
+                Some(pos) => (&args[..pos], args[pos..].trim()),
+                None => (args, ""),
+            };
+            let status = match verb {
+                "done" => Some("done"),
+                "start" => Some("in_progress"),
+                "fail" => Some("failed"),
+                _ => None,
+            };
+            if let Some(status) = status {
+                match rest.parse::<u64>() {
+                    Ok(id) => match store.set_task_status(id, status) {
+                        Ok(true) => app.set_status(format!("Task #{id} marked {status}")),
+                        Ok(false) => app.set_status(format!("No task with id {id}")),
+                        Err(e) => app.set_status(format!("Could not update task: {e}")),
+                    },
+                    Err(_) => app.set_status(format!("Usage: /task {verb} <id>")),
+                }
+                return true;
+            }
+            match store.add_task(args) {
+                Ok(id) => app.set_status(format!("Task #{id} added — /tasks to list")),
+                Err(e) => app.set_status(format!("Could not add task: {e}")),
+            }
+            true
+        }
+        "/tasks" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            let tasks = store.list_tasks();
+            if tasks.is_empty() {
+                app.set_status("Task backlog is empty — /task <title> to add one");
+                return true;
+            }
+            let marker = |status: &str| match status {
+                "in_progress" => "[~]",
+                "done" => "[x]",
+                "failed" => "[!]",
+                _ => "[ ]",
+            };
+            let open = tasks
+                .iter()
+                .filter(|t| t.status == "pending" || t.status == "in_progress");
+            let closed = tasks
+                .iter()
+                .filter(|t| t.status != "pending" && t.status != "in_progress");
+            let mut out = String::from("## Task backlog\n\n");
+            for t in open.chain(closed) {
+                out.push_str(&format!("- {} #{} {}\n", marker(&t.status), t.id, t.title));
+            }
+            app.add_assistant_message(out);
+            true
+        }
         _ => false,
     }
 }
@@ -340,6 +405,51 @@ mod tests {
         assert!(handle(&mut app, "/improvements", &mock_provider()).await);
         let (_role, content) = app.current_conversation().messages.last().unwrap();
         assert!(content.contains("[x] #1 faster startup"));
+    }
+
+    #[tokio::test]
+    async fn task_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/task ship the release", &mock_provider()).await);
+        assert!(handle(&mut app, "/task fix the flaky test", &mock_provider()).await);
+        assert!(handle(&mut app, "/tasks", &mock_provider()).await);
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("## Task backlog"));
+        assert!(content.contains("[ ] #1 ship the release"));
+        assert!(content.contains("[ ] #2 fix the flaky test"));
+
+        assert!(handle(&mut app, "/task start 1", &mock_provider()).await);
+        assert!(handle(&mut app, "/task done 2", &mock_provider()).await);
+        assert!(handle(&mut app, "/tasks", &mock_provider()).await);
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("[~] #1 ship the release"));
+        assert!(content.contains("[x] #2 fix the flaky test"));
+        // Open tasks are listed before closed ones.
+        assert!(content.find("#1").unwrap() < content.find("#2").unwrap());
+
+        assert!(handle(&mut app, "/task fail 1", &mock_provider()).await);
+        assert!(handle(&mut app, "/tasks", &mock_provider()).await);
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("[!] #1 ship the release"));
+    }
+
+    #[tokio::test]
+    async fn task_status_verbs_are_not_titles() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/task done 42", &mock_provider()).await);
+        // No task was created; the unknown id is reported instead.
+        assert!(
+            ProjectStore::for_workspace(dir.path())
+                .list_tasks()
+                .is_empty()
+        );
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("No task with id 42"))
+        );
     }
 
     #[tokio::test]

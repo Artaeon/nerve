@@ -21,6 +21,11 @@
 /// * `Full` — full tool access, same as normal agent mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolPolicy {
+    /// No current role uses this (the planner became ReadOnly when the
+    /// plan-approval gate landed), but the policy taxonomy keeps it: the
+    /// tool runner and context builder still match on it, and future
+    /// text-only roles (e.g. a summarizer) will want it.
+    #[allow(dead_code)]
     None,
     ReadOnly,
     Full,
@@ -30,6 +35,10 @@ pub enum ToolPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineStep {
     Planning,
+    /// The plan is on screen and the pipeline is paused until the user
+    /// approves it (`/approve`) or cancels (`/reject`). No LLM turn runs
+    /// in this step — nothing executes without consent.
+    AwaitingApproval,
     Coding,
     Reviewing,
     Done,
@@ -39,16 +48,19 @@ impl PipelineStep {
     pub fn label(self) -> &'static str {
         match self {
             PipelineStep::Planning => "Planner",
+            PipelineStep::AwaitingApproval => "Awaiting approval",
             PipelineStep::Coding => "Coder",
             PipelineStep::Reviewing => "Reviewer",
             PipelineStep::Done => "Done",
         }
     }
 
-    /// Return the role config for the current step, or `None` for Done.
+    /// Return the role config for the current step, or `None` for steps
+    /// that run no LLM turn (AwaitingApproval, Done).
     pub fn role(self) -> Option<AgentRole> {
         match self {
             PipelineStep::Planning => Some(AgentRole::planner()),
+            PipelineStep::AwaitingApproval => None,
             PipelineStep::Coding => Some(AgentRole::coder()),
             PipelineStep::Reviewing => Some(AgentRole::reviewer()),
             PipelineStep::Done => None,
@@ -58,7 +70,8 @@ impl PipelineStep {
     /// Next step in the sequence, or Done if we're already there.
     pub fn next(self) -> PipelineStep {
         match self {
-            PipelineStep::Planning => PipelineStep::Coding,
+            PipelineStep::Planning => PipelineStep::AwaitingApproval,
+            PipelineStep::AwaitingApproval => PipelineStep::Coding,
             PipelineStep::Coding => PipelineStep::Reviewing,
             PipelineStep::Reviewing => PipelineStep::Done,
             PipelineStep::Done => PipelineStep::Done,
@@ -89,7 +102,7 @@ impl AgentRole {
     fn planner() -> Self {
         Self {
             name: "Planner",
-            tool_policy: ToolPolicy::None,
+            tool_policy: ToolPolicy::ReadOnly,
             system_prompt: PLANNER_PROMPT.into(),
             handoff_prompt: String::new(), // task is supplied separately
         }
@@ -100,10 +113,10 @@ impl AgentRole {
             name: "Coder",
             tool_policy: ToolPolicy::Full,
             system_prompt: CODER_PROMPT.into(),
-            handoff_prompt: "The plan above has been approved. Now execute it using your tools: \
-                 read the relevant files, make the edits, run the build/tests to \
-                 verify your work, and report what you changed. Do not re-plan — \
-                 just execute."
+            handoff_prompt: "The user has approved the plan above. Now execute it using your \
+                 tools: read the relevant files, make the edits, run the \
+                 build/tests to verify your work, and report what you changed. \
+                 Do not re-plan — just execute."
                 .into(),
         }
     }
@@ -205,11 +218,17 @@ pub fn should_iterate_on_feedback(reviewer_response: &str, iterations_used: usiz
 
 const PLANNER_PROMPT: &str = "\
 You are the PLANNER in a 3-agent software-engineering pipeline. A coder \
-and a reviewer will follow you. Your ONLY output is a concrete, numbered \
-implementation plan for the user's task.
+and a reviewer will follow you. Your job is a concrete, numbered \
+implementation plan for the user's task, grounded in the ACTUAL code.
+
+You have READ-ONLY tool access: `read_file`, `read_lines`, `search_code`, \
+`list_files`, `find_files`. Use a few quick reads/searches to locate the \
+relevant code BEFORE planning so your steps name real files and symbols. \
+You MUST NOT use `write_file`, `edit_file`, `run_command`, or \
+`create_directory`.
 
 Rules:
-- Do NOT write code. Do NOT run tools. You have no tool access.
+- Do NOT write code. Plan only.
 - Do NOT ask clarifying questions — the coder will handle ambiguity.
 - Produce a numbered list of 3 to 10 concrete steps, in execution order.
 - Each step must be a specific action (e.g. \"Add a `--json` flag to \
@@ -217,7 +236,9 @@ Rules:
 - If the task is trivial (one edit in one file), still output a plan — \
   that single step and any verification step.
 - End your response with a single line: `---END PLAN---` so downstream \
-  agents can parse the boundary cleanly.";
+  agents can parse the boundary cleanly.
+- The user will review this plan and must approve it before the coder \
+  runs — write it so a human can judge it quickly.";
 
 const CODER_PROMPT: &str = "\
 You are the CODER in a 3-agent software-engineering pipeline. The \
@@ -273,6 +294,8 @@ mod tests {
         let mut state = PipelineState::new("task".into());
         assert_eq!(state.step, PipelineStep::Planning);
         state.advance();
+        assert_eq!(state.step, PipelineStep::AwaitingApproval);
+        state.advance();
         assert_eq!(state.step, PipelineStep::Coding);
         state.advance();
         assert_eq!(state.step, PipelineStep::Reviewing);
@@ -288,14 +311,19 @@ mod tests {
         assert_eq!(PipelineStep::Planning.role().unwrap().name, "Planner");
         assert_eq!(PipelineStep::Coding.role().unwrap().name, "Coder");
         assert_eq!(PipelineStep::Reviewing.role().unwrap().name, "Reviewer");
+        assert!(
+            PipelineStep::AwaitingApproval.role().is_none(),
+            "no LLM turn may run while awaiting user approval"
+        );
         assert!(PipelineStep::Done.role().is_none());
     }
 
     #[test]
     fn tool_policy_per_role() {
+        // The planner reads the repo (grounded plans) but must not mutate.
         assert_eq!(
             PipelineStep::Planning.role().unwrap().tool_policy,
-            ToolPolicy::None
+            ToolPolicy::ReadOnly
         );
         assert_eq!(
             PipelineStep::Coding.role().unwrap().tool_policy,
@@ -310,6 +338,7 @@ mod tests {
     #[test]
     fn labels() {
         assert_eq!(PipelineStep::Planning.label(), "Planner");
+        assert_eq!(PipelineStep::AwaitingApproval.label(), "Awaiting approval");
         assert_eq!(PipelineStep::Coding.label(), "Coder");
         assert_eq!(PipelineStep::Reviewing.label(), "Reviewer");
         assert_eq!(PipelineStep::Done.label(), "Done");
@@ -350,10 +379,19 @@ mod tests {
     }
 
     #[test]
-    fn planner_has_no_tools() {
+    fn planner_is_read_only() {
         let role = PipelineStep::Planning.role().unwrap();
-        assert_eq!(role.tool_policy, ToolPolicy::None);
-        assert!(role.system_prompt.contains("no tool access"));
+        assert_eq!(role.tool_policy, ToolPolicy::ReadOnly);
+        assert!(role.system_prompt.contains("READ-ONLY"));
+        assert!(role.system_prompt.contains("MUST NOT"));
+    }
+
+    #[test]
+    fn coder_handoff_is_honest_about_approval() {
+        // The handoff fires only after the user typed /approve, so it may
+        // (and should) say the USER approved — not a hollow claim.
+        let handoff = &PipelineStep::Coding.role().unwrap().handoff_prompt;
+        assert!(handoff.contains("user has approved"));
     }
 
     // ── Iteration loop ──────────────────────────────────────────────

@@ -12,6 +12,7 @@
 //!   brief.md          # engineering brief of the repo (/init)
 //!   decisions.jsonl   # append-only log of decisions {timestamp, text}
 //!   improvements.json # improvement backlog [{id, text, status, created}]
+//!   tasks.json        # task backlog [{id, title, status, created, updated}]
 //! ```
 //!
 //! The assembled context (`project_memory_context`) is injected into every
@@ -34,6 +35,9 @@ use crate::files::atomic_write;
 /// How many recent decisions are injected into the prompt context.
 const CONTEXT_DECISIONS: usize = 5;
 
+/// The statuses a task in the backlog may hold.
+const TASK_STATUSES: [&str; 4] = ["pending", "in_progress", "done", "failed"];
+
 /// A single recorded decision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
@@ -49,6 +53,17 @@ pub struct Improvement {
     /// "open" or "done".
     pub status: String,
     pub created: String,
+}
+
+/// A task in the persistent per-project backlog.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectTask {
+    pub id: u64,
+    pub title: String,
+    /// One of "pending" | "in_progress" | "done" | "failed".
+    pub status: String,
+    pub created: String,
+    pub updated: String,
 }
 
 /// Handle to a project's `.nerve/` memory directory.
@@ -226,6 +241,74 @@ impl ProjectStore {
         atomic_write(&self.improvements_path(), &json)
     }
 
+    // ── tasks.json ───────────────────────────────────────────────────────
+
+    pub fn tasks_path(&self) -> PathBuf {
+        self.dir.join("tasks.json")
+    }
+
+    pub fn list_tasks(&self) -> Vec<ProjectTask> {
+        std::fs::read_to_string(self.tasks_path())
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_default()
+    }
+
+    /// Add a task to the backlog with status "pending"; returns its id.
+    pub fn add_task(&self, title: &str) -> anyhow::Result<u64> {
+        let title = sanitize_line(title);
+        if title.is_empty() {
+            anyhow::bail!("cannot add an empty task");
+        }
+        self.ensure_dir()?;
+        let mut tasks = self.list_tasks();
+        let id = tasks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let now = chrono::Utc::now().to_rfc3339();
+        tasks.push(ProjectTask {
+            id,
+            title,
+            status: "pending".into(),
+            created: now.clone(),
+            updated: now,
+        });
+        self.save_tasks(&tasks)?;
+        Ok(id)
+    }
+
+    /// Set a task's status. Returns false when the id is unknown; errors on
+    /// a status outside "pending" | "in_progress" | "done" | "failed".
+    pub fn set_task_status(&self, id: u64, status: &str) -> anyhow::Result<bool> {
+        if !TASK_STATUSES.contains(&status) {
+            anyhow::bail!(
+                "invalid task status '{status}' (expected one of: {})",
+                TASK_STATUSES.join(", ")
+            );
+        }
+        let mut tasks = self.list_tasks();
+        let Some(task) = tasks.iter_mut().find(|t| t.id == id) else {
+            return Ok(false);
+        };
+        task.status = status.into();
+        task.updated = chrono::Utc::now().to_rfc3339();
+        self.save_tasks(&tasks)?;
+        Ok(true)
+    }
+
+    /// The next pending task (lowest id — FIFO), if any.
+    /// Wired to upcoming agent auto-pickup; already exercised by tests.
+    #[allow(dead_code)]
+    pub fn next_pending_task(&self) -> Option<ProjectTask> {
+        self.list_tasks()
+            .into_iter()
+            .filter(|t| t.status == "pending")
+            .min_by_key(|t| t.id)
+    }
+
+    fn save_tasks(&self, tasks: &[ProjectTask]) -> anyhow::Result<()> {
+        let json = serde_json::to_string_pretty(tasks)?;
+        atomic_write(&self.tasks_path(), &json)
+    }
+
     // ── Context assembly ─────────────────────────────────────────────────
 
     /// Assemble the project-memory context injected into every prompt:
@@ -248,6 +331,19 @@ impl ProjectStore {
                 .collect::<Vec<_>>()
                 .join("\n");
             sections.push(format!("## Recent decisions\n{lines}"));
+        }
+        let open_tasks: Vec<_> = self
+            .list_tasks()
+            .into_iter()
+            .filter(|t| t.status == "pending" || t.status == "in_progress")
+            .collect();
+        if !open_tasks.is_empty() {
+            let lines = open_tasks
+                .iter()
+                .map(|t| format!("- [#{}] {} ({})", t.id, t.title, t.status))
+                .collect::<Vec<_>>()
+                .join("\n");
+            sections.push(format!("## Open tasks\n{lines}"));
         }
 
         if sections.is_empty() {
@@ -355,6 +451,63 @@ mod tests {
     }
 
     #[test]
+    fn tasks_backlog_roundtrip() {
+        let (_d, s) = store();
+        let id1 = s.add_task("write integration tests").unwrap();
+        let id2 = s.add_task("wire up CI").unwrap();
+        assert_ne!(id1, id2);
+        let tasks = s.list_tasks();
+        assert_eq!(tasks.len(), 2);
+        assert!(tasks.iter().all(|t| t.status == "pending"));
+        assert!(tasks.iter().all(|t| t.created == t.updated));
+        assert!(s.set_task_status(id1, "done").unwrap());
+        let tasks = s.list_tasks();
+        let done = tasks.iter().find(|t| t.id == id1).unwrap();
+        assert_eq!(done.status, "done");
+        assert_eq!(
+            tasks.iter().find(|t| t.id == id2).unwrap().status,
+            "pending"
+        );
+    }
+
+    #[test]
+    fn tasks_next_pending_is_fifo() {
+        let (_d, s) = store();
+        let first = s.add_task("first").unwrap();
+        let second = s.add_task("second").unwrap();
+        assert_eq!(s.next_pending_task().unwrap().id, first);
+        s.set_task_status(first, "in_progress").unwrap();
+        assert_eq!(s.next_pending_task().unwrap().id, second);
+        s.set_task_status(second, "done").unwrap();
+        assert!(s.next_pending_task().is_none());
+    }
+
+    #[test]
+    fn tasks_invalid_status_rejected() {
+        let (_d, s) = store();
+        let id = s.add_task("something").unwrap();
+        assert!(s.set_task_status(id, "bogus").is_err());
+        // Status untouched after the rejected update.
+        assert_eq!(s.list_tasks()[0].status, "pending");
+    }
+
+    #[test]
+    fn tasks_unknown_id_returns_false() {
+        let (_d, s) = store();
+        assert!(!s.set_task_status(999, "done").unwrap());
+    }
+
+    #[test]
+    fn tasks_reject_empty_and_flatten_multiline_title() {
+        let (_d, s) = store();
+        assert!(s.add_task("   ").is_err());
+        s.add_task("line one\nline two\n- fake bullet").unwrap();
+        let tasks = s.list_tasks();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].title, "line one line two - fake bullet");
+    }
+
+    #[test]
     fn brief_save_and_load() {
         let (_d, s) = store();
         assert!(s.load_brief().is_none());
@@ -368,6 +521,7 @@ mod tests {
         s.save_brief("A Rust TUI for AI chat.").unwrap();
         s.remember("prefers explicit error handling").unwrap();
         s.record_decision("chose ratatui over cursive").unwrap();
+        s.add_task("port the renderer").unwrap();
         let ctx = s.project_memory_context(10_000).unwrap();
         assert!(ctx.contains("Engineering brief"));
         assert!(ctx.contains("A Rust TUI for AI chat."));
@@ -375,6 +529,20 @@ mod tests {
         assert!(ctx.contains("prefers explicit error handling"));
         assert!(ctx.contains("Recent decisions"));
         assert!(ctx.contains("chose ratatui over cursive"));
+        assert!(ctx.contains("Open tasks"));
+        assert!(ctx.contains("- [#1] port the renderer (pending)"));
+        // Open tasks come after the decisions section.
+        assert!(ctx.find("Recent decisions").unwrap() < ctx.find("Open tasks").unwrap());
+    }
+
+    #[test]
+    fn context_omits_tasks_when_none_open() {
+        let (_d, s) = store();
+        s.save_brief("A Rust TUI.").unwrap();
+        let id = s.add_task("finish this").unwrap();
+        s.set_task_status(id, "done").unwrap();
+        let ctx = s.project_memory_context(10_000).unwrap();
+        assert!(!ctx.contains("Open tasks"));
     }
 
     #[test]

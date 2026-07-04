@@ -480,7 +480,7 @@ pub(crate) async fn advance_pipeline_if_active(
         None
     };
 
-    let (next_step, task) = if iteration_handoff.is_some() {
+    let (mut next_step, task) = if iteration_handoff.is_some() {
         // We already set step = Coding via iterate_back_to_coding;
         // don't call advance() again.
         let state = app.pipeline.as_ref()?;
@@ -492,6 +492,32 @@ pub(crate) async fn advance_pipeline_if_active(
     };
     // Each role gets its own fresh agent-iteration budget.
     app.agent_iterations = 0;
+
+    // ── Plan-approval gate ──────────────────────────────────────────────
+    // The planner just finished: pause here. Nothing executes until the
+    // user reviews the plan and consents. `/approve` re-enters this
+    // function (current step AwaitingApproval → advances to Coding);
+    // `/reject` clears the pipeline. workflow_auto_approve restores the
+    // old un-gated behaviour for users who want it.
+    if next_step == PipelineStep::AwaitingApproval {
+        if app.workflow_auto_approve {
+            let state = app.pipeline.as_mut()?;
+            state.advance();
+            next_step = state.step; // → Coding
+        } else {
+            // No LLM turn runs while waiting; make sure an ordinary chat
+            // message typed now isn't executed as an agent turn.
+            app.agent_mode = false;
+            app.add_assistant_message(
+                "**Plan ready for review.** Nothing has been executed yet.\n\n\
+                 - `/approve` — run the plan (coder → reviewer)\n\
+                 - `/reject` — cancel the workflow"
+                    .into(),
+            );
+            app.set_status("Plan awaiting approval — /approve to execute, /reject to cancel");
+            return Some(PipelineStep::AwaitingApproval);
+        }
+    }
 
     if next_step == PipelineStep::Done {
         let task_preview: String = task.chars().take(60).collect();
@@ -508,7 +534,9 @@ pub(crate) async fn advance_pipeline_if_active(
             PipelineStep::Planning => 1,
             PipelineStep::Coding => 2,
             PipelineStep::Reviewing => 3,
-            PipelineStep::Done => 0,
+            // No LLM turn runs in these steps (role() is None), so they
+            // never reach this branch — 0 keeps the match exhaustive.
+            PipelineStep::AwaitingApproval | PipelineStep::Done => 0,
         };
         // Distinct status when the coder is on a feedback iteration so
         // the user sees we're not stuck repeating the first attempt.

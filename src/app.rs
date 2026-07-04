@@ -238,6 +238,9 @@ pub struct App {
     /// the user).  Used to disable agent mode again after the response if no
     /// tools were actually invoked.
     pub auto_agent_active: bool,
+    /// When `true`, `/workflow` skips the plan-approval gate and executes
+    /// the plan immediately. Mirrors `config.workflow_auto_approve`.
+    pub workflow_auto_approve: bool,
 
     /// User-configured context window override (from `config.context_limit`).
     pub context_limit_override: Option<usize>,
@@ -406,6 +409,7 @@ impl App {
             active_tool: None,
             agent_has_stash: false,
             auto_agent: true,
+            workflow_auto_approve: false,
             auto_agent_active: false,
             context_limit_override: None,
             pipeline: None,

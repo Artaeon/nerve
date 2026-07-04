@@ -140,6 +140,9 @@ Project Memory (.nerve/ — injected into every prompt)\n\
   /decisions          Show the decision log\n\
   /improve <idea>     Add an idea to the improvement backlog\n\
   /improvements       List backlog (done <id> to close)\n\
+  /task <title>       Add a task to the persistent backlog\n\
+  /tasks              List the task backlog\n\
+  /task done|start|fail <id>  Update a task's status\n\
 \n\
 Shell & Git\n\
   /run <command>      Run shell command and show output\n\

@@ -352,6 +352,7 @@ async fn run_tui(
     app.selected_model = startup.model.clone();
     app.selected_provider = startup.provider.clone();
     app.auto_agent = config.auto_agent;
+    app.workflow_auto_approve = config.workflow_auto_approve;
     app.command_timeout_secs = config.command_timeout_secs;
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
@@ -2087,8 +2088,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn advance_pipeline_pauses_at_approval_gate_by_default() {
+        let mut app = App::new();
+        app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
+            "add --json flag".into(),
+        ));
+        app.agent_mode = true; // planner role had ReadOnly tools
+        let scripted = Arc::new(ScriptedProvider::new(vec![""]));
+        let provider: Arc<dyn crate::ai::provider::AiProvider> = scripted.clone();
+
+        let step = advance_pipeline_if_active(&mut app, &provider).await;
+
+        // Paused: no LLM call, pipeline intact, agent mode off, and the
+        // user is told how to proceed.
+        assert_eq!(
+            step,
+            Some(crate::agent::pipeline::PipelineStep::AwaitingApproval)
+        );
+        assert_eq!(
+            app.pipeline.as_ref().unwrap().step,
+            crate::agent::pipeline::PipelineStep::AwaitingApproval
+        );
+        assert_eq!(
+            scripted.call_count(),
+            0,
+            "nothing may execute before /approve"
+        );
+        assert!(!app.agent_mode, "no agent turns while awaiting approval");
+        let last_assistant = app
+            .current_conversation()
+            .messages
+            .iter()
+            .rfind(|(r, _)| r == "assistant")
+            .map(|(_, c)| c.clone())
+            .unwrap_or_default();
+        assert!(last_assistant.contains("/approve"));
+        assert!(last_assistant.contains("/reject"));
+    }
+
+    #[tokio::test]
     async fn advance_pipeline_moves_planning_to_coding_and_kicks_stream() {
         let mut app = App::new();
+        app.workflow_auto_approve = true; // opt out of the approval gate
         app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
             "add --json flag".into(),
         ));
@@ -2123,6 +2164,7 @@ mod tests {
     #[tokio::test]
     async fn pipeline_advances_through_all_three_roles_and_completes() {
         let mut app = App::new();
+        app.workflow_auto_approve = true; // opt out of the approval gate
         app.pipeline = Some(crate::agent::pipeline::PipelineState::new(
             "tiny refactor".into(),
         ));
@@ -2234,6 +2276,7 @@ mod tests {
         // already, so is_streaming is false. We simulate that here
         // rather than driving the full event loop.
         let mut app = App::new();
+        app.workflow_auto_approve = true; // opt out of the approval gate
         app.pipeline = Some(crate::agent::pipeline::PipelineState::new("x".into()));
         app.add_user_message("x".into());
 

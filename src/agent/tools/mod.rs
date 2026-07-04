@@ -94,6 +94,16 @@ pub fn available_tools() -> Vec<Tool> {
                 .into(),
             parameters: "fact: string (one concise sentence)".into(),
         },
+        Tool {
+            name: "update_tasks".into(),
+            description: "Manage the persistent project task backlog (.nerve/tasks.json): \
+                          add tasks or update their status. Use to track multi-step work — \
+                          the backlog survives sessions."
+                .into(),
+            parameters: "action: string (add|done|start|fail), title: string (for add), \
+                         id: number (for done/start/fail)"
+                .into(),
+        },
     ]
 }
 
@@ -192,6 +202,7 @@ pub fn execute_tool(call: &ToolCall, command_timeout_secs: u64) -> ToolResult {
         "read_lines" => execute_read_lines(call),
         "web_search" => execute_web_search(call),
         "remember" => execute_remember(call),
+        "update_tasks" => execute_update_tasks(call),
         _ => ToolResult {
             tool: call.tool.clone(),
             success: false,
@@ -811,6 +822,86 @@ fn execute_remember(call: &ToolCall) -> ToolResult {
             success: false,
             output: format!("Could not save memory: {e}"),
         },
+    }
+}
+
+fn execute_update_tasks(call: &ToolCall) -> ToolResult {
+    let action = match require_arg(call, "action") {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+
+    let Some(ws) = crate::workspace::detect_workspace() else {
+        return ToolResult {
+            tool: "update_tasks".into(),
+            success: false,
+            output: "No workspace detected — the task backlog needs a git repo or manifest".into(),
+        };
+    };
+
+    // Writes go through the ProjectStore API only: titles are flattened to a
+    // single sanitized line and statuses are validated, so the agent cannot
+    // forge structure inside .nerve/tasks.json.
+    let store = crate::project::ProjectStore::for_workspace(&ws.root);
+    let fail = |output: String| ToolResult {
+        tool: "update_tasks".into(),
+        success: false,
+        output,
+    };
+
+    let done = match action {
+        "add" => {
+            let title = match require_arg(call, "title") {
+                Ok(t) => t,
+                Err(e) => return e,
+            };
+            match store.add_task(title) {
+                Ok(id) => format!("Task #{id} added."),
+                Err(e) => return fail(format!("Could not add task: {e}")),
+            }
+        }
+        "done" | "start" | "fail" => {
+            let id: u64 = match require_arg(call, "id") {
+                Ok(raw) => match raw.trim().parse() {
+                    Ok(id) => id,
+                    Err(_) => return fail(format!("Invalid task id: {raw}")),
+                },
+                Err(e) => return e,
+            };
+            let status = match action {
+                "done" => "done",
+                "start" => "in_progress",
+                _ => "failed",
+            };
+            match store.set_task_status(id, status) {
+                Ok(true) => format!("Task #{id} marked {status}."),
+                Ok(false) => return fail(format!("No task with id {id}")),
+                Err(e) => return fail(format!("Could not update task: {e}")),
+            }
+        }
+        other => {
+            return fail(format!(
+                "Unknown action: {other} (expected add|done|start|fail)"
+            ));
+        }
+    };
+
+    // Return the current open-task list so the model sees the updated state.
+    let open: Vec<String> = store
+        .list_tasks()
+        .iter()
+        .filter(|t| t.status == "pending" || t.status == "in_progress")
+        .map(|t| format!("- [#{}] {} ({})", t.id, t.title, t.status))
+        .collect();
+    let listing = if open.is_empty() {
+        "No open tasks.".to_string()
+    } else {
+        format!("Open tasks:\n{}", open.join("\n"))
+    };
+    ToolResult {
+        tool: "update_tasks".into(),
+        success: true,
+        output: format!("{done}\n\n{listing}"),
     }
 }
 
@@ -1594,8 +1685,8 @@ mod tests {
     }
 
     #[test]
-    fn exactly_eleven_tools() {
-        assert_eq!(available_tools().len(), 11);
+    fn exactly_twelve_tools() {
+        assert_eq!(available_tools().len(), 12);
     }
 
     // ── remember tool ─────────────────────────────────────────────────
@@ -1609,6 +1700,52 @@ mod tests {
         let result = execute_remember(&call);
         assert!(!result.success);
         assert!(result.output.contains("fact"));
+    }
+
+    // ── update_tasks tool ─────────────────────────────────────────────
+
+    #[test]
+    fn update_tasks_requires_action_arg() {
+        let call = ToolCall {
+            tool: "update_tasks".into(),
+            args: std::collections::HashMap::new(),
+        };
+        let result = execute_update_tasks(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("action"));
+    }
+
+    #[test]
+    fn update_tasks_add_requires_title_arg() {
+        let call = ToolCall {
+            tool: "update_tasks".into(),
+            args: [("action".into(), "add".into())].into(),
+        };
+        let result = execute_update_tasks(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("title"));
+    }
+
+    #[test]
+    fn update_tasks_status_requires_id_arg() {
+        let call = ToolCall {
+            tool: "update_tasks".into(),
+            args: [("action".into(), "done".into())].into(),
+        };
+        let result = execute_update_tasks(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("id"));
+    }
+
+    #[test]
+    fn update_tasks_rejects_unknown_action() {
+        let call = ToolCall {
+            tool: "update_tasks".into(),
+            args: [("action".into(), "explode".into())].into(),
+        };
+        let result = execute_update_tasks(&call);
+        assert!(!result.success);
+        assert!(result.output.contains("Unknown action"));
     }
 
     // ── .nerve/ write protection ──────────────────────────────────────

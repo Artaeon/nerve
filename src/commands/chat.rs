@@ -59,7 +59,43 @@ pub async fn handle(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProvider>
         return handle_workflow(app, trimmed, provider).await;
     }
 
+    if trimmed == "/approve" {
+        return handle_approve(app, provider).await;
+    }
+
+    if trimmed == "/reject" {
+        return handle_reject(app);
+    }
+
     false
+}
+
+/// `/approve` — the plan-approval gate. Only meaningful while a workflow
+/// is paused in `AwaitingApproval`; re-enters the pipeline driver, which
+/// advances to Coding and kicks off the coder's turn.
+async fn handle_approve(app: &mut App, provider: &Arc<dyn AiProvider>) -> bool {
+    use crate::agent::pipeline::PipelineStep;
+    match app.pipeline.as_ref().map(|p| p.step) {
+        Some(PipelineStep::AwaitingApproval) => {
+            crate::conversation::advance_pipeline_if_active(app, provider).await;
+        }
+        Some(_) => app.set_status("Workflow is running — nothing awaiting approval"),
+        None => app.set_status("No active workflow — /workflow <task> to start one"),
+    }
+    true
+}
+
+/// `/reject` — cancel a workflow at the approval gate (or any paused state).
+fn handle_reject(app: &mut App) -> bool {
+    if app.pipeline.is_some() {
+        app.pipeline = None;
+        app.agent_mode = false;
+        app.agent_iterations = 0;
+        app.set_status("Workflow cancelled — plan rejected, nothing was executed");
+    } else {
+        app.set_status("No active workflow to reject");
+    }
+    true
 }
 
 /// `/workflow <task>` — start the 3-role sequential pipeline
@@ -95,8 +131,9 @@ async fn handle_workflow(app: &mut App, trimmed: &str, provider: &Arc<dyn AiProv
             "Usage: /workflow <task>\n\
              \n\
              Runs a 3-agent pipeline on a fresh conversation:\n\
-               1. Planner  — writes a numbered plan (no tool access)\n\
-               2. Coder    — executes the plan with full tool access\n\
+               1. Planner  — reads the repo, writes a numbered plan\n\
+                  -> paused: /approve to execute, /reject to cancel\n\
+               2. Coder    — executes the approved plan with full tools\n\
                3. Reviewer — inspects the result with read-only tools\n\
              \n\
              Example: /workflow add a --json flag to the CLI output\n\

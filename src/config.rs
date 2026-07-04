@@ -35,6 +35,11 @@ pub struct Config {
     /// to need tool access (file I/O, shell commands, git, etc.).
     #[serde(default = "Config::default_auto_agent")]
     pub auto_agent: bool,
+    /// When `true`, `/workflow` skips the plan-approval gate and executes
+    /// the plan immediately (the pre-gate behaviour). Default `false`:
+    /// nothing runs until the user types `/approve`.
+    #[serde(default)]
+    pub workflow_auto_approve: bool,
     /// Git commit author name (e.g. "Jane Doe").
     /// When set, passed as `--author` to `git commit`.
     #[serde(default)]
@@ -137,6 +142,7 @@ impl Default for Config {
             keybinds: KeybindsConfig::default(),
             retry: RetryConfig::default(),
             auto_agent: true,
+            workflow_auto_approve: false,
             git_user_name: None,
             git_user_email: None,
             temperature: None,
