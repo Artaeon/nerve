@@ -54,7 +54,7 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
         return true;
     }
 
-    if project::handle(app, trimmed).await {
+    if project::handle(app, trimmed, provider).await {
         return true;
     }
 

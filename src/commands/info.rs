@@ -133,6 +133,7 @@ Knowledge & Context\n\
   /url <url> [q]      Scrape URL for context\n\
 \n\
 Project Memory (.nerve/ — injected into every prompt)\n\
+  /init               Analyze repo and save an engineering brief\n\
   /remember <fact>    Persist a fact/convention about this project\n\
   /memory             Show project memory (brief + facts + decisions)\n\
   /decision <text>    Record a decision in the decision log\n\
