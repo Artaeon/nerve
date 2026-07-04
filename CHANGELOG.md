@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Out-of-the-box experience
+- Provider health checks at startup (PATH scan for `claude`/`gh`, TCP probe for Ollama, key presence for OpenAI/OpenRouter) with automatic fallback to the best available provider when the default can't run
+- Friendly multi-provider setup guidance when no provider is available, instead of a raw error on the first prompt
+- Workspace-default agent activation: inside a detected project, coding requests activate the agent automatically; clearly conversational messages stay chat-only (`intent::should_activate_agent`)
+- Any git repository is now detected as a workspace even without a language manifest; language inferred from the dominant source-file extension
+- Claude CLI failures surface the CLI's own message with login guidance instead of a raw JSON blob
+
+#### Per-project persistent memory (`.nerve/`)
+- `/init` -- analyze the repo once and save an engineering brief injected into every prompt
+- `/remember <fact>`, `/memory` -- persist and view project facts/conventions
+- `/decision <text>`, `/decisions` -- append-only decision log (last 5 always in context)
+- `/task <title>`, `/tasks`, `/task done|start|fail <id>` -- a task backlog that survives sessions
+- `/improve <idea>`, `/improvements` -- improvement backlog
+- `/changes` -- audit trail (`.nerve/journal.jsonl`) of every agent file write
+- New agent tools `remember` and `update_tasks` (12 tools total) so the model maintains memory/tasks itself
+- `.nerve/` is write-protected from the agent's file tools; all writes go through a sanitized API (prompt-injection persistence defense)
+
+#### Multi-agent workflow
+- Plan-approval gate: `/workflow` now pauses after planning -- nothing executes until you `/approve` (or `/reject`); `workflow_auto_approve` config restores the old behavior
+- Planner runs with read-only repo access so plans reference real files and symbols
+- Green-gate commits: `/agent commit` runs the project's tests first and refuses to commit on red; `/agent commit force` overrides
+
 #### Developer Workflow
 - `/lint` command -- auto-detect and run project linter (clippy, eslint, ruff, golangci-lint, rubocop, credo)
 - `/format` (`/fmt`) command -- auto-detect and run code formatter (cargo fmt, prettier, ruff, gofmt, rubocop, mix format)
@@ -32,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Auto-agent mode: automatically enables tools when message needs them
 
 ### Fixed
+
+#### Plan-approval gate & workflow hardening (adversarial review)
+- **Approval-gate bypass**: a parked workflow is now advanced only by an explicit `/approve`; the event-loop no longer executes the plan when an unrelated message is sent while awaiting approval
+- Ordinary messages are blocked with guidance while a workflow awaits approval
+- `remember` and `update_tasks` are now treated as write tools, so read-only roles (the pre-approval Planner, the Reviewer) cannot mutate `.nerve/` project memory
+- `Esc` cancels a workflow parked at the approval gate; `/clear` tears the pipeline down like `/new`
+- `/agent commit` green gate uses a full-suite timeout (600s) instead of the 30s per-tool timeout, so real test suites no longer falsely "time out"
 
 #### Security Hardening
 - **SSRF**: Proper URL parsing replaces string-matching blocklist; blocks IPv6 loopback, link-local, ULA (fc00::/7), multicast (ff00::/8), IPv4-mapped IPv6, IPv4-compatible IPv6, CGN range
