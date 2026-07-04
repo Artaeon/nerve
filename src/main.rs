@@ -15,6 +15,7 @@ mod history;
 mod input;
 mod keybinds;
 mod knowledge;
+mod memory_recall;
 mod plugins;
 mod project;
 mod prompts;

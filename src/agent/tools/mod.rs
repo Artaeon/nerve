@@ -96,6 +96,15 @@ pub fn available_tools() -> Vec<Tool> {
             parameters: "fact: string (one concise sentence)".into(),
         },
         Tool {
+            name: "recall".into(),
+            description: "Search this project's persisted memory (remembered facts, past \
+                          decisions, open improvements) for entries relevant to a query. \
+                          Only a short header is in your context by default — use this to \
+                          retrieve the specifics before assuming or asking the user."
+                .into(),
+            parameters: "query: string (what you want to know about this project)".into(),
+        },
+        Tool {
             name: "update_tasks".into(),
             description: "Manage the persistent project task backlog (.nerve/tasks.json): \
                           add tasks or update their status. Use to track multi-step work — \
@@ -205,6 +214,7 @@ pub fn execute_tool(call: &ToolCall, command_timeout_secs: u64) -> ToolResult {
         "read_lines" => fs::execute_read_lines(call),
         "web_search" => exec::execute_web_search(call),
         "remember" => exec::execute_remember(call),
+        "recall" => exec::execute_recall(call),
         "update_tasks" => exec::execute_update_tasks(call),
         _ => ToolResult {
             tool: call.tool.clone(),
@@ -277,7 +287,12 @@ mod tests {
     }
 
     #[test]
-    fn exactly_twelve_tools() {
-        assert_eq!(available_tools().len(), 12);
+    fn exactly_thirteen_tools() {
+        assert_eq!(available_tools().len(), 13);
+    }
+
+    #[test]
+    fn recall_tool_is_registered() {
+        assert!(available_tools().iter().any(|t| t.name == "recall"));
     }
 }

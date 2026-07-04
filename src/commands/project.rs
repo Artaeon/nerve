@@ -528,10 +528,9 @@ mod tests {
             store.load_brief().unwrap(),
             "A test brief about the project."
         );
-        // Brief now flows into the injected context.
+        // Brief now flows into the always-on injected header.
         assert!(
-            store
-                .project_memory_context(10_000)
+            crate::memory_recall::always_on_context(&store, 1200)
                 .unwrap()
                 .contains("A test brief")
         );

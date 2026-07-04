@@ -166,6 +166,35 @@ pub(super) fn execute_remember(call: &ToolCall) -> ToolResult {
     }
 }
 
+pub(super) fn execute_recall(call: &ToolCall) -> ToolResult {
+    let query = match require_arg(call, "query") {
+        Ok(q) => q,
+        Err(e) => return e,
+    };
+
+    let Some(ws) = crate::workspace::detect_workspace() else {
+        return ToolResult {
+            tool: "recall".into(),
+            success: false,
+            output: "No workspace detected — project memory needs a git repo or manifest".into(),
+        };
+    };
+
+    // The agent asked deliberately, so return the best matches regardless of
+    // the auto-recall threshold (still capped so the result stays compact).
+    let store = crate::project::ProjectStore::for_workspace(&ws.root);
+    let hits = crate::memory_recall::recall(&store, query, 5, 0.0);
+    let output = match crate::memory_recall::format_recalled(&hits) {
+        Some(text) => text,
+        None => format!("No stored project memory matched \"{query}\"."),
+    };
+    ToolResult {
+        tool: "recall".into(),
+        success: true,
+        output,
+    }
+}
+
 pub(super) fn execute_update_tasks(call: &ToolCall) -> ToolResult {
     let action = match require_arg(call, "action") {
         Ok(a) => a,

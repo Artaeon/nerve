@@ -314,13 +314,26 @@ pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<C
         })
         .collect();
 
-    // Per-project memory (.nerve/): engineering brief + remembered facts +
-    // recent decisions. Injected on every prompt so the model always knows
-    // what nerve has learned about this repository across sessions.
+    // Per-project memory (.nerve/): retrieved, not force-fed. A tiny always-on
+    // header (project headline + open tasks + a pointer) grounds every turn,
+    // and a relevance-gated BM25 recall over the stored facts/decisions injects
+    // ONLY the entries that match this turn. Token cost then scales with
+    // relevance, not with how much memory has accumulated. The agent can also
+    // pull more explicitly via the `recall` tool.
     if let Some(ws) = &app.cached_workspace {
         let store = crate::project::ProjectStore::for_workspace(&ws.root);
-        if let Some(memory_context) = store.project_memory_context(6000) {
-            messages.insert(0, ChatMessage::system(memory_context));
+        // Auto-recall goes in first so the stable header ends up ahead of it.
+        let hits = crate::memory_recall::recall(
+            &store,
+            search_query,
+            3,
+            crate::memory_recall::AUTO_RECALL_MIN_SCORE,
+        );
+        if let Some(recalled) = crate::memory_recall::format_recalled(&hits) {
+            messages.insert(0, ChatMessage::system(recalled));
+        }
+        if let Some(header) = crate::memory_recall::always_on_context(&store, 1200) {
+            messages.insert(0, ChatMessage::system(header));
         }
     }
 

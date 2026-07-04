@@ -16,10 +16,11 @@
 //!   tasks.json        # task backlog [{id, title, status, created, updated}]
 //! ```
 //!
-//! The assembled context (`project_memory_context`) is injected into every
-//! prompt, mirroring twentyfouragentos' proven flat-text model: brief +
-//! memory + the most recent decisions. No embeddings, no magic — grounded,
-//! cheap and predictable.
+//! Memory is *retrieved*, not force-fed: [`crate::memory_recall`] injects a
+//! tiny always-on header (project headline + open tasks + a pointer) and pulls
+//! only the facts/decisions relevant to each turn via a BM25 search over this
+//! store. Token cost then scales with relevance, not with how much has
+//! accumulated. No embeddings, no magic — grounded, cheap and predictable.
 //!
 //! Security: `.nerve/` is a protected write target for agent tools (see
 //! `shell::is_protected_write_target`) so a prompt-injected model cannot
@@ -32,9 +33,6 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::files::atomic_write;
-
-/// How many recent decisions are injected into the prompt context.
-const CONTEXT_DECISIONS: usize = 5;
 
 /// The statuses a task in the backlog may hold.
 const TASK_STATUSES: [&str; 4] = ["pending", "in_progress", "done", "failed"];
@@ -203,6 +201,18 @@ impl ProjectStore {
         all.into_iter().skip(skip).collect()
     }
 
+    /// Every recorded decision, oldest first. Used by memory retrieval to index
+    /// the full decision history for on-demand recall.
+    pub fn all_decisions(&self) -> Vec<Decision> {
+        let Ok(content) = std::fs::read_to_string(self.decisions_path()) else {
+            return Vec::new();
+        };
+        content
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect()
+    }
+
     // ── journal.jsonl ────────────────────────────────────────────────────
 
     pub fn journal_path(&self) -> PathBuf {
@@ -360,60 +370,6 @@ impl ProjectStore {
     fn save_tasks(&self, tasks: &[ProjectTask]) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(tasks)?;
         atomic_write(&self.tasks_path(), &json)
-    }
-
-    // ── Context assembly ─────────────────────────────────────────────────
-
-    /// Assemble the project-memory context injected into every prompt:
-    /// brief + memory + recent decisions, truncated to `max_chars`.
-    /// Returns `None` when there is nothing to inject.
-    pub fn project_memory_context(&self, max_chars: usize) -> Option<String> {
-        let mut sections: Vec<String> = Vec::new();
-
-        if let Some(brief) = self.load_brief() {
-            sections.push(format!("## Engineering brief\n{brief}"));
-        }
-        if let Some(memory) = self.load_memory() {
-            sections.push(format!("## Facts & conventions\n{memory}"));
-        }
-        let decisions = self.recent_decisions(CONTEXT_DECISIONS);
-        if !decisions.is_empty() {
-            let lines = decisions
-                .iter()
-                .map(|d| format!("- {}", d.text))
-                .collect::<Vec<_>>()
-                .join("\n");
-            sections.push(format!("## Recent decisions\n{lines}"));
-        }
-        let open_tasks: Vec<_> = self
-            .list_tasks()
-            .into_iter()
-            .filter(|t| t.status == "pending" || t.status == "in_progress")
-            .collect();
-        if !open_tasks.is_empty() {
-            let lines = open_tasks
-                .iter()
-                .map(|t| format!("- [#{}] {} ({})", t.id, t.title, t.status))
-                .collect::<Vec<_>>()
-                .join("\n");
-            sections.push(format!("## Open tasks\n{lines}"));
-        }
-
-        if sections.is_empty() {
-            return None;
-        }
-
-        let mut context = format!(
-            "Project memory (persisted knowledge about this repository — \
-             treat as ground truth unless the code contradicts it):\n\n{}",
-            sections.join("\n\n")
-        );
-        if context.len() > max_chars {
-            // Truncate at a char boundary, never mid-UTF-8.
-            let truncated: String = context.chars().take(max_chars).collect();
-            context = format!("{truncated}\n[project memory truncated]");
-        }
-        Some(context)
     }
 }
 
@@ -610,48 +566,15 @@ mod tests {
     }
 
     #[test]
-    fn context_assembles_all_sections() {
+    fn all_decisions_returns_full_history() {
         let (_d, s) = store();
-        s.save_brief("A Rust TUI for AI chat.").unwrap();
-        s.remember("prefers explicit error handling").unwrap();
-        s.record_decision("chose ratatui over cursive").unwrap();
-        s.add_task("port the renderer").unwrap();
-        let ctx = s.project_memory_context(10_000).unwrap();
-        assert!(ctx.contains("Engineering brief"));
-        assert!(ctx.contains("A Rust TUI for AI chat."));
-        assert!(ctx.contains("Facts & conventions"));
-        assert!(ctx.contains("prefers explicit error handling"));
-        assert!(ctx.contains("Recent decisions"));
-        assert!(ctx.contains("chose ratatui over cursive"));
-        assert!(ctx.contains("Open tasks"));
-        assert!(ctx.contains("- [#1] port the renderer (pending)"));
-        // Open tasks come after the decisions section.
-        assert!(ctx.find("Recent decisions").unwrap() < ctx.find("Open tasks").unwrap());
-    }
-
-    #[test]
-    fn context_omits_tasks_when_none_open() {
-        let (_d, s) = store();
-        s.save_brief("A Rust TUI.").unwrap();
-        let id = s.add_task("finish this").unwrap();
-        s.set_task_status(id, "done").unwrap();
-        let ctx = s.project_memory_context(10_000).unwrap();
-        assert!(!ctx.contains("Open tasks"));
-    }
-
-    #[test]
-    fn context_none_when_empty() {
-        let (_d, s) = store();
-        assert!(s.project_memory_context(10_000).is_none());
-    }
-
-    #[test]
-    fn context_truncates_to_budget() {
-        let (_d, s) = store();
-        s.save_brief(&"x".repeat(5000)).unwrap();
-        let ctx = s.project_memory_context(500).unwrap();
-        assert!(ctx.len() < 600);
-        assert!(ctx.ends_with("[project memory truncated]"));
+        for i in 1..=7 {
+            s.record_decision(&format!("decision {i}")).unwrap();
+        }
+        let all = s.all_decisions();
+        assert_eq!(all.len(), 7);
+        assert_eq!(all.first().unwrap().text, "decision 1");
+        assert_eq!(all.last().unwrap().text, "decision 7");
     }
 
     #[test]
