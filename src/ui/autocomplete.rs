@@ -38,8 +38,14 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
         .map(|item| super::utils::display_width(item))
         .max()
         .unwrap_or(30);
-    let popup_width = ((max_item_width + 4) as u16) // +4 for padding/borders
-        .clamp(40, input_area.width.saturating_sub(2));
+    // Fit the content (>= 40 when there's room) but never wider than the
+    // terminal. `clamp(40, max)` would PANIC when the terminal is narrower
+    // than 42 cols (max < 40), so cap first, then raise toward 40 only as far
+    // as the available width allows.
+    let max_width = input_area.width.saturating_sub(2);
+    let popup_width = ((max_item_width + 4) as u16)
+        .min(max_width)
+        .max(40.min(max_width));
 
     // Position above the input if there's room, otherwise below.
     let above_y = input_area.y.saturating_sub(popup_height);
@@ -167,4 +173,53 @@ pub fn render_autocomplete(frame: &mut Frame, app: &App, input_area: Rect) {
     );
 
     frame.render_widget(list, popup_area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn app_with_items() -> App {
+        let mut app = App::new();
+        app.autocomplete_visible = true;
+        app.autocomplete_items = vec![
+            "/workflow — plan then implement".into(),
+            "/remember — save a fact".into(),
+            "/model — switch model".into(),
+        ];
+        app.autocomplete_index = 0;
+        app
+    }
+
+    /// Rendering must never panic, even on a terminal narrower than the popup's
+    /// preferred 40-col minimum (regression for the `clamp(40, max)` crash when
+    /// `max < 40`, e.g. a 0-width PTY).
+    #[test]
+    fn render_survives_tiny_and_zero_widths() {
+        let app = app_with_items();
+        for (w, h) in [(1u16, 1u16), (10, 4), (41, 8), (80, 24)] {
+            let backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    let input_area = Rect::new(0, h.saturating_sub(1), w, 1);
+                    render_autocomplete(frame, &app, input_area);
+                })
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn render_noop_when_hidden_or_empty() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = app_with_items();
+        app.autocomplete_visible = false;
+        // Should simply not draw the popup (and not panic).
+        terminal
+            .draw(|frame| render_autocomplete(frame, &app, Rect::new(0, 23, 80, 1)))
+            .unwrap();
+    }
 }

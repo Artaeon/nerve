@@ -176,7 +176,16 @@ impl ClaudeCodeProvider {
         if self.enable_tools {
             args.push("--dangerously-skip-permissions".into());
         } else {
-            args.push("--allowedTools".into());
+            // Fully remove the CLI's built-in tools (Edit/Write/Bash/…) so the
+            // model can't invoke them. This is the DEFAULT path used by nerve's
+            // own agent loop, which drives file edits through its text
+            // <tool_call> protocol (executed and journaled by nerve). Without
+            // this, the model reaches for the CLI's native Edit tool, which
+            // hits the interactive permission gate and fails in headless mode
+            // ("permission not granted"). NOTE: `--allowedTools ""` does NOT
+            // disable tools — it only withholds auto-approval, so every native
+            // call still prompts and then fails. `--tools ""` removes them.
+            args.push("--tools".into());
             args.push("".into());
         }
 
@@ -842,10 +851,14 @@ mod tests {
     }
 
     #[test]
-    fn build_args_tools_disabled_adds_empty_allowed_tools() {
+    fn build_args_tools_disabled_removes_native_tools() {
         let p = ClaudeCodeProvider::new();
         let args = p.build_args("hi", "sonnet", "text", &None);
-        assert!(args.contains(&"--allowedTools".to_string()));
+        // `--tools ""` fully removes the CLI's built-in tools so the model
+        // uses nerve's text protocol instead of hitting the permission gate.
+        // (`--allowedTools ""` does NOT disable tools — see build_args.)
+        assert!(args.contains(&"--tools".to_string()));
+        assert!(!args.contains(&"--allowedTools".to_string()));
         assert!(args.contains(&String::new()));
         assert!(!args.contains(&"--dangerously-skip-permissions".to_string()));
     }
