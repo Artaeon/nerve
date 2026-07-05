@@ -624,28 +624,12 @@ async fn event_loop(
                             }
                         }
 
-                        // Auto-save conversation to history.
-                        {
-                            let conv = app.current_conversation();
-                            let record = history::ConversationRecord {
-                                id: conv.id.clone(),
-                                title: conv.title.clone(),
-                                messages: conv
-                                    .messages
-                                    .iter()
-                                    .map(|(role, content)| history::MessageRecord {
-                                        role: role.clone(),
-                                        content: content.clone(),
-                                        timestamp: chrono::Utc::now(),
-                                    })
-                                    .collect(),
-                                model: app.selected_model.clone(),
-                                provider: app.selected_provider.clone(),
-                                created_at: conv.created_at,
-                                updated_at: chrono::Utc::now(),
-                            };
-                            let _ = history::save_conversation(&record);
-                        }
+                        // Auto-save conversation to history AND persist the
+                        // session, so a later crash resumes exactly here. Both
+                        // go through the shared helper / session_from_app so
+                        // every save path writes identical records.
+                        conversation::persist_current_conversation(app);
+                        let _ = session::save_session(&session::session_from_app(app));
 
                         // Agent mode: check for tool calls and execute them
                         if app.agent_mode {

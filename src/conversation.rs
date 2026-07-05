@@ -199,7 +199,56 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
 async fn send_to_ai(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
     app.add_user_message(text.to_string());
     app.scroll_offset = 0;
+    // Durability: persist the user's turn to history BEFORE streaming starts.
+    // Previously the conversation was only written when the response completed
+    // (StreamEvent::Done), so a crash/kill mid-response silently lost the user's
+    // just-typed message. Now the turn survives regardless of what happens next.
+    persist_current_conversation(app);
     send_to_ai_from_history(app, provider).await;
+}
+
+/// Write the active conversation to history (best-effort). This is the single
+/// source of truth for turning the in-memory conversation into a
+/// `ConversationRecord`, used after the user's message is added, when a
+/// response completes, and on quit — so all three paths save identical records
+/// and no turn is ever lost to a crash mid-stream. A save failure is
+/// intentionally non-fatal to the UI.
+pub(crate) fn persist_current_conversation(app: &App) {
+    if let Some(record) = conversation_record(app) {
+        let _ = crate::history::save_conversation(&record);
+    }
+}
+
+/// Build a `ConversationRecord` from the active conversation, or `None` when
+/// there is no real turn to save yet (only seeded system prompts). Split out
+/// from the disk write so the "don't persist an empty conversation" guard is
+/// unit-testable without touching the filesystem.
+fn conversation_record(app: &App) -> Option<crate::history::ConversationRecord> {
+    let conv = app.current_conversation();
+    if !conv
+        .messages
+        .iter()
+        .any(|(r, _)| r == "user" || r == "assistant")
+    {
+        return None;
+    }
+    Some(crate::history::ConversationRecord {
+        id: conv.id.clone(),
+        title: conv.title.clone(),
+        messages: conv
+            .messages
+            .iter()
+            .map(|(role, content)| crate::history::MessageRecord {
+                role: role.clone(),
+                content: content.clone(),
+                timestamp: chrono::Utc::now(),
+            })
+            .collect(),
+        model: app.selected_model.clone(),
+        provider: app.selected_provider.clone(),
+        created_at: conv.created_at,
+        updated_at: chrono::Utc::now(),
+    })
 }
 
 /// Choose the model for the turn that is about to stream and remember it on the
@@ -1019,9 +1068,35 @@ pub(crate) fn cycle_conversation_back(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_context_messages, looks_like_slash_command};
+    use super::{build_context_messages, conversation_record, looks_like_slash_command};
     use crate::app::App;
     use crate::workspace::{ProjectType, WorkspaceInfo};
+
+    #[test]
+    fn conversation_record_skips_system_only() {
+        // A fresh app whose conversation holds only a seeded system prompt must
+        // NOT be persisted (nothing to lose yet).
+        let mut app = App::new();
+        app.current_conversation_mut()
+            .messages
+            .push(("system".into(), "you are nerve".into()));
+        assert!(conversation_record(&app).is_none());
+    }
+
+    #[test]
+    fn conversation_record_saves_after_user_turn() {
+        // As soon as the user has spoken, the turn is durable — even before any
+        // assistant response exists (the mid-stream-crash case).
+        let mut app = App::new();
+        app.add_user_message("fix the bug".into());
+        let record = conversation_record(&app).expect("user turn should persist");
+        assert!(
+            record
+                .messages
+                .iter()
+                .any(|m| m.role == "user" && m.content == "fix the bug")
+        );
+    }
 
     fn app_with_seeded_memory(root: &std::path::Path) -> App {
         let store = crate::project::ProjectStore::for_workspace(root);
