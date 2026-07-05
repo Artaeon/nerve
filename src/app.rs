@@ -246,6 +246,18 @@ pub struct App {
     /// `selected_model` (strong for planning/review/hard work, small for
     /// trivial). Mirrors `config.auto_model_routing`.
     pub auto_model_routing: bool,
+
+    /// When `true` (default), after an agent turn that edited files Nerve runs
+    /// `verify_command` and feeds failures back for the agent to fix.
+    pub auto_verify: bool,
+    /// The resolved verify command (config override or auto-detected). `None`
+    /// when no command could be inferred.
+    pub verify_command: Option<String>,
+    /// Whether the current agent turn has edited files (so a read-only turn is
+    /// not verified). Reset when a new user turn starts.
+    pub agent_made_edits: bool,
+    /// Verify→fix rounds used this turn, capped at `verify::MAX_VERIFY_ROUNDS`.
+    pub verify_rounds: u8,
     /// The model chosen for the in-flight turn by routing, remembered so that
     /// agent tool-round continuations — which no longer carry the original
     /// request text to classify — reuse the same model instead of re-deciding.
@@ -421,6 +433,10 @@ impl App {
             workflow_auto_approve: false,
             auto_model_routing: true,
             active_turn_model: None,
+            auto_verify: true,
+            verify_command: None,
+            agent_made_edits: false,
+            verify_rounds: 0,
             auto_agent_active: false,
             context_limit_override: None,
             pipeline: None,

@@ -46,6 +46,16 @@ pub struct Config {
     /// selected model. Only Claude and OpenAI providers are routed.
     #[serde(default = "Config::default_auto_model_routing")]
     pub auto_model_routing: bool,
+    /// When `true` (default), after an agent turn that edited files Nerve runs
+    /// a verify command (type-check / build) and feeds any failure back so the
+    /// agent fixes it. Set `false` to disable.
+    #[serde(default = "Config::default_auto_verify")]
+    pub auto_verify: bool,
+    /// Explicit verify command (e.g. `"npm run lint"`). When unset, Nerve
+    /// auto-detects one from the workspace (Cargo/npm). Only used when
+    /// `auto_verify` is on.
+    #[serde(default)]
+    pub verify_command: Option<String>,
     /// Git commit author name (e.g. "Jane Doe").
     /// When set, passed as `--author` to `git commit`.
     #[serde(default)]
@@ -150,6 +160,8 @@ impl Default for Config {
             auto_agent: true,
             workflow_auto_approve: false,
             auto_model_routing: true,
+            auto_verify: true,
+            verify_command: None,
             git_user_name: None,
             git_user_email: None,
             temperature: None,
@@ -242,6 +254,10 @@ impl Config {
     }
 
     fn default_auto_model_routing() -> bool {
+        true
+    }
+
+    fn default_auto_verify() -> bool {
         true
     }
 

@@ -29,6 +29,7 @@ mod shell;
 mod splash;
 mod ui;
 mod usage;
+mod verify;
 mod workspace;
 
 use std::io::{self, Read as _};
@@ -356,6 +357,7 @@ async fn run_tui(
     app.auto_agent = config.auto_agent;
     app.workflow_auto_approve = config.workflow_auto_approve;
     app.auto_model_routing = config.auto_model_routing;
+    app.auto_verify = config.auto_verify;
     app.command_timeout_secs = config.command_timeout_secs;
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
@@ -398,6 +400,13 @@ async fn run_tui(
         ));
     }
     app.cached_workspace = detected_workspace.clone();
+    // Resolve the verify command now that the workspace is known: explicit
+    // config override, else auto-detect from the workspace (Cargo/npm).
+    app.verify_command = config.verify_command.clone().or_else(|| {
+        detected_workspace
+            .as_ref()
+            .and_then(|ws| verify::detect_verify_command(&ws.root))
+    });
 
     init_status(&mut terminal, "Loading plugins...");
 
@@ -643,6 +652,12 @@ async fn event_loop(
                             if let Some(response) = last_response {
                                 let tool_calls = crate::agent::tools::parse_tool_calls(&response);
 
+                                // Track file-editing so the verify gate only
+                                // runs on turns that actually changed code.
+                                if tool_calls.iter().any(|c| verify::is_write_tool(&c.tool)) {
+                                    app.agent_made_edits = true;
+                                }
+
                                 if !tool_calls.is_empty() && app.agent_iterations < 10 {
                                     app.agent_iterations += 1;
 
@@ -696,12 +711,61 @@ async fn event_loop(
                                     // it.
                                     break;
                                 } else if app.agent_iterations > 0 {
-                                    // No more tool calls or max iterations
+                                    // Agent turn finished. Before handing back,
+                                    // run the project verify command if this
+                                    // turn edited files — on failure its output
+                                    // is fed back (as a normal tool result) so
+                                    // the agent fixes its own mistakes instead
+                                    // of leaving a broken build for the user.
+                                    if verify::should_run_verify(
+                                        app.auto_verify,
+                                        app.verify_command.as_deref(),
+                                        app.agent_made_edits,
+                                        app.verify_rounds,
+                                    ) {
+                                        let cmd = app.verify_command.clone().unwrap();
+                                        app.verify_rounds += 1;
+                                        // Only re-verify if the agent makes NEW
+                                        // edits in response to the output.
+                                        app.agent_made_edits = false;
+                                        app.agent_iterations += 1;
+                                        app.set_status(format!("Verifying changes: {cmd}"));
+
+                                        let verify_call = crate::agent::tools::ToolCall {
+                                            tool: "run_command".into(),
+                                            args: std::collections::HashMap::from([(
+                                                "command".to_string(),
+                                                cmd,
+                                            )]),
+                                        };
+                                        let (tool_tx, tool_rx) =
+                                            tokio::sync::mpsc::unbounded_channel();
+                                        app.cancel_active_stream();
+                                        app.stream_rx = Some(tool_rx);
+                                        app.is_streaming = true;
+                                        app.streaming_response.clear();
+                                        app.streaming_start = Some(std::time::Instant::now());
+                                        // Builds/type-checks are slower than a
+                                        // normal command — give them room.
+                                        let timeout_secs = config.command_timeout_secs.max(300);
+                                        let handle = tokio::spawn(run_agent_tools_task(
+                                            vec![verify_call],
+                                            timeout_secs,
+                                            crate::agent::pipeline::ToolPolicy::Full,
+                                            tool_tx,
+                                        ));
+                                        app.stream_abort = Some(handle.abort_handle());
+                                        break;
+                                    }
+
+                                    // No verify due — the turn is complete.
                                     app.set_status(format!(
                                         "Agent completed in {} iteration(s)",
                                         app.agent_iterations
                                     ));
                                     app.agent_iterations = 0;
+                                    app.verify_rounds = 0;
+                                    app.agent_made_edits = false;
                                 }
                             }
                         }
