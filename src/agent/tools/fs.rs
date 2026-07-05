@@ -85,6 +85,103 @@ fn verify_file_syntax(path: &str) -> Option<String> {
     None
 }
 
+/// Extensions whose bracket delimiters must balance in a complete file.
+const BRACED_EXTS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "java", "c", "h", "cpp", "hpp", "cs",
+    "css", "scss", "json", "jsonc",
+];
+
+/// Detect a likely-TRUNCATED write by checking that `{}`, `[]` and `()` balance,
+/// ignoring delimiters inside strings and comments. This runs in-process with no
+/// external tools — unlike `verify_file_syntax` (which shells out to `node
+/// --check`, a tool that can't even parse TypeScript), so it reliably catches
+/// the failure mode where the model cuts a file off mid-declaration (e.g. a
+/// file ending with `export interface Foo {`). Advisory only: the write still
+/// succeeds, but the model is told to rewrite the whole file.
+fn truncation_warning(path: &str, content: &str) -> Option<String> {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())?;
+    if !BRACED_EXTS.contains(&ext) {
+        return None;
+    }
+
+    let (mut curly, mut square, mut paren) = (0i32, 0i32, 0i32);
+    let mut in_line = false;
+    let mut in_block = false;
+    let mut string: Option<char> = None;
+    let mut chars = content.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if in_line {
+            if c == '\n' {
+                in_line = false;
+            }
+            continue;
+        }
+        if in_block {
+            if c == '*' && chars.peek() == Some(&'/') {
+                chars.next();
+                in_block = false;
+            }
+            continue;
+        }
+        if let Some(delim) = string {
+            match c {
+                '\\' => {
+                    chars.next(); // skip the escaped char
+                }
+                _ if c == delim => string = None,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.next();
+                in_line = true;
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                in_block = true;
+            }
+            '"' | '\'' | '`' => string = Some(c),
+            '{' => curly += 1,
+            '}' => curly -= 1,
+            '[' => square += 1,
+            ']' => square -= 1,
+            '(' => paren += 1,
+            ')' => paren -= 1,
+            _ => {}
+        }
+        if curly < 0 || square < 0 || paren < 0 {
+            return Some(format!(
+                "'{path}' has an unbalanced CLOSING delimiter — the file looks malformed. \
+                 Rewrite the entire file correctly."
+            ));
+        }
+    }
+
+    if curly != 0 || square != 0 || paren != 0 {
+        let mut parts = Vec::new();
+        if curly != 0 {
+            parts.push(format!("{curly} unclosed {{}}"));
+        }
+        if square != 0 {
+            parts.push(format!("{square} unclosed []"));
+        }
+        if paren != 0 {
+            parts.push(format!("{paren} unclosed ()"));
+        }
+        return Some(format!(
+            "'{path}' appears TRUNCATED ({}). You likely stopped mid-file — \
+             rewrite the ENTIRE file in one write_file call, do not cut it off.",
+            parts.join(", ")
+        ));
+    }
+    None
+}
+
 /// Record a successful mutating tool call in the project change journal
 /// (`.nerve/journal.jsonl`). Best-effort: journaling failures are logged and
 /// must never fail the tool itself.
@@ -247,8 +344,11 @@ pub(super) fn execute_write_file(call: &ToolCall) -> ToolResult {
                 path,
                 &format!("wrote {} bytes", content.len()),
             );
-            // Auto-verify syntax
-            if let Some(error) = verify_file_syntax(path) {
+            // Auto-verify: a dependency-free truncation check first (reliably
+            // catches files cut off mid-write, incl. TypeScript), then the
+            // language syntax check where a tool is available.
+            let warning = truncation_warning(path, content).or_else(|| verify_file_syntax(path));
+            if let Some(error) = warning {
                 return ToolResult {
                     tool: "write_file".into(),
                     success: true,
@@ -313,8 +413,10 @@ pub(super) fn execute_edit_file(call: &ToolCall) -> ToolResult {
                             new_text.chars().count()
                         ),
                     );
-                    // Auto-verify syntax
-                    if let Some(error) = verify_file_syntax(path) {
+                    // Auto-verify: truncation (dependency-free) then syntax.
+                    let warning =
+                        truncation_warning(path, &new_content).or_else(|| verify_file_syntax(path));
+                    if let Some(error) = warning {
                         return ToolResult {
                             tool: "edit_file".into(),
                             success: true,
@@ -948,6 +1050,45 @@ mod tests {
     }
 
     // ── Syntax verification tests ──────────────────────────────────────
+
+    #[test]
+    fn truncation_warning_catches_cutoff_typescript() {
+        // The exact failure mode from the vollgebucht build: a .ts file cut off
+        // mid-declaration. `node --check` never caught this.
+        let w = truncation_warning("types.ts", "export interface DateRange {\n");
+        assert!(w.is_some());
+        assert!(w.unwrap().contains("TRUNCATED"));
+    }
+
+    #[test]
+    fn truncation_warning_passes_complete_code() {
+        let complete = "export interface X {\n  a: number;\n}\nfunction f() { return [1, 2]; }\n";
+        assert!(truncation_warning("x.ts", complete).is_none());
+    }
+
+    #[test]
+    fn truncation_warning_ignores_braces_in_strings_and_comments() {
+        // Unbalanced braces that live inside strings/comments must NOT flag.
+        let src = r#"const s = "a { b [ c (";
+// a stray } ] ) in a comment
+const t = 'another } unmatched';
+function ok() { return 1; }
+"#;
+        assert!(truncation_warning("x.ts", src).is_none());
+    }
+
+    #[test]
+    fn truncation_warning_flags_unbalanced_closing() {
+        let w = truncation_warning("x.rs", "fn main() { let x = 1; }}\n");
+        assert!(w.unwrap().contains("unbalanced"));
+    }
+
+    #[test]
+    fn truncation_warning_skips_prose_extensions() {
+        // Markdown / text can have unbalanced braces legitimately.
+        assert!(truncation_warning("README.md", "use `foo {` here").is_none());
+        assert!(truncation_warning("notes.txt", "a { b").is_none());
+    }
 
     #[test]
     fn verify_file_syntax_valid_json() {
