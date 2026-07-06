@@ -1,6 +1,6 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/changes`, `/activity`, `/improve`, `/improvements`, `/task`,
-//! `/tasks`.
+//! `/decisions`, `/changes`, `/activity`, `/design`, `/improve`,
+//! `/improvements`, `/task`, `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -178,6 +178,29 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
                 ));
             }
             app.add_assistant_message(out);
+            true
+        }
+        "/design" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            if args.is_empty() {
+                match store.load_design() {
+                    Some(design) => app.add_assistant_message(design),
+                    None => app.set_status(
+                        "No design principles yet — /design <principle> to add one \
+                         (auto-applied to UI/design work)",
+                    ),
+                }
+                return true;
+            }
+            match store.append_design(args) {
+                Ok(()) => app.set_status(format!(
+                    "Design principle saved ({} — auto-applied to UI/design turns)",
+                    store.design_path().display()
+                )),
+                Err(e) => app.set_status(format!("Could not save design principle: {e}")),
+            }
             true
         }
         "/improve" => {
@@ -481,6 +504,36 @@ mod tests {
         );
         // Unexpected shapes fall back to the (de-T'd) raw string.
         assert_eq!(super::format_change_timestamp("bogus"), "bogus");
+    }
+
+    #[tokio::test]
+    async fn design_add_then_show_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(
+            handle(
+                &mut app,
+                "/design use an 8px spacing scale",
+                &mock_provider()
+            )
+            .await
+        );
+        assert!(handle(&mut app, "/design", &mock_provider()).await);
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("# Design principles"));
+        assert!(content.contains("use an 8px spacing scale"));
+    }
+
+    #[tokio::test]
+    async fn design_empty_sets_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/design", &mock_provider()).await);
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("No design principles yet"))
+        );
     }
 
     #[tokio::test]

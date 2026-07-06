@@ -170,6 +170,41 @@ impl ProjectStore {
         atomic_write(&self.brief_path(), brief.trim())
     }
 
+    // ── design.md ────────────────────────────────────────────────────────
+
+    pub fn design_path(&self) -> PathBuf {
+        self.dir.join("design.md")
+    }
+
+    /// The project's design principles / design-system notes, if any.
+    pub fn load_design(&self) -> Option<String> {
+        let text = std::fs::read_to_string(self.design_path()).ok()?;
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    /// Append a design principle to `design.md` (creating it with a header).
+    pub fn append_design(&self, principle: &str) -> anyhow::Result<()> {
+        let principle = sanitize_line(principle);
+        if principle.is_empty() {
+            anyhow::bail!("cannot add an empty design principle");
+        }
+        self.ensure_dir()?;
+        let path = self.design_path();
+        let mut content = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+            "# Design principles\n\nHow UI/design work should be done in this project.\n".into()
+        });
+        if !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&format!("- {principle}\n"));
+        atomic_write(&path, &content)
+    }
+
     // ── decisions.jsonl ──────────────────────────────────────────────────
 
     pub fn decisions_path(&self) -> PathBuf {
@@ -654,6 +689,31 @@ mod tests {
         assert!(s.load_brief().is_none());
         s.save_brief("A Rust TUI.\n").unwrap();
         assert_eq!(s.load_brief().unwrap(), "A Rust TUI.");
+    }
+
+    #[test]
+    fn design_creates_and_appends() {
+        let (_d, s) = store();
+        assert!(s.load_design().is_none());
+        s.append_design("use an 8px spacing scale").unwrap();
+        s.append_design("prefer system fonts over web fonts")
+            .unwrap();
+        let design = s.load_design().unwrap();
+        assert!(design.starts_with("# Design principles"));
+        assert!(design.contains("- use an 8px spacing scale"));
+        assert!(design.contains("- prefer system fonts over web fonts"));
+    }
+
+    #[test]
+    fn design_rejects_empty_and_flattens_multiline() {
+        let (_d, s) = store();
+        assert!(s.append_design("   ").is_err());
+        assert!(s.load_design().is_none());
+        s.append_design("line one\nline two\n- fake bullet")
+            .unwrap();
+        let design = s.load_design().unwrap();
+        assert!(design.contains("- line one line two - fake bullet"));
+        assert_eq!(design.lines().filter(|l| l.starts_with("- ")).count(), 1);
     }
 
     #[test]

@@ -148,6 +148,45 @@ fn meaningful_query(query: &str) -> String {
     }
 }
 
+/// Signal words that mark a request as UI/design work. Kept lowercase; matched
+/// on whole words so "designer" or "restyle" don't accidentally hide/expose the
+/// design principles.
+const DESIGN_SIGNALS: &[&str] = &[
+    "design",
+    "ui",
+    "css",
+    "layout",
+    "style",
+    "styling",
+    "component",
+    "page",
+    "tailwind",
+    "html",
+    "color",
+    "colour",
+    "font",
+    "typography",
+    "spacing",
+    "theme",
+    "button",
+    "header",
+    "footer",
+    "hero",
+    "landing",
+    "bento",
+    "responsive",
+];
+
+/// True when `text` looks like a UI/design request, so the project's design
+/// principles are worth injecting. Matches whole words only (after lowercasing),
+/// so backend-only turns don't waste tokens on design guidance.
+pub fn is_design_request(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|word| DESIGN_SIGNALS.contains(&word))
+}
+
 /// The searchable core of [`recall`], separated so it can be unit-tested
 /// without touching the filesystem.
 fn recall_in(
@@ -389,6 +428,15 @@ mod tests {
         );
         // All-stopword queries fall back to the original.
         assert_eq!(meaningful_query("what is the"), "what is the");
+    }
+
+    #[test]
+    fn is_design_request_detects_ui_work_only() {
+        assert!(is_design_request("redesign the header"));
+        assert!(is_design_request("fix the css layout"));
+        assert!(is_design_request("build a landing page hero"));
+        assert!(!is_design_request("fix the booking engine bug"));
+        assert!(!is_design_request("add a database migration"));
     }
 
     #[test]

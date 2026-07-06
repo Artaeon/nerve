@@ -413,6 +413,20 @@ pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<C
         if let Some(header) = crate::memory_recall::always_on_context(&store, 1200) {
             messages.insert(0, ChatMessage::system(header));
         }
+
+        // Design principles are injected ONLY on UI/design turns, so backend
+        // work doesn't pay for them. Gated on both the stored principles
+        // existing and the request looking design-related.
+        if crate::memory_recall::is_design_request(search_query)
+            && let Some(design) = store.load_design()
+        {
+            messages.insert(
+                0,
+                ChatMessage::system(format!(
+                    "Project design principles (follow these for any UI/design work):\n{design}"
+                )),
+            );
+        }
     }
 
     // If a knowledge base exists, search for relevant context and inject it.
@@ -1171,6 +1185,38 @@ mod tests {
         assert!(systems.contains("recall"));
         assert!(!systems.contains("capped at 17"));
         assert!(!systems.contains("postgres over mysql"));
+    }
+
+    #[test]
+    fn design_principles_injected_only_on_design_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::project::ProjectStore::for_workspace(dir.path());
+        store
+            .append_design("use a strict 8px spacing scale, never arbitrary margins")
+            .unwrap();
+        let mut app = app_with_seeded_memory(dir.path());
+
+        // A design-related request injects the principles.
+        let messages = build_context_messages(&mut app, "redesign the landing page header");
+        let systems: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(systems.contains("Project design principles"));
+        assert!(systems.contains("strict 8px spacing scale"));
+
+        // A backend request does NOT — no wasted tokens.
+        let messages = build_context_messages(&mut app, "fix the booking engine bug");
+        let systems: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!systems.contains("Project design principles"));
+        assert!(!systems.contains("8px spacing scale"));
     }
 
     #[test]
