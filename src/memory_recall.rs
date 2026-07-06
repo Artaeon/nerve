@@ -243,6 +243,22 @@ pub fn always_on_context(store: &ProjectStore, max_chars: usize) -> Option<Strin
         sections.push(format!("## Open tasks\n{lines}"));
     }
 
+    // Auto-captured record of what recent turns worked on, so a fresh session
+    // opens with a sense of what was just being done. Kept tiny — last 3 only.
+    let activity = store.recent_activity(3);
+    if !activity.is_empty() {
+        let lines = activity
+            .iter()
+            .rev()
+            .map(|a| {
+                let edited = if a.edited { "yes" } else { "no" };
+                format!("- {} (edited: {edited})", a.request)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!("## Recent activity\n{lines}"));
+    }
+
     // Index line: advertise what is retrievable without spending the tokens to
     // include it. The model pulls the relevant pieces via the `recall` tool.
     let fact_count = collect_entries(store)
@@ -469,6 +485,28 @@ mod tests {
         assert!(ctx.contains("recall"));
         assert!(!ctx.contains("uses tokio"));
         assert!(!ctx.contains("chose ratatui"));
+    }
+
+    #[test]
+    fn always_on_context_surfaces_recent_activity() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ProjectStore::for_workspace(dir.path());
+        store
+            .record_activity("first request", false, "none")
+            .unwrap();
+        store
+            .record_activity("add the feature", true, "none")
+            .unwrap();
+
+        let ctx = always_on_context(&store, 1200).unwrap();
+        assert!(ctx.contains("## Recent activity"));
+        // Newest first, with edited flag rendered.
+        assert!(ctx.contains("- add the feature (edited: yes)"));
+        assert!(ctx.contains("- first request (edited: no)"));
+        assert!(
+            ctx.find("add the feature").unwrap() < ctx.find("first request").unwrap(),
+            "most recent activity should be listed first"
+        );
     }
 
     #[test]

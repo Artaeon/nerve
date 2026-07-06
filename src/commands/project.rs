@@ -1,5 +1,6 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/changes`, `/improve`, `/improvements`, `/task`, `/tasks`.
+//! `/decisions`, `/changes`, `/activity`, `/improve`, `/improvements`, `/task`,
+//! `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -152,6 +153,29 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             for c in &changes {
                 let ts = format_change_timestamp(&c.timestamp);
                 out.push_str(&format!("- [{ts}] {} {} — {}\n", c.tool, c.path, c.summary));
+            }
+            app.add_assistant_message(out);
+            true
+        }
+        "/activity" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            let activity = store.recent_activity(20);
+            if activity.is_empty() {
+                app.set_status(
+                    "No activity captured yet — completed agent turns are recorded here",
+                );
+                return true;
+            }
+            let mut out = String::from("## Recent activity (most recent 20)\n\n");
+            for a in &activity {
+                let ts = format_change_timestamp(&a.timestamp);
+                let edited = if a.edited { "edited" } else { "no edits" };
+                out.push_str(&format!(
+                    "- [{ts}] {} ({edited}, verify: {})\n",
+                    a.request, a.verify
+                ));
             }
             app.add_assistant_message(out);
             true

@@ -763,6 +763,33 @@ async fn event_loop(
                                         "Agent completed in {} iteration(s)",
                                         app.agent_iterations
                                     ));
+
+                                    // Auto-capture a running record of what this
+                                    // turn worked on so a later session has a
+                                    // "recent activity" summary. Best-effort — a
+                                    // failed write must never break the turn.
+                                    if let Some(ws) = app.cached_workspace.clone() {
+                                        let request = app
+                                            .current_conversation()
+                                            .messages
+                                            .iter()
+                                            .rev()
+                                            .find(|(role, content)| {
+                                                role == "user"
+                                                    && !content.starts_with(
+                                                        conversation::TOOL_RESULTS_PREFIX,
+                                                    )
+                                            })
+                                            .map(|(_, c)| c.chars().take(200).collect::<String>())
+                                            .unwrap_or_default();
+                                        let _ = project::ProjectStore::for_workspace(&ws.root)
+                                            .record_activity(
+                                                &request,
+                                                app.agent_made_edits,
+                                                "none",
+                                            );
+                                    }
+
                                     app.agent_iterations = 0;
                                     app.verify_rounds = 0;
                                     app.agent_made_edits = false;

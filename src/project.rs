@@ -53,6 +53,16 @@ pub struct ChangeRecord {
     pub summary: String,
 }
 
+/// A single auto-captured record of what a turn worked on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivityRecord {
+    pub timestamp: String,
+    pub request: String,
+    pub edited: bool,
+    /// "passed" | "failed" | "none".
+    pub verify: String,
+}
+
 /// A backlog entry in the improvements directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Improvement {
@@ -249,6 +259,46 @@ impl ProjectStore {
             return Vec::new();
         };
         let all: Vec<ChangeRecord> = content
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        let skip = all.len().saturating_sub(n);
+        all.into_iter().skip(skip).collect()
+    }
+
+    // ── activity.jsonl ───────────────────────────────────────────────────
+
+    pub fn activity_path(&self) -> PathBuf {
+        self.dir.join("activity.jsonl")
+    }
+
+    /// Append an auto-captured record of what a turn worked on.
+    pub fn record_activity(&self, request: &str, edited: bool, verify: &str) -> anyhow::Result<()> {
+        let request = sanitize_line(request);
+        self.ensure_dir()?;
+        let record = ActivityRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            request,
+            edited,
+            verify: verify.to_string(),
+        };
+        let line = serde_json::to_string(&record)?;
+        let path = self.activity_path();
+        let mut content = std::fs::read_to_string(&path).unwrap_or_default();
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&line);
+        content.push('\n');
+        atomic_write(&path, &content)
+    }
+
+    /// The most recent `n` activity records, oldest first.
+    pub fn recent_activity(&self, n: usize) -> Vec<ActivityRecord> {
+        let Ok(content) = std::fs::read_to_string(self.activity_path()) else {
+            return Vec::new();
+        };
+        let all: Vec<ActivityRecord> = content
             .lines()
             .filter_map(|l| serde_json::from_str(l).ok())
             .collect();
@@ -484,6 +534,47 @@ mod tests {
         s.record_change("write_file", "a.rs", "line one\nline two")
             .unwrap();
         assert_eq!(s.recent_changes(10)[0].summary, "line one line two");
+    }
+
+    #[test]
+    fn activity_append_and_recent_returns_last_n() {
+        let (_d, s) = store();
+        for i in 1..=7 {
+            s.record_activity(&format!("request {i}"), i % 2 == 0, "none")
+                .unwrap();
+        }
+        let recent = s.recent_activity(5);
+        assert_eq!(recent.len(), 5);
+        assert_eq!(recent.first().unwrap().request, "request 3");
+        assert_eq!(recent.last().unwrap().request, "request 7");
+    }
+
+    #[test]
+    fn activity_skip_corrupt_lines() {
+        let (_d, s) = store();
+        s.record_activity("first", true, "passed").unwrap();
+        // Corrupt the file with a bad line in the middle.
+        let path = s.activity_path();
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str("not json\n");
+        std::fs::write(&path, content).unwrap();
+        s.record_activity("second", false, "failed").unwrap();
+        let recent = s.recent_activity(10);
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].request, "first");
+        assert!(recent[0].edited);
+        assert_eq!(recent[0].verify, "passed");
+        assert_eq!(recent[1].request, "second");
+        assert!(!recent[1].edited);
+        assert_eq!(recent[1].verify, "failed");
+    }
+
+    #[test]
+    fn activity_flattens_multiline_request() {
+        let (_d, s) = store();
+        s.record_activity("line one\nline two", false, "none")
+            .unwrap();
+        assert_eq!(s.recent_activity(10)[0].request, "line one line two");
     }
 
     #[test]
