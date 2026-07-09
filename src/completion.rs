@@ -22,123 +22,11 @@ pub(crate) fn common_prefix(strings: &[&str]) -> String {
 
 // ─── Inline autocomplete ────────────────────────────────────────────────────
 
-/// All slash commands with descriptions, used for autocomplete.
-/// Each entry is `(command_name, description)`.
-///
-/// Descriptions must match those in `ui::command_bar::command_prompts()`.
-pub(crate) fn get_all_commands() -> &'static [(&'static str, &'static str)] {
-    &[
-        // Chat
-        ("help", "Show all available commands"),
-        ("clear", "Clear current conversation"),
-        ("new", "Start new conversation"),
-        ("delete", "Delete current conversation"),
-        ("rename", "Rename current conversation"),
-        ("export", "Export conversation to markdown"),
-        ("copy", "Copy last AI response to clipboard"),
-        ("copy code", "Copy last code block from AI response"),
-        ("copy all", "Copy entire conversation"),
-        ("system", "Show or set system prompt"),
-        // AI Provider
-        ("provider", "Switch AI provider"),
-        ("providers", "List available providers"),
-        ("model", "Switch AI model"),
-        ("models", "List available models"),
-        ("ollama", "Manage Ollama models (list/pull/remove)"),
-        (
-            "mode",
-            "Switch mode (efficient/thorough/agent/learning/auto/code/review)",
-        ),
-        ("agent on", "Enable agent mode (AI tool loop)"),
-        ("agent off", "Disable agent mode"),
-        ("agent status", "Show agent mode status"),
-        ("agent undo", "Roll back to pre-agent git checkpoint"),
-        ("agent diff", "Show what the agent changed (git diff)"),
-        ("agent commit", "Commit agent changes"),
-        ("autocontext", "Auto-gather project context (alias: /ac)"),
-        ("ac", "Auto-gather project context"),
-        ("code on", "Enable code mode (Claude Code only)"),
-        ("code off", "Disable code mode"),
-        ("cwd", "Set working directory"),
-        ("cd", "Change working directory"),
-        // Knowledge & Context
-        ("file", "Read file as context"),
-        ("files", "Read multiple files as context"),
-        ("summary", "Summarize current conversation"),
-        ("compact", "Compact conversation (save tokens)"),
-        ("context", "Show current AI context window"),
-        ("tokens", "Show token usage breakdown"),
-        ("kb add", "Add directory to knowledge base"),
-        ("kb search", "Search knowledge base"),
-        ("kb list", "List knowledge bases"),
-        ("kb status", "Show KB statistics"),
-        ("kb clear", "Clear knowledge base"),
-        ("url", "Scrape URL for context"),
-        // Shell & Git
-        ("run", "Run shell command and show output"),
-        ("pipe", "Run command and add output as context"),
-        ("diff", "Show git diff (adds as context)"),
-        ("test", "Auto-detect and run project tests"),
-        ("build", "Auto-detect and run project build"),
-        ("git", "Quick git operations (status/log/diff/branch)"),
-        ("commit", "Stage all and commit (AI message if omitted)"),
-        ("stage", "Stage files (all if no args)"),
-        ("unstage", "Unstage files"),
-        ("gitbranch", "Create/switch/delete git branches"),
-        ("gitbranch switch", "Switch to existing branch"),
-        ("gitbranch delete", "Delete a git branch"),
-        ("stash", "Stash changes"),
-        ("stash pop", "Pop latest stash"),
-        ("stash list", "List stashes"),
-        ("stash drop", "Drop a stash entry"),
-        ("stash show", "Show stash contents"),
-        ("stash apply", "Apply stash without removing"),
-        ("log", "Show git log (default 10)"),
-        ("gitstatus", "Show full git status"),
-        // Project Scaffolding
-        ("template list", "List available project templates"),
-        ("template", "Create project from template"),
-        ("scaffold", "AI-generate a project from description"),
-        ("map", "Show project map (file tree + symbols)"),
-        ("tree", "Show project file tree (alias)"),
-        // Automation
-        ("auto list", "List automations"),
-        ("auto run", "Run automation"),
-        ("auto info", "Show automation details"),
-        ("auto create", "Create custom automation"),
-        ("auto delete", "Delete custom automation"),
-        // Sessions
-        ("session", "Show session info"),
-        ("session save", "Save current session"),
-        ("session list", "List saved sessions"),
-        ("session restore", "Restore last session"),
-        // Branching
-        ("branch save", "Save conversation branch point"),
-        ("branch list", "List saved branches"),
-        ("branch restore", "Restore a saved branch"),
-        ("branch diff", "Compare current with a branch"),
-        ("branch delete", "Delete a branch"),
-        // Workspace
-        ("workspace", "Show detected project info"),
-        // Usage & Cost
-        ("usage", "Show session usage stats (estimated)"),
-        ("cost", "Alias for /usage"),
-        ("limit", "Show spending limit info"),
-        ("limit on", "Enable spending limit"),
-        ("limit off", "Disable spending limit"),
-        ("limit set", "Set spending limit amount"),
-        // System
-        ("status", "Show system status"),
-        ("theme", "Switch UI theme"),
-        // Power User
-        ("alias", "List or create aliases"),
-        ("!!", "Recall last input"),
-        ("repeat", "Recall last input (same as /!!)"),
-        // Plugins
-        ("plugin list", "List installed plugins"),
-        ("plugin init", "Create example plugin"),
-        ("plugin reload", "Reload all plugins"),
-    ]
+/// All slash commands, used for autocomplete. Derived from the single command
+/// catalog ([`crate::commands::catalog`]) so it can never drift from the command
+/// palette in `ui::command_bar`.
+pub(crate) fn get_all_commands() -> &'static [crate::commands::catalog::CommandInfo] {
+    crate::commands::catalog::all()
 }
 
 /// Update the inline autocomplete popup based on current input.
@@ -158,18 +46,20 @@ pub(crate) fn update_autocomplete(app: &mut App) {
             commands
                 .iter()
                 .take(max_items)
-                .map(|(cmd, desc)| (true, *cmd, *desc))
+                .map(|c| (true, c.name, c.description))
                 .collect()
         } else {
             commands
                 .iter()
-                .filter(|(cmd, desc)| {
-                    cmd.starts_with(partial)
-                        || cmd.contains(partial)
-                        || desc.to_lowercase().contains(&partial.to_lowercase())
+                .filter(|c| {
+                    c.name.starts_with(partial)
+                        || c.name.contains(partial)
+                        || c.description
+                            .to_lowercase()
+                            .contains(&partial.to_lowercase())
                 })
                 .take(max_items)
-                .map(|(cmd, desc)| (cmd.starts_with(partial), *cmd, *desc))
+                .map(|c| (c.name.starts_with(partial), c.name, c.description))
                 .collect()
         };
         // Prefix matches first.

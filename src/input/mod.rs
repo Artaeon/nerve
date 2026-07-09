@@ -470,8 +470,8 @@ async fn handle_normal_mode(
                             let commands = get_all_commands();
                             let matches: Vec<&str> = commands
                                 .iter()
-                                .filter(|(cmd, _)| cmd.starts_with(partial))
-                                .map(|(cmd, _)| *cmd)
+                                .filter(|c| c.name.starts_with(partial))
+                                .map(|c| c.name)
                                 .collect();
 
                             if matches.len() == 1 {

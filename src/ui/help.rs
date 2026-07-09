@@ -49,6 +49,13 @@ pub fn render_help(frame: &mut Frame, app: &App) {
         ("Ctrl+C / Ctrl+D", "Quit"),
         ("Esc", "Close overlay / cancel"),
         ("", ""),
+        // -- Slash commands (discovery) --
+        ("", "Slash Commands"),
+        ("/  or  Ctrl+K", "Browse all commands (type to filter)"),
+        ("/help", "List every command with descriptions"),
+        ("/context  /tokens", "Inspect context window & token usage"),
+        ("/compact", "Summarise older turns to free context"),
+        ("", ""),
         // -- Chat interaction --
         ("", "Chat Interaction"),
         ("Esc (streaming)", "Stop generation"),

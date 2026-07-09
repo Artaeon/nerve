@@ -5,6 +5,7 @@
 //! recognised (so the caller should *not* forward the text to the AI).
 
 pub mod ai;
+pub mod catalog;
 pub mod chat;
 pub mod files;
 pub mod git;
