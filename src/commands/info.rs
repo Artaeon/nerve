@@ -407,6 +407,9 @@ fn handle_compact(app: &mut App) -> bool {
 }
 
 fn handle_tokens(app: &mut App) -> bool {
+    // The payload actually sent last turn (post-compaction, incl. injected
+    // system/KB/memory prompts). Read before borrowing the conversation.
+    let sent = app.last_sent_tokens;
     let conv = app.current_conversation();
     let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
     let limit = crate::agent::context::ContextManager::effective_limit(
@@ -414,11 +417,22 @@ fn handle_tokens(app: &mut App) -> bool {
         app.context_limit_override,
     );
     let pct = (total as f64 / limit as f64 * 100.0).min(100.0);
+    let sent_pct = (sent as f64 / limit as f64 * 100.0).min(100.0);
 
     let mut msg = format!("Token Usage\n{}\n\n", "=".repeat(30));
-    msg.push_str(&format!("Estimated tokens: ~{total}\n"));
-    msg.push_str(&format!("Provider limit:   ~{limit}\n"));
-    msg.push_str(&format!("Usage:            {pct:.1}%\n\n"));
+    msg.push_str(&format!("Stored history:   ~{total} tokens ({pct:.1}%)\n"));
+    if sent > 0 {
+        msg.push_str(&format!(
+            "Sent last turn:   ~{sent} tokens ({sent_pct:.1}%)  \u{2190} what the model saw\n"
+        ));
+    }
+    msg.push_str(&format!("Provider limit:   ~{limit}\n\n"));
+    if sent > 0 && total > sent + sent / 10 {
+        msg.push_str(
+            "Note: older turns are auto-compacted to fit the window, so the model sees\n\
+             fewer tokens than the full stored history. Nothing is lost on disk.\n\n",
+        );
+    }
 
     msg.push_str("Breakdown by message:\n");
     for (i, (role, content)) in conv.messages.iter().enumerate() {
@@ -431,9 +445,12 @@ fn handle_tokens(app: &mut App) -> bool {
         ));
     }
 
-    if pct > 70.0 {
+    // Warn on the figure that actually governs whether we hit the window: the
+    // sent payload once we've sent at least once, else the stored estimate.
+    let effective_pct = if sent > 0 { sent_pct } else { pct };
+    if effective_pct > 70.0 {
         msg.push_str(&format!(
-            "\nWarning: {pct:.0}% of context used. Consider /compact to save tokens."
+            "\nWarning: {effective_pct:.0}% of the context window used. Consider /compact or /new."
         ));
     }
 
@@ -443,6 +460,7 @@ fn handle_tokens(app: &mut App) -> bool {
 }
 
 fn handle_context(app: &mut App) -> bool {
+    let sent = app.last_sent_tokens;
     let conv = app.current_conversation();
     let mut ctx = String::from("Current AI Context:\n\n");
 
@@ -463,10 +481,15 @@ fn handle_context(app: &mut App) -> bool {
 
     let total = crate::agent::context::ContextManager::conversation_tokens(&conv.messages);
     ctx.push_str(&format!(
-        "\nTotal: {} messages, ~{} tokens estimated\n",
+        "\nStored: {} messages, ~{} tokens\n",
         conv.messages.len(),
         total
     ));
+    if sent > 0 {
+        ctx.push_str(&format!(
+            "Sent last turn: ~{sent} tokens (post-compaction, incl. system/KB/memory)\n"
+        ));
+    }
 
     let ws_for_ctx = app
         .cached_workspace
@@ -595,7 +618,7 @@ mod tests {
         handle(&mut app, "/tokens").await;
         let last = app.current_conversation().messages.last().unwrap();
         assert!(last.1.contains("Token Usage"));
-        assert!(last.1.contains("Estimated tokens"));
+        assert!(last.1.contains("Stored history"));
     }
 
     // ── /context ────────────────────────────────────────────────────────
@@ -613,7 +636,7 @@ mod tests {
         handle(&mut app, "/context").await;
         let last = app.current_conversation().messages.last().unwrap();
         assert!(last.1.contains("Current AI Context"));
-        assert!(last.1.contains("Total"));
+        assert!(last.1.contains("Stored"));
     }
 
     // ── /compact ────────────────────────────────────────────────────────
