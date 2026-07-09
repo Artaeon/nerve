@@ -199,9 +199,10 @@ pub(crate) async fn submit_message(app: &mut App, text: &str, provider: &Arc<dyn
 async fn send_to_ai(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) {
     app.add_user_message(text.to_string());
     app.scroll_offset = 0;
-    // Fresh user turn: reset the per-turn verify gate state.
+    // Fresh user turn: reset the per-turn verify gate + edited-files state.
     app.agent_made_edits = false;
     app.verify_rounds = 0;
+    app.turn_edited_files.clear();
     // Durability: persist the user's turn to history BEFORE streaming starts.
     // Previously the conversation was only written when the response completed
     // (StreamEvent::Done), so a crash/kill mid-response silently lost the user's

@@ -258,6 +258,9 @@ pub struct App {
     pub agent_made_edits: bool,
     /// Verify→fix rounds used this turn, capped at `verify::MAX_VERIFY_ROUNDS`.
     pub verify_rounds: u8,
+    /// Paths written/edited this turn — used to auto design-check UI files
+    /// against the project's design principles. Reset when a new turn starts.
+    pub turn_edited_files: Vec<String>,
     /// The model chosen for the in-flight turn by routing, remembered so that
     /// agent tool-round continuations — which no longer carry the original
     /// request text to classify — reuse the same model instead of re-deciding.
@@ -437,6 +440,7 @@ impl App {
             verify_command: None,
             agent_made_edits: false,
             verify_rounds: 0,
+            turn_edited_files: Vec::new(),
             auto_agent_active: false,
             context_limit_override: None,
             pipeline: None,

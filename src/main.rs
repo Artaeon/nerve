@@ -655,9 +655,15 @@ async fn event_loop(
                                 let tool_calls = crate::agent::tools::parse_tool_calls(&response);
 
                                 // Track file-editing so the verify gate only
-                                // runs on turns that actually changed code.
-                                if tool_calls.iter().any(|c| verify::is_write_tool(&c.tool)) {
-                                    app.agent_made_edits = true;
+                                // runs on turns that actually changed code, and
+                                // remember the paths for the auto design-check.
+                                for c in &tool_calls {
+                                    if verify::is_write_tool(&c.tool) {
+                                        app.agent_made_edits = true;
+                                        if let Some(path) = c.args.get("path") {
+                                            app.turn_edited_files.push(path.clone());
+                                        }
+                                    }
                                 }
 
                                 if !tool_calls.is_empty() && app.agent_iterations < 10 {
@@ -790,6 +796,45 @@ async fn event_loop(
                                                 app.agent_made_edits,
                                                 "none",
                                             );
+                                    }
+
+                                    // Auto design-check: after a UI turn, lint the
+                                    // edited stylesheet/component files against the
+                                    // project's design principles and surface any
+                                    // inconsistencies. Advisory — never blocks.
+                                    if let Some(ws) = app.cached_workspace.clone()
+                                        && let Some(principles) =
+                                            project::ProjectStore::for_workspace(&ws.root)
+                                                .load_design()
+                                    {
+                                        let mut lines = Vec::new();
+                                        for path in &app.turn_edited_files {
+                                            if design::is_ui_file(path)
+                                                && let Ok(content) = std::fs::read_to_string(path)
+                                            {
+                                                for f in design::lint_design(
+                                                    path,
+                                                    &content,
+                                                    Some(&principles),
+                                                )
+                                                .into_iter()
+                                                .take(6)
+                                                {
+                                                    lines.push(format!(
+                                                        "- {}:{} [{}] {}",
+                                                        path, f.line, f.rule, f.message
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        if !lines.is_empty() {
+                                            app.add_assistant_message(format!(
+                                                "Design check against .nerve/design.md — \
+                                                 {} issue(s) in edited UI files:\n{}",
+                                                lines.len(),
+                                                lines.join("\n")
+                                            ));
+                                        }
                                     }
 
                                     app.agent_iterations = 0;

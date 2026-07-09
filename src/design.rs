@@ -71,6 +71,19 @@ fn is_supported(path: &str) -> bool {
     matches!(ext.as_str(), "css" | "scss" | "tsx" | "jsx" | "ts" | "js")
 }
 
+/// True when `path` is a UI/style file worth auto design-checking after an edit
+/// (stylesheets and component files). Deliberately excludes plain `.ts`/`.js`,
+/// which are usually backend and would produce noise.
+pub fn is_ui_file(path: &str) -> bool {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .filter(|_| path.contains('.'))
+        .unwrap_or("")
+        .to_lowercase();
+    matches!(ext.as_str(), "css" | "scss" | "tsx" | "jsx")
+}
+
 // ── Principle keyword gates ────────────────────────────────────────────────
 
 fn forbids_gradients(p: &str) -> bool {
@@ -312,6 +325,19 @@ fn shadow_heavy(content: &str) -> Vec<DesignFinding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_ui_file_matches_styles_and_components_only() {
+        assert!(is_ui_file("app/globals.css"));
+        assert!(is_ui_file("styles/x.scss"));
+        assert!(is_ui_file("app/page.tsx"));
+        assert!(is_ui_file("components/Btn.jsx"));
+        // plain ts/js are usually backend — excluded from the auto-check.
+        assert!(!is_ui_file("lib/booking/service.ts"));
+        assert!(!is_ui_file("server.js"));
+        assert!(!is_ui_file("Cargo.toml"));
+        assert!(!is_ui_file("README"));
+    }
 
     #[test]
     fn unsupported_extension_returns_empty() {
