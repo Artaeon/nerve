@@ -60,22 +60,99 @@ pub async fn start_daemon() -> anyhow::Result<()> {
 }
 
 async fn handle_client(stream: &mut UnixStream) {
-    let mut buf = vec![0u8; 4096];
-    match stream.read(&mut buf).await {
-        Ok(n) if n > 0 => {
-            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+    // Read the whole request; the client half-closes its write side (see
+    // `send_to_daemon`), which gives us EOF. Reading to end (rather than a fixed
+    // 4 KiB) means long prompts submitted via SUBMIT aren't truncated.
+    let mut buf = Vec::new();
+    if stream.read_to_end(&mut buf).await.is_err() {
+        return;
+    }
+    let request = String::from_utf8_lossy(&buf);
+    let request = request.trim_end_matches(['\n', '\r']);
 
-            // Handle shutdown command
-            if request.trim() == "__SHUTDOWN__" {
-                let _ = stream.write_all(b"Nerve daemon shutting down.").await;
-                std::process::exit(0);
+    // Control command: shut the whole daemon down.
+    if request.trim() == "__SHUTDOWN__" {
+        let _ = stream.write_all(b"Nerve daemon shutting down.").await;
+        std::process::exit(0);
+    }
+
+    let queue = crate::queue::Queue::default_location();
+    let response = process_command(request, &queue);
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
+/// Handle one client request against the job queue and return the text reply.
+///
+/// The wire format is deliberately dumb: a command word, then tab-separated
+/// arguments. `SUBMIT`'s prompt is everything after the second tab, so it may
+/// contain tabs and newlines. Kept pure (queue passed in) so it is unit-tested
+/// without a running daemon.
+pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> String {
+    let mut parts = request.splitn(3, '\t');
+    let cmd = parts.next().unwrap_or("").trim();
+
+    match cmd {
+        "PING" => "PONG".to_string(),
+        "SUBMIT" => {
+            let repo = parts.next().unwrap_or("").trim();
+            let prompt = parts.next().unwrap_or("").trim();
+            if repo.is_empty() || prompt.is_empty() {
+                return "ERR usage: SUBMIT <repo>\\t<prompt>".to_string();
             }
-
-            // Parse request and respond
-            let response = format!("Nerve daemon received: {request}");
-            let _ = stream.write_all(response.as_bytes()).await;
+            match queue.enqueue(repo, prompt) {
+                Ok(job) => format!(
+                    "OK queued job {} on branch {}",
+                    job.id,
+                    job.branch.as_deref().unwrap_or("-")
+                ),
+                Err(e) => format!("ERR could not queue job: {e}"),
+            }
         }
-        _ => {}
+        "LIST" => match queue.list() {
+            Ok(jobs) if jobs.is_empty() => "No jobs in the queue.".to_string(),
+            Ok(jobs) => {
+                let mut out = format!("{} job(s):\n", jobs.len());
+                for job in jobs {
+                    out.push_str(&job.summary_line());
+                    out.push('\n');
+                }
+                out
+            }
+            Err(e) => format!("ERR could not list jobs: {e}"),
+        },
+        "STATUS" => {
+            let id = parts.next().unwrap_or("").trim();
+            match queue.get(id) {
+                Ok(Some(job)) => {
+                    let mut out = format!(
+                        "job {}\n  status: {}\n  repo:   {}\n  branch: {}\n",
+                        job.id,
+                        job.status.label(),
+                        job.repo,
+                        job.branch.as_deref().unwrap_or("-"),
+                    );
+                    if let Some(err) = &job.error {
+                        out.push_str(&format!("  error:  {err}\n"));
+                    }
+                    out.push_str(&format!("  prompt: {}\n", job.prompt));
+                    out
+                }
+                Ok(None) => format!("No job with id {id}"),
+                Err(e) => format!("ERR could not read job: {e}"),
+            }
+        }
+        "CANCEL" => {
+            let id = parts.next().unwrap_or("").trim();
+            match queue.cancel(id) {
+                Ok(true) => format!("Cancelled job {id}"),
+                Ok(false) => {
+                    format!("Job {id} is not cancellable (unknown id or already started)")
+                }
+                Err(e) => format!("ERR could not cancel job: {e}"),
+            }
+        }
+        "" => "ERR empty request".to_string(),
+        other => format!("ERR unknown command: {other}"),
     }
 }
 
@@ -108,6 +185,85 @@ pub fn stop_daemon() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp_queue() -> (tempfile::TempDir, crate::queue::Queue) {
+        let dir = tempfile::tempdir().unwrap();
+        let q = crate::queue::Queue::new(dir.path().join("queue"));
+        (dir, q)
+    }
+
+    #[test]
+    fn process_ping() {
+        let (_d, q) = temp_queue();
+        assert_eq!(process_command("PING", &q), "PONG");
+    }
+
+    #[test]
+    fn process_submit_queues_a_job() {
+        let (_d, q) = temp_queue();
+        let reply = process_command("SUBMIT\t/srv/repo\tadd rate limiting", &q);
+        assert!(reply.starts_with("OK queued job "), "got: {reply}");
+        let jobs = q.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].repo, "/srv/repo");
+        assert_eq!(jobs[0].prompt, "add rate limiting");
+    }
+
+    #[test]
+    fn process_submit_keeps_tabs_and_newlines_in_prompt() {
+        let (_d, q) = temp_queue();
+        process_command("SUBMIT\t/r\tline1\nline2\twith tab", &q);
+        let jobs = q.list().unwrap();
+        assert_eq!(jobs[0].prompt, "line1\nline2\twith tab");
+    }
+
+    #[test]
+    fn process_submit_rejects_missing_args() {
+        let (_d, q) = temp_queue();
+        assert!(process_command("SUBMIT", &q).starts_with("ERR"));
+        assert!(process_command("SUBMIT\t/r\t", &q).starts_with("ERR"));
+        assert!(process_command("SUBMIT\t\tprompt", &q).starts_with("ERR"));
+        assert!(q.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn process_list_empty_then_populated() {
+        let (_d, q) = temp_queue();
+        assert_eq!(process_command("LIST", &q), "No jobs in the queue.");
+        process_command("SUBMIT\t/r\tdo a thing", &q);
+        let reply = process_command("LIST", &q);
+        assert!(reply.contains("1 job(s):"));
+        assert!(reply.contains("do a thing"));
+    }
+
+    #[test]
+    fn process_status_and_cancel() {
+        let (_d, q) = temp_queue();
+        let job = q.enqueue("/r", "x").unwrap();
+        let status = process_command(&format!("STATUS\t{}", job.id), &q);
+        assert!(status.contains(&job.id));
+        assert!(status.contains("queued"));
+
+        let cancel = process_command(&format!("CANCEL\t{}", job.id), &q);
+        assert!(cancel.contains("Cancelled"));
+        assert_eq!(
+            q.get(&job.id).unwrap().unwrap().status,
+            crate::queue::JobStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn process_status_unknown_id() {
+        let (_d, q) = temp_queue();
+        assert!(process_command("STATUS\tnope", &q).contains("No job"));
+    }
+
+    #[test]
+    fn process_unknown_command() {
+        let (_d, q) = temp_queue();
+        assert!(process_command("FROBNICATE", &q).starts_with("ERR unknown command"));
+        assert!(process_command("", &q).starts_with("ERR"));
+    }
 
     #[test]
     fn socket_path_is_in_tmp() {

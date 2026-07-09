@@ -24,6 +24,7 @@ mod project;
 mod prompts;
 mod provider_health;
 mod provider_setup;
+mod queue;
 mod scaffold;
 mod scraper;
 mod session;
@@ -116,6 +117,19 @@ struct Cli {
     #[arg(long)]
     stop_daemon: bool,
 
+    /// Submit a coding job to the running server; the current directory is the
+    /// repo. The server runs it on its own branch and commits for review.
+    #[arg(long, value_name = "PROMPT")]
+    submit: Option<String>,
+
+    /// List jobs on the running server (Unix only)
+    #[arg(long)]
+    jobs: bool,
+
+    /// Cancel a queued job by id (Unix only)
+    #[arg(long, value_name = "ID")]
+    cancel_job: Option<String>,
+
     /// Resume the last session
     #[arg(short = 'c', long = "continue")]
     continue_session: bool,
@@ -127,6 +141,18 @@ struct Cli {
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL")]
     completions: Option<clap_complete::Shell>,
+}
+
+/// Send a queue command to the running nerve server, turning a connection
+/// failure into an actionable message instead of a raw socket error.
+#[cfg(unix)]
+async fn send_to_server(message: &str) -> anyhow::Result<String> {
+    daemon::send_to_daemon(message).await.map_err(|e| {
+        anyhow::anyhow!(
+            "Could not reach the nerve server. Start it with `nerve --daemon` \
+             (on this machine, or over SSH on your server). Details: {e}"
+        )
+    })
 }
 
 // ─── Entry point ────────────────────────────────────────────────────────────
@@ -170,11 +196,37 @@ async fn main() -> anyhow::Result<()> {
             println!("{response}");
             return Ok(());
         }
+        // ── Queue client commands (talk to the running server) ──────────
+        if let Some(prompt) = &cli.submit {
+            let repo = std::env::current_dir()?
+                .canonicalize()?
+                .to_string_lossy()
+                .to_string();
+            let response = send_to_server(&format!("SUBMIT\t{repo}\t{prompt}")).await?;
+            println!("{response}");
+            return Ok(());
+        }
+        if cli.jobs {
+            let response = send_to_server("LIST").await?;
+            println!("{response}");
+            return Ok(());
+        }
+        if let Some(id) = &cli.cancel_job {
+            let response = send_to_server(&format!("CANCEL\t{id}")).await?;
+            println!("{response}");
+            return Ok(());
+        }
     }
     #[cfg(not(unix))]
     {
-        if cli.daemon || cli.stop_daemon || cli.query.is_some() {
-            eprintln!("Daemon mode is only supported on Unix systems.");
+        if cli.daemon
+            || cli.stop_daemon
+            || cli.query.is_some()
+            || cli.submit.is_some()
+            || cli.jobs
+            || cli.cancel_job.is_some()
+        {
+            eprintln!("The nerve server/queue is only supported on Unix systems.");
             return Ok(());
         }
     }
