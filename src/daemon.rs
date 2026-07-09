@@ -51,6 +51,13 @@ pub async fn start_daemon() -> anyhow::Result<()> {
     }
     println!("Nerve daemon listening on {}", path.display());
 
+    // Spawn the queue worker: it drains submitted jobs and runs them to
+    // completion (headless agent, isolated on a git branch, committed for
+    // review). Runs for the life of the daemon, independent of client I/O.
+    tokio::spawn(async {
+        crate::worker::run_worker().await;
+    });
+
     loop {
         let (mut stream, _) = listener.accept().await?;
         tokio::spawn(async move {

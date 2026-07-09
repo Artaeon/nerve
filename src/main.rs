@@ -34,6 +34,7 @@ mod splash;
 mod ui;
 mod usage;
 mod verify;
+mod worker;
 mod workspace;
 
 use std::io::{self, Read as _};

@@ -1,5 +1,6 @@
 pub mod auto_context;
 pub mod context;
+pub mod headless;
 pub mod intent;
 pub mod pipeline;
 pub mod tools;
