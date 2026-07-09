@@ -64,6 +64,12 @@ pub struct Job {
     pub status: JobStatus,
     /// The branch the worker isolates the job on (`nerve/job-<id>`).
     pub branch: Option<String>,
+    /// Whether a full conversation-context snapshot is stored alongside this job
+    /// (`<id>.context.json`) so the server can resume with everything the client
+    /// had — nothing lost on handoff. Defaulted for backward compatibility with
+    /// jobs written before context bundles existed.
+    #[serde(default)]
+    pub has_context: bool,
     /// Unix seconds when the job was created.
     pub created_at: u64,
     /// Unix seconds when the worker started it.
@@ -112,6 +118,10 @@ impl Queue {
         self.root.join(format!("{id}.json"))
     }
 
+    fn context_path(&self, id: &str) -> PathBuf {
+        self.root.join(format!("{id}.context.json"))
+    }
+
     /// Add a new job in the `Queued` state and persist it.
     pub fn enqueue(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
         std::fs::create_dir_all(&self.root)?;
@@ -124,6 +134,7 @@ impl Queue {
             repo: repo.to_string(),
             prompt: prompt.to_string(),
             status: JobStatus::Queued,
+            has_context: false,
             created_at: now_secs(),
             started_at: None,
             finished_at: None,
@@ -131,6 +142,30 @@ impl Queue {
         };
         self.save(&job)?;
         Ok(job)
+    }
+
+    /// Attach a full conversation-context snapshot to a job (typically the
+    /// client's session JSON) and persist it atomically alongside the job as
+    /// `<id>.context.json`. Flips the job's `has_context` flag. This is the
+    /// "nothing lost on handoff" path: the server later loads it to resume with
+    /// everything the client had.
+    pub fn save_context(&self, id: &str, context: &str) -> anyhow::Result<()> {
+        std::fs::create_dir_all(&self.root)?;
+        let tmp = self.root.join(format!(".{id}.context.tmp"));
+        std::fs::write(&tmp, context)?;
+        std::fs::rename(&tmp, self.context_path(id))?;
+        self.update(id, |job| job.has_context = true)?;
+        Ok(())
+    }
+
+    /// Load a job's context snapshot, or `None` if it has none.
+    #[allow(dead_code)] // consumed by the queue worker (next increment) + tests
+    pub fn load_context(&self, id: &str) -> anyhow::Result<Option<String>> {
+        let path = self.context_path(id);
+        if !path.exists() {
+            return Ok(None);
+        }
+        Ok(Some(std::fs::read_to_string(path)?))
     }
 
     /// Persist a job atomically (write-temp-then-rename), so a crash mid-write

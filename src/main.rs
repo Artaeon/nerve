@@ -122,6 +122,11 @@ struct Cli {
     #[arg(long, value_name = "PROMPT")]
     submit: Option<String>,
 
+    /// With --submit: attach your last session (full conversation context) to
+    /// the job, so the server resumes with everything you had — nothing lost.
+    #[arg(long)]
+    with_session: bool,
+
     /// List jobs on the running server (Unix only)
     #[arg(long)]
     jobs: bool,
@@ -204,6 +209,25 @@ async fn main() -> anyhow::Result<()> {
                 .to_string();
             let response = send_to_server(&format!("SUBMIT\t{repo}\t{prompt}")).await?;
             println!("{response}");
+            // Optionally carry the full conversation context so the server
+            // resumes exactly where the client left off. The job id is the
+            // token after "job" in the "OK queued job <id> ..." reply.
+            if cli.with_session {
+                let id = response
+                    .split_whitespace()
+                    .skip_while(|w| *w != "job")
+                    .nth(1);
+                match (id, session::last_session_json()) {
+                    (Some(id), Some(ctx)) => {
+                        let ack = send_to_server(&format!("ATTACH\t{id}\t{ctx}")).await?;
+                        println!("{ack}");
+                    }
+                    (Some(_), None) => {
+                        eprintln!("(no saved session found to attach)");
+                    }
+                    _ => {}
+                }
+            }
             return Ok(());
         }
         if cli.jobs {

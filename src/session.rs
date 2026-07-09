@@ -103,6 +103,13 @@ pub fn load_last_session() -> anyhow::Result<Session> {
     Ok(session)
 }
 
+/// Read the raw JSON of the last saved session, if one exists. Used by the
+/// queue client to attach the full conversation context to a submitted job so
+/// the server can resume with everything the client had (nothing lost).
+pub fn last_session_json() -> Option<String> {
+    fs::read_to_string(last_session_path()).ok()
+}
+
 /// List all saved sessions
 pub fn list_sessions() -> anyhow::Result<Vec<(String, DateTime<Utc>, usize)>> {
     let dir = sessions_dir();

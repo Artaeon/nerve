@@ -159,6 +159,42 @@ fn status_labels_and_terminal() {
 }
 
 #[test]
+fn enqueue_has_no_context_by_default() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/r", "x").unwrap();
+    assert!(!job.has_context);
+    assert!(q.load_context(&job.id).unwrap().is_none());
+}
+
+#[test]
+fn save_context_persists_and_sets_flag() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/r", "x").unwrap();
+    let ctx = r#"{"conversations":[{"messages":[["user","hi"]]}]}"#;
+    q.save_context(&job.id, ctx).unwrap();
+    // Flag flipped on disk.
+    assert!(q.get(&job.id).unwrap().unwrap().has_context);
+    // Context round-trips byte-for-byte.
+    assert_eq!(q.load_context(&job.id).unwrap().as_deref(), Some(ctx));
+}
+
+#[test]
+fn context_survives_and_is_separate_from_job_file() {
+    let (_d, q) = temp_queue();
+    let a = q.enqueue("/r", "a").unwrap();
+    let b = q.enqueue("/r", "b").unwrap();
+    q.save_context(&a.id, "context-for-a").unwrap();
+    // Only a has context; b is untouched.
+    assert!(q.get(&a.id).unwrap().unwrap().has_context);
+    assert!(!q.get(&b.id).unwrap().unwrap().has_context);
+    assert_eq!(
+        q.load_context(&a.id).unwrap().as_deref(),
+        Some("context-for-a")
+    );
+    assert!(q.load_context(&b.id).unwrap().is_none());
+}
+
+#[test]
 fn summary_line_truncates_long_prompt() {
     let (_d, q) = temp_queue();
     let long = "a".repeat(200);

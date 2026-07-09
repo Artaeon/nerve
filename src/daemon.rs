@@ -120,21 +120,44 @@ pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> Str
             }
             Err(e) => format!("ERR could not list jobs: {e}"),
         },
+        "ATTACH" => {
+            // ATTACH <id>\t<context...> — the context (a session-JSON snapshot)
+            // is the last field so it may contain anything. Kept a separate
+            // message from SUBMIT so that command's free-text prompt can still
+            // safely contain tabs.
+            let id = parts.next().unwrap_or("").trim().to_string();
+            let context = parts.next().unwrap_or("");
+            if id.is_empty() || context.is_empty() {
+                return "ERR usage: ATTACH <id>\\t<context>".to_string();
+            }
+            if matches!(queue.get(&id), Ok(None)) {
+                return format!("No job with id {id}");
+            }
+            match queue.save_context(&id, context) {
+                Ok(()) => format!("OK attached context to job {id}"),
+                Err(e) => format!("ERR could not attach context: {e}"),
+            }
+        }
         "STATUS" => {
             let id = parts.next().unwrap_or("").trim();
             match queue.get(id) {
                 Ok(Some(job)) => {
                     let mut out = format!(
-                        "job {}\n  status: {}\n  repo:   {}\n  branch: {}\n",
+                        "job {}\n  status:  {}\n  repo:    {}\n  branch:  {}\n  context: {}\n",
                         job.id,
                         job.status.label(),
                         job.repo,
                         job.branch.as_deref().unwrap_or("-"),
+                        if job.has_context {
+                            "attached (full session carried over)"
+                        } else {
+                            "none"
+                        },
                     );
                     if let Some(err) = &job.error {
-                        out.push_str(&format!("  error:  {err}\n"));
+                        out.push_str(&format!("  error:   {err}\n"));
                     }
-                    out.push_str(&format!("  prompt: {}\n", job.prompt));
+                    out.push_str(&format!("  prompt:  {}\n", job.prompt));
                     out
                 }
                 Ok(None) => format!("No job with id {id}"),
@@ -256,6 +279,26 @@ mod tests {
     fn process_status_unknown_id() {
         let (_d, q) = temp_queue();
         assert!(process_command("STATUS\tnope", &q).contains("No job"));
+    }
+
+    #[test]
+    fn process_attach_stores_context_and_status_shows_it() {
+        let (_d, q) = temp_queue();
+        let job = q.enqueue("/r", "resume this").unwrap();
+        let ctx = r#"{"conversations":[{"messages":[["user","earlier work"]]}]}"#;
+        let reply = process_command(&format!("ATTACH\t{}\t{ctx}", job.id), &q);
+        assert!(reply.starts_with("OK attached context"), "got: {reply}");
+        assert_eq!(q.load_context(&job.id).unwrap().as_deref(), Some(ctx));
+        let status = process_command(&format!("STATUS\t{}", job.id), &q);
+        assert!(status.contains("attached"), "status: {status}");
+    }
+
+    #[test]
+    fn process_attach_rejects_unknown_job_and_missing_args() {
+        let (_d, q) = temp_queue();
+        assert!(process_command("ATTACH\tghost\tctx", &q).contains("No job"));
+        assert!(process_command("ATTACH", &q).starts_with("ERR"));
+        assert!(process_command("ATTACH\tid-only", &q).starts_with("ERR"));
     }
 
     #[test]
