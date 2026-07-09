@@ -90,7 +90,73 @@ fn forbids_shadows(p: &str) -> bool {
 
 // ── Rules ──────────────────────────────────────────────────────────────────
 
-/// Flag integer `<N>px` values that are off the 4px spacing scale (N > 3).
+/// CSS properties whose pixel values are genuinely *spacing* and so must sit on
+/// the 4px scale. Deliberately excludes font-size, width/height, border-radius,
+/// line-height, letter-spacing etc. — those legitimately take off-scale values,
+/// and flagging them would make the linter noisy and wrong. Normalized form:
+/// lowercased, non-alphabetic chars stripped (so `padding-left` and `paddingLeft`
+/// both become `paddingleft`).
+const SPACING_PROPS: &[&str] = &[
+    "padding",
+    "paddingtop",
+    "paddingright",
+    "paddingbottom",
+    "paddingleft",
+    "paddinginline",
+    "paddingblock",
+    "margin",
+    "margintop",
+    "marginright",
+    "marginbottom",
+    "marginleft",
+    "margininline",
+    "marginblock",
+    "gap",
+    "rowgap",
+    "columngap",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "inset",
+    "insetinline",
+    "insetblock",
+];
+
+/// Normalize a CSS property name to its alphabetic, lowercase form.
+fn normalize_prop(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The CSS/JSX property that owns the value starting at `value_start` on this
+/// line: the identifier before the nearest preceding `:`. `None` when there is
+/// no clear owning property (we then err toward NOT flagging).
+fn property_for(chars: &[char], value_start: usize) -> Option<String> {
+    let colon = chars[..value_start].iter().rposition(|&c| c == ':')?;
+    let mut end = colon;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0
+        && (chars[start - 1].is_ascii_alphanumeric()
+            || chars[start - 1] == '-'
+            || chars[start - 1] == '_')
+    {
+        start -= 1;
+    }
+    if start == end {
+        return None;
+    }
+    Some(chars[start..end].iter().collect())
+}
+
+/// Flag integer `<N>px` values that are off the 4px spacing scale (N > 3) — but
+/// ONLY when they belong to a spacing property, so font-sizes, widths, heights
+/// and radii are never false-flagged.
 fn off_grid_spacing(content: &str) -> Vec<DesignFinding> {
     let mut findings = Vec::new();
     for (idx, line) in content.lines().enumerate() {
@@ -109,16 +175,21 @@ fn off_grid_spacing(content: &str) -> Vec<DesignFinding> {
                 let followed_by_px = i + 1 < chars.len() && chars[i] == 'p' && chars[i + 1] == 'x';
                 if followed_by_px && !preceded_by_dot {
                     let digits: String = chars[start..i].iter().collect();
-                    if let Ok(n) = digits.parse::<u32>() {
-                        if n > 3 && !SPACING_SCALE.contains(&n) {
-                            findings.push(DesignFinding {
-                                line: idx + 1,
-                                rule: "off-grid-spacing".into(),
-                                message: format!(
-                                    "spacing `{n}px` is off the 4px scale (use 4/8/12/16/24/32…)"
-                                ),
-                            });
-                        }
+                    let is_spacing = property_for(&chars, start)
+                        .map(|p| SPACING_PROPS.contains(&normalize_prop(&p).as_str()))
+                        .unwrap_or(false);
+                    if is_spacing
+                        && let Ok(n) = digits.parse::<u32>()
+                        && n > 3
+                        && !SPACING_SCALE.contains(&n)
+                    {
+                        findings.push(DesignFinding {
+                            line: idx + 1,
+                            rule: "off-grid-spacing".into(),
+                            message: format!(
+                                "spacing `{n}px` is off the 4px scale (use 4/8/12/16/24/32…)"
+                            ),
+                        });
                     }
                 }
             } else {
@@ -285,6 +356,29 @@ mod tests {
         let findings = lint_design("styles.scss", css, None);
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 3);
+    }
+
+    #[test]
+    fn off_grid_ignores_non_spacing_properties() {
+        // Font-sizes, widths, heights, radii and line-heights legitimately take
+        // off-scale px values — they must NOT be flagged, only spacing does.
+        let css = "h1 { font-size: 17px; }\n\
+             .box { width: 1040px; height: 46px; max-width: 680px; }\n\
+             .r { border-radius: 6px; line-height: 22px; letter-spacing: 1px; }\n\
+             .off { padding: 26px; }";
+        let findings = lint_design("app/globals.css", css, None);
+        // Only the padding:26px is a real spacing violation.
+        assert_eq!(findings.len(), 1, "got: {findings:?}");
+        assert!(findings[0].message.contains("26px"));
+    }
+
+    #[test]
+    fn off_grid_handles_inline_jsx_style() {
+        // Inline style with mixed properties on one line: only padding flags.
+        let tsx = "<div style={{ padding: \"26px\", fontSize: 17, width: 300 }} />";
+        let findings = lint_design("app/page.tsx", tsx, None);
+        assert_eq!(findings.len(), 1, "got: {findings:?}");
+        assert!(findings[0].message.contains("26px"));
     }
 
     #[test]
