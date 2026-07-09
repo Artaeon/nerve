@@ -46,11 +46,14 @@ impl ContextManager {
 
     /// Estimate token count for a message.
     ///
-    /// Uses ~3 chars per token which is conservative — BPE tokenization
-    /// averages 3-4 chars/token for English, less for code/CJK. Erring
-    /// on the high side prevents context limit overflows.
+    /// Uses ~3 *characters* per token, which is conservative — BPE tokenization
+    /// averages 3-4 chars/token for English, less for code/CJK. Counting
+    /// characters (not bytes) keeps the estimate honest for multi-byte scripts:
+    /// a 3-byte CJK glyph is one character, not three, so byte-based counting
+    /// used to overestimate CJK/emoji by ~3x. Erring slightly high still
+    /// prevents context-limit overflows.
     pub fn estimate_tokens(text: &str) -> usize {
-        text.len() / 3 + 1
+        text.chars().count() / 3 + 1
     }
 
     /// Estimate total tokens for a conversation
@@ -754,9 +757,11 @@ mod tests {
 
     #[test]
     fn estimate_tokens_cjk_multibyte() {
-        // CJK chars are 3 bytes each in UTF-8, so len() counts bytes not chars
-        let cjk = "日本語"; // 9 bytes in UTF-8
+        // CJK chars are 3 bytes each in UTF-8 but count as ONE character each.
+        // The estimate is char-based, so 3 glyphs => 3/3 + 1 = 2 tokens — not
+        // the 4 that byte-based counting used to (over)report.
+        let cjk = "日本語"; // 3 chars, 9 bytes
         let est = ContextManager::estimate_tokens(cjk);
-        assert_eq!(est, 9 / 3 + 1); // 4 tokens
+        assert_eq!(est, 3 / 3 + 1); // 2 tokens
     }
 }

@@ -223,19 +223,27 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             )
         };
 
-        // Token count for the conversation. Use the SAME estimator that drives
-        // compaction (ContextManager) so the on-screen % matches the number the
-        // compactor actually acts on — otherwise the bar reads ~25% low.
-        let total_tokens = crate::agent::context::ContextManager::conversation_tokens(
-            &app.current_conversation().messages,
-        );
-        let tokens_display = format_number(total_tokens);
+        // Context usage. Show the size of the payload that is ACTUALLY sent to
+        // the model — post-compaction and including injected system/KB/memory
+        // prompts (app.last_sent_tokens) — not the raw stored history, which
+        // auto-compaction keeps shrinking to fit the window. Showing raw stored
+        // tokens made the bar climb toward 100% and stay pinned there even
+        // though every send was comfortably under budget. Before the first send
+        // (nothing measured yet) we fall back to the raw estimate.
         let context_limit = crate::agent::context::ContextManager::effective_limit(
             &app.selected_provider,
             app.context_limit_override,
         );
+        let effective_tokens = if app.last_sent_tokens > 0 {
+            app.last_sent_tokens
+        } else {
+            crate::agent::context::ContextManager::conversation_tokens(
+                &app.current_conversation().messages,
+            )
+        };
+        let tokens_display = format_number(effective_tokens);
         let pct = if context_limit > 0 {
-            (total_tokens as f64 / context_limit as f64 * 100.0).min(100.0) as u8
+            (effective_tokens as f64 / context_limit as f64 * 100.0).min(100.0) as u8
         } else {
             0
         };
@@ -245,11 +253,23 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             _ => Color::Red,
         };
 
-        // Right section: conversation position + token usage.
+        // A tiny meter so fullness reads at a glance, plus a compaction marker
+        // (⟳) when older turns are being summarized to fit the window — that is
+        // why stored history can exceed what the meter shows.
+        let gauge = context_gauge(pct);
+        let compact_marker = if app.context_compacting {
+            " \u{27F3}"
+        } else {
+            ""
+        };
+
+        // Right section: context meter + conversation position.
         let right_text = format!(
-            " ~{} tokens ({}%) \u{2502} Conv {}/{} ",
+            " {} ~{} ({}%){} \u{2502} Conv {}/{} ",
+            gauge,
             tokens_display,
             pct,
+            compact_marker,
             app.active_conversation + 1,
             app.conversations.len(),
         );
@@ -297,6 +317,22 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Format a number with thousands separators.
+/// Render a compact 5-cell context meter like `[███░░]` for a 0-100 percentage.
+/// Filled cells are rounded to the nearest fifth; the whole meter inherits the
+/// caller's colour (green/yellow/red), so it reads as a fullness gauge at a
+/// glance without taking much width.
+fn context_gauge(pct: u8) -> String {
+    const CELLS: usize = 5;
+    let filled = (((pct as usize) * CELLS + 50) / 100).min(CELLS);
+    let mut s = String::with_capacity(CELLS + 2);
+    s.push('[');
+    for i in 0..CELLS {
+        s.push(if i < filled { '\u{2588}' } else { '\u{2591}' });
+    }
+    s.push(']');
+    s
+}
+
 fn format_number(n: usize) -> String {
     if n >= 1_000_000 {
         format!(
@@ -389,6 +425,36 @@ mod tests {
     #[test]
     fn format_number_exactly_million() {
         assert_eq!(format_number(1_000_000), "1,000,000");
+    }
+
+    // ── context_gauge ───────────────────────────────────────────────
+
+    #[test]
+    fn context_gauge_empty() {
+        assert_eq!(context_gauge(0), "[░░░░░]");
+    }
+
+    #[test]
+    fn context_gauge_full() {
+        assert_eq!(context_gauge(100), "[█████]");
+    }
+
+    #[test]
+    fn context_gauge_half_rounds_to_three() {
+        // 50% of 5 cells = 2.5, rounds up to 3.
+        assert_eq!(context_gauge(50), "[███░░]");
+    }
+
+    #[test]
+    fn context_gauge_low() {
+        // 10% rounds to 1 cell (0.5 -> 1).
+        assert_eq!(context_gauge(10), "[█░░░░]");
+    }
+
+    #[test]
+    fn context_gauge_over_100_clamped() {
+        // pct is clamped upstream, but guard against overflow of the meter.
+        assert_eq!(context_gauge(200), "[█████]");
     }
 
     // ── format_elapsed ──────────────────────────────────────────────
