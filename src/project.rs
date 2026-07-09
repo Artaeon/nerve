@@ -187,6 +187,13 @@ impl ProjectStore {
         }
     }
 
+    /// Save/replace the whole design-principles document (e.g. applying a
+    /// curated preset). Mirrors [`Self::save_brief`].
+    pub fn save_design(&self, content: &str) -> anyhow::Result<()> {
+        self.ensure_dir()?;
+        atomic_write(&self.design_path(), content.trim())
+    }
+
     /// Append a design principle to `design.md` (creating it with a header).
     pub fn append_design(&self, principle: &str) -> anyhow::Result<()> {
         let principle = sanitize_line(principle);
@@ -714,6 +721,21 @@ mod tests {
         let design = s.load_design().unwrap();
         assert!(design.contains("- line one line two - fake bullet"));
         assert_eq!(design.lines().filter(|l| l.starts_with("- ")).count(), 1);
+    }
+
+    #[test]
+    fn design_save_overwrites() {
+        let (_d, s) = store();
+        s.append_design("original principle").unwrap();
+        s.save_design("# Design principles\n\nBrand new document.\n")
+            .unwrap();
+        let design = s.load_design().unwrap();
+        assert!(design.starts_with("# Design principles"));
+        assert!(design.contains("Brand new document."));
+        // The appended principle is gone — save overwrites, not appends.
+        assert!(!design.contains("original principle"));
+        // Trailing whitespace is trimmed on save.
+        assert!(!design.ends_with('\n'));
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod conversation;
 #[cfg(unix)]
 mod daemon;
 mod design;
+mod design_presets;
 mod files;
 mod history;
 mod input;

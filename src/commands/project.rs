@@ -1,6 +1,6 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/changes`, `/activity`, `/design`, `/design-check`,
-//! `/improve`, `/improvements`, `/task`, `/tasks`.
+//! `/decisions`, `/changes`, `/activity`, `/design`, `/design preset`,
+//! `/design-check`, `/improve`, `/improvements`, `/task`, `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -188,9 +188,44 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
                 match store.load_design() {
                     Some(design) => app.add_assistant_message(design),
                     None => app.set_status(
-                        "No design principles yet — /design <principle> to add one \
-                         (auto-applied to UI/design work)",
+                        "No design principles yet — /design <principle> to add one, \
+                         or /design preset <name> to start from a curated system",
                     ),
+                }
+                return true;
+            }
+            // "/design preset [name]" applies or lists curated presets — check
+            // BEFORE treating the args as a new principle to append.
+            let (word, rest) = match args.find(char::is_whitespace) {
+                Some(pos) => (&args[..pos], args[pos..].trim()),
+                None => (args, ""),
+            };
+            if word == "preset" {
+                use crate::design_presets;
+                if rest.is_empty() {
+                    let mut out = String::from("## Design presets\n\n");
+                    for name in design_presets::preset_names() {
+                        let desc = design_presets::preset_description(name).unwrap_or("");
+                        out.push_str(&format!("- **{name}** — {desc}\n"));
+                    }
+                    out.push_str("\nUsage: /design preset <name>\n");
+                    app.add_assistant_message(out);
+                    return true;
+                }
+                match design_presets::preset(rest) {
+                    Some(content) => match store.save_design(content) {
+                        Ok(()) => app.set_status(format!(
+                            "Applied the '{}' design preset to .nerve/design.md — \
+                             injected on future UI turns",
+                            rest.trim().to_lowercase()
+                        )),
+                        Err(e) => app.set_status(format!("Could not apply preset: {e}")),
+                    },
+                    None => app.set_status(format!(
+                        "Unknown preset '{}' (available: {})",
+                        rest.trim(),
+                        design_presets::preset_names().join(", ")
+                    )),
                 }
                 return true;
             }
@@ -592,6 +627,59 @@ mod tests {
         let (_role, content) = app.current_conversation().messages.last().unwrap();
         assert!(content.contains("# Design principles"));
         assert!(content.contains("use an 8px spacing scale"));
+    }
+
+    #[tokio::test]
+    async fn design_preset_applies_named_system() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/design preset basecamp", &mock_provider()).await);
+        // design.md now holds the curated document.
+        let design = ProjectStore::for_workspace(dir.path())
+            .load_design()
+            .unwrap();
+        assert!(design.starts_with("# Design principles"));
+        assert!(design.contains("Basecamp editorial"));
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("basecamp") && s.contains("design preset"))
+        );
+    }
+
+    #[tokio::test]
+    async fn design_preset_list_when_no_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/design preset", &mock_provider()).await);
+        // Nothing was written; the available presets are listed instead.
+        assert!(
+            ProjectStore::for_workspace(dir.path())
+                .load_design()
+                .is_none()
+        );
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("Design presets"));
+        assert!(content.contains("basecamp"));
+        assert!(content.contains("apple"));
+        assert!(content.contains("linear"));
+    }
+
+    #[tokio::test]
+    async fn design_preset_unknown_sets_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/design preset nope", &mock_provider()).await);
+        assert!(
+            ProjectStore::for_workspace(dir.path())
+                .load_design()
+                .is_none()
+        );
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("Unknown preset 'nope'"))
+        );
     }
 
     #[tokio::test]
