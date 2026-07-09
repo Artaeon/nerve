@@ -143,6 +143,7 @@ Project Memory (.nerve/ — injected into every prompt)\n\
   /activity           Show recent auto-captured agent activity\n\
   /design             Show design principles (auto-applied to UI work)\n\
   /design <principle> Add a design principle for UI/design work\n\
+  /design-check [path]  Lint a stylesheet/component against design principles\n\
   /improve <idea>     Add an idea to the improvement backlog\n\
   /improvements       List backlog (done <id> to close)\n\
   /task <title>       Add a task to the persistent backlog\n\

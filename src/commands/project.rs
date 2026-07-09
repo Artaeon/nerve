@@ -1,6 +1,6 @@
 //! Project-memory commands: `/init`, `/remember`, `/memory`, `/decision`,
-//! `/decisions`, `/changes`, `/activity`, `/design`, `/improve`,
-//! `/improvements`, `/task`, `/tasks`.
+//! `/decisions`, `/changes`, `/activity`, `/design`, `/design-check`,
+//! `/improve`, `/improvements`, `/task`, `/tasks`.
 //!
 //! These are the user-facing surface of the per-project `.nerve/` store
 //! (see `crate::project`). Everything a user records here is injected into
@@ -200,6 +200,76 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
                     store.design_path().display()
                 )),
                 Err(e) => app.set_status(format!("Could not save design principle: {e}")),
+            }
+            true
+        }
+        "/design-check" => {
+            let Some(store) = open_store(app) else {
+                return true;
+            };
+            let root = app
+                .cached_workspace
+                .as_ref()
+                .map(|ws| ws.root.clone())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+            // Resolve the target: the given arg, else the project's main
+            // stylesheet in a conventional search order.
+            let target = if args.is_empty() {
+                let candidates = [
+                    "app/globals.css",
+                    "src/app.css",
+                    "styles/globals.css",
+                    "src/index.css",
+                ];
+                match candidates.iter().find(|c| root.join(c).is_file()) {
+                    Some(found) => root.join(found),
+                    None => {
+                        app.set_status(
+                            "No stylesheet found — pass a path: /design-check <file.css>",
+                        );
+                        return true;
+                    }
+                }
+            } else {
+                let p = std::path::Path::new(args);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    root.join(p)
+                }
+            };
+
+            let content = match std::fs::read_to_string(&target) {
+                Ok(c) => c,
+                Err(e) => {
+                    app.set_status(format!("Could not read {}: {e}", target.display()));
+                    return true;
+                }
+            };
+
+            let principles = store.load_design();
+            let findings = crate::design::lint_design(
+                &target.to_string_lossy(),
+                &content,
+                principles.as_deref(),
+            );
+
+            if findings.is_empty() {
+                app.add_assistant_message(format!(
+                    "No design issues found in {}.",
+                    target.display()
+                ));
+            } else {
+                let path = target.display();
+                let mut out = format!(
+                    "## Design check — {} issue(s) in {path}\n\n",
+                    findings.len()
+                );
+                for f in &findings {
+                    out.push_str(&format!("{path}:{}  [{}]  {}\n", f.line, f.rule, f.message));
+                }
+                app.add_assistant_message(out);
             }
             true
         }
@@ -534,6 +604,102 @@ mod tests {
                 .as_ref()
                 .is_some_and(|s| s.contains("No design principles yet"))
         );
+    }
+
+    #[tokio::test]
+    async fn design_check_flags_and_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        let file = dir.path().join("app.css");
+        std::fs::write(&file, ".a { padding: 13px; }").unwrap();
+        assert!(
+            handle(
+                &mut app,
+                &format!("/design-check {}", file.display()),
+                &mock_provider()
+            )
+            .await
+        );
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("Design check"));
+        assert!(content.contains("[off-grid-spacing]"));
+        assert!(content.contains("13px"));
+    }
+
+    #[tokio::test]
+    async fn design_check_clean_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        let file = dir.path().join("app.css");
+        std::fs::write(&file, ".a { padding: 16px; }").unwrap();
+        assert!(
+            handle(
+                &mut app,
+                &format!("/design-check {}", file.display()),
+                &mock_provider()
+            )
+            .await
+        );
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("No design issues found"));
+    }
+
+    #[tokio::test]
+    async fn design_check_missing_file_sets_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(
+            handle(
+                &mut app,
+                "/design-check does-not-exist.css",
+                &mock_provider()
+            )
+            .await
+        );
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("Could not read"))
+        );
+    }
+
+    #[tokio::test]
+    async fn design_check_no_arg_no_stylesheet_sets_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        assert!(handle(&mut app, "/design-check", &mock_provider()).await);
+        assert!(
+            app.status_message
+                .as_ref()
+                .is_some_and(|s| s.contains("No stylesheet found"))
+        );
+    }
+
+    #[tokio::test]
+    async fn design_check_honors_principles() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_workspace(dir.path());
+        // Record a principle forbidding gradients, then lint a file using one.
+        assert!(
+            handle(
+                &mut app,
+                "/design no gradients, use flat fills",
+                &mock_provider()
+            )
+            .await
+        );
+        let file = dir.path().join("app.css");
+        std::fs::write(&file, ".a { background: linear-gradient(#fff, #000); }").unwrap();
+        assert!(
+            handle(
+                &mut app,
+                &format!("/design-check {}", file.display()),
+                &mock_provider()
+            )
+            .await
+        );
+        let (_role, content) = app.current_conversation().messages.last().unwrap();
+        assert!(content.contains("[gradients]"), "got: {content}");
     }
 
     #[tokio::test]

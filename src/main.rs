@@ -10,6 +10,7 @@ mod config;
 mod conversation;
 #[cfg(unix)]
 mod daemon;
+mod design;
 mod files;
 mod history;
 mod input;
