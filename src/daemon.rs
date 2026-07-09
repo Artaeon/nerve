@@ -120,6 +120,13 @@ pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> Str
             }
             Err(e) => format!("ERR could not list jobs: {e}"),
         },
+        // Machine-readable listing for remote clients (the TUI polls this over
+        // SSH to render the live queue indicator). Returns a JSON array of jobs.
+        "LISTJSON" => match queue.list() {
+            Ok(jobs) => serde_json::to_string(&jobs)
+                .unwrap_or_else(|e| format!("ERR could not serialize jobs: {e}")),
+            Err(e) => format!("ERR could not list jobs: {e}"),
+        },
         "ATTACH" => {
             // ATTACH <id>\t<context...> — the context (a session-JSON snapshot)
             // is the last field so it may contain anything. Kept a separate

@@ -305,6 +305,21 @@ pub fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ));
         }
 
+        // Remote server indicator: when a server is connected, show its live
+        // queue (e.g. "⛁ 2 running · 5 queued"). Refreshed by /server; cyan when
+        // work is active, dim when idle/unknown.
+        if app.remote_server.is_some() {
+            let (text, active) = match &app.remote_status {
+                Some(s) => (s.badge(), s.running > 0 || s.queued > 0),
+                None => ("server ?".to_string(), false),
+            };
+            left_spans.push(sep.clone());
+            left_spans.push(Span::styled(
+                format!("\u{26C1} {text}"),
+                Style::default().fg(if active { Color::Cyan } else { theme.dim }),
+            ));
+        }
+
         left_spans.push(sep.clone());
         left_spans.push(status_span);
 

@@ -295,6 +295,13 @@ pub struct App {
     /// every subsequent send.
     pub context_compacting: bool,
 
+    // -- remote server (24/7 daemon over SSH) --
+    /// SSH host/alias of a connected remote nerve server, if any.
+    pub remote_server: Option<String>,
+    /// Last-fetched queue status of the remote server, for the status indicator.
+    /// `None` until the first successful poll.
+    pub remote_status: Option<crate::remote::RemoteStatus>,
+
     // -- plugins --
     pub plugins: Vec<crate::plugins::Plugin>,
 
@@ -454,6 +461,9 @@ impl App {
             total_tokens_used: 0,
             last_sent_tokens: 0,
             context_compacting: false,
+
+            remote_server: None,
+            remote_status: None,
 
             plugins: Vec::new(),
 

@@ -12,6 +12,7 @@ pub mod git;
 pub mod info;
 pub mod knowledge;
 pub mod project;
+pub mod server;
 pub mod settings;
 pub mod shell;
 
@@ -61,6 +62,14 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
 
     if settings::handle(app, trimmed).await {
         return true;
+    }
+
+    // ── Remote server (`/server ...`) ──────────────────────────────────
+    if let Some(rest) = trimmed.strip_prefix("/server") {
+        // Match only `/server` or `/server <args>`, not `/serverfoo`.
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return server::handle(app, rest.trim());
+        }
     }
 
     // ── Plugin dispatch ────────────────────────────────────────────────

@@ -25,6 +25,7 @@ mod prompts;
 mod provider_health;
 mod provider_setup;
 mod queue;
+mod remote;
 mod scaffold;
 mod scraper;
 mod session;
@@ -131,6 +132,10 @@ struct Cli {
     #[arg(long)]
     jobs: bool,
 
+    /// With --jobs: output the queue as JSON (used by remote clients).
+    #[arg(long)]
+    json: bool,
+
     /// Cancel a queued job by id (Unix only)
     #[arg(long, value_name = "ID")]
     cancel_job: Option<String>,
@@ -231,7 +236,7 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         if cli.jobs {
-            let response = send_to_server("LIST").await?;
+            let response = send_to_server(if cli.json { "LISTJSON" } else { "LIST" }).await?;
             println!("{response}");
             return Ok(());
         }
@@ -440,6 +445,7 @@ async fn run_tui(
     app.git_user_name = config.git_user_name.clone().unwrap_or_default();
     app.git_user_email = config.git_user_email.clone().unwrap_or_default();
     app.context_limit_override = config.context_limit;
+    app.remote_server = config.remote_server.clone();
 
     // Load last used provider if not specified via CLI — but never restore a
     // provider that can't work right now (e.g. the claude CLI was removed

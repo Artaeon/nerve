@@ -191,6 +191,18 @@ pub const COMMANDS: &[CommandInfo] = &[
     c("branch delete", "Delete a branch", "Branching"),
     // Workspace
     c("workspace", "Show detected project info", "Workspace"),
+    // Remote server
+    c(
+        "server",
+        "Connect to a remote nerve server / show its queue",
+        "Server",
+    ),
+    c(
+        "server status",
+        "Refresh the remote server's job status",
+        "Server",
+    ),
+    c("server off", "Disconnect from the remote server", "Server"),
     // Usage & Cost
     c(
         "usage",

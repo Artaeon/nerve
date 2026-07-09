@@ -76,6 +76,11 @@ pub struct Config {
     /// provider. Useful for local models with non-standard context lengths.
     #[serde(default)]
     pub context_limit: Option<usize>,
+    /// SSH host (or `~/.ssh/config` alias) of a remote nerve server to connect
+    /// the TUI to. When set, the status bar shows the server's live queue and
+    /// `/server` talks to it. Example: `"nerve-server"` or `"root@1.2.3.4"`.
+    #[serde(default)]
+    pub remote_server: Option<String>,
 }
 
 fn default_command_timeout_secs() -> u64 {
@@ -167,6 +172,7 @@ impl Default for Config {
             temperature: None,
             top_p: None,
             context_limit: None,
+            remote_server: None,
         }
     }
 }
