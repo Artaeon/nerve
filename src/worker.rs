@@ -88,6 +88,17 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
     };
     let task = build_task(job, context.as_deref());
 
+    // Snapshot which paths are already dirty BEFORE the job. We commit only what
+    // the job itself changes (the set that becomes dirty during the run), never
+    // `git add -A` — otherwise a job running on a checkout with unrelated
+    // in-progress edits would sweep those into its commit. On a dedicated server
+    // checkout this set is empty, so behaviour is unchanged.
+    let pre_dirty = if is_git {
+        dirty_paths(repo)
+    } else {
+        std::collections::HashSet::new()
+    };
+
     // Tools operate on the process CWD. The worker is sequential, so switching
     // into the repo for the duration of the job is safe; restore afterwards.
     let prev_cwd = std::env::current_dir().ok();
@@ -103,12 +114,17 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
 
     let outcome = outcome?;
 
-    // Commit whatever the agent changed, on the job branch, for review.
+    // Commit ONLY the paths this job newly touched, on its own branch, for
+    // review — leaving any pre-existing unrelated changes untouched.
     if outcome.edited && is_git {
-        let _ = git(repo, &["add", "-A"]);
-        let msg = format!("nerve job {}: {}", job.id, first_line(&job.prompt));
-        // A commit with nothing staged exits non-zero; that's fine (no-op).
-        let _ = git(repo, &["commit", "-m", &msg]);
+        let changed: Vec<String> = dirty_paths(repo).difference(&pre_dirty).cloned().collect();
+        if !changed.is_empty() {
+            let mut add = vec!["add", "--"];
+            add.extend(changed.iter().map(String::as_str));
+            let _ = git(repo, &add);
+            let msg = format!("nerve job {}: {}", job.id, first_line(&job.prompt));
+            let _ = git(repo, &["commit", "-m", &msg]);
+        }
     }
 
     tracing::info!(
@@ -155,6 +171,27 @@ fn git(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The set of repo-relative paths git reports as dirty (modified, added,
+/// deleted, or untracked). Used to diff the tree before vs. after a job so we
+/// commit only what the job changed.
+fn dirty_paths(repo: &Path) -> std::collections::HashSet<String> {
+    git(repo, &["status", "--porcelain"])
+        .map(|out| out.lines().filter_map(parse_status_path).collect())
+        .unwrap_or_default()
+}
+
+/// Extract the path from a `git status --porcelain` line. Handles renames
+/// (`R  old -> new` → the new path) and quoted paths.
+fn parse_status_path(line: &str) -> Option<String> {
+    let rest = line.get(3..)?.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    // For a rename/copy the porcelain is "old -> new"; keep the new path.
+    let path = rest.rsplit(" -> ").next().unwrap_or(rest);
+    Some(path.trim_matches('"').to_string())
 }
 
 /// First line of a prompt, truncated, for a commit subject.
@@ -211,6 +248,31 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A fresh temp dir is not a git work tree.
         assert!(git(dir.path(), &["rev-parse", "--is-inside-work-tree"]).is_err());
+    }
+
+    #[test]
+    fn parse_status_path_handles_the_porcelain_forms() {
+        assert_eq!(
+            parse_status_path(" M lib/foo.ts").as_deref(),
+            Some("lib/foo.ts")
+        );
+        assert_eq!(parse_status_path("?? new.md").as_deref(), Some("new.md"));
+        assert_eq!(
+            parse_status_path("A  added.rs").as_deref(),
+            Some("added.rs")
+        );
+        // Rename keeps the NEW path.
+        assert_eq!(
+            parse_status_path("R  old.ts -> src/new.ts").as_deref(),
+            Some("src/new.ts")
+        );
+        // Quoted (paths with spaces/unicode) are unquoted.
+        assert_eq!(
+            parse_status_path("A  \"a file.ts\"").as_deref(),
+            Some("a file.ts")
+        );
+        assert_eq!(parse_status_path(""), None);
+        assert_eq!(parse_status_path(" M "), None);
     }
 
     fn make_job(prompt: &str, has_context: bool) -> Job {
