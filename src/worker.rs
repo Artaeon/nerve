@@ -126,8 +126,16 @@ const MAX_ITER: usize = crate::agent::headless::DEFAULT_MAX_ITERATIONS;
 /// Run a git subcommand in `repo` (uses `-C`, not the process CWD, so it works
 /// regardless of where the worker currently is). Returns stdout or an error
 /// carrying stderr.
+///
+/// `-c safe.directory=*` is passed per-invocation because a synced repo is
+/// usually owned by the client's uid (rsync preserves ownership) while the
+/// daemon runs as a different user (often root); without this, git's
+/// dubious-ownership guard refuses every command and branch isolation silently
+/// breaks. Per-command trust avoids mutating global git config.
 fn git(repo: &Path, args: &[&str]) -> anyhow::Result<String> {
     let out = std::process::Command::new("git")
+        .arg("-c")
+        .arg("safe.directory=*")
         .arg("-C")
         .arg(repo)
         .args(args)
