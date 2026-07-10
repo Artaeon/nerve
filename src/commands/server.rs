@@ -11,7 +11,17 @@ use crate::app::App;
 /// - `/server status` — refresh the status indicator.
 /// - `/server off` — disconnect.
 pub fn handle(app: &mut App, args: &str) -> bool {
-    match args.trim() {
+    let args = args.trim();
+    // `/server submit <prompt>` — sync this project to the server and queue it.
+    if args == "submit" {
+        app.set_status("Usage: /server submit <prompt>");
+        return true;
+    }
+    if let Some(prompt) = args.strip_prefix("submit ") {
+        submit_to_server(app, prompt.trim());
+        return true;
+    }
+    match args {
         "" => show_queue(app),
         "off" | "disconnect" | "none" => {
             app.remote_server = None;
@@ -28,6 +38,37 @@ pub fn handle(app: &mut App, args: &str) -> bool {
         }
     }
     true
+}
+
+/// Sync the current project to the connected server and queue a job for it —
+/// the "schedule it on the server" path. Blocking (rsync + ssh), user-invoked.
+fn submit_to_server(app: &mut App, prompt: &str) {
+    let Some(host) = app.remote_server.clone() else {
+        app.add_assistant_message(
+            "No remote server connected. Use `/server <ssh-host>` first, then \
+             `/server submit <prompt>`."
+                .to_string(),
+        );
+        return;
+    };
+    if prompt.is_empty() {
+        app.set_status("Usage: /server submit <prompt>");
+        return;
+    }
+    let repo = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            app.set_status(format!("Could not read the current directory: {e}"));
+            return;
+        }
+    };
+    match crate::remote::sync_and_submit(&host, &repo, prompt) {
+        Ok(msg) => {
+            app.add_assistant_message(msg);
+            refresh(app);
+        }
+        Err(e) => app.add_assistant_message(format!("Could not schedule on {host}: {e}")),
+    }
 }
 
 /// Refresh the cached queue status shown in the status bar. Blocking (a single

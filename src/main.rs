@@ -129,6 +129,11 @@ struct Cli {
     #[arg(long)]
     with_session: bool,
 
+    /// With --submit: use this repo path instead of the current directory
+    /// (used internally by project sync to target the synced copy on the server).
+    #[arg(long, value_name = "PATH")]
+    repo_path: Option<String>,
+
     /// List jobs on the running server (Unix only)
     #[arg(long)]
     jobs: bool,
@@ -209,10 +214,15 @@ async fn main() -> anyhow::Result<()> {
         }
         // ── Queue client commands (talk to the running server) ──────────
         if let Some(prompt) = &cli.submit {
-            let repo = std::env::current_dir()?
-                .canonicalize()?
-                .to_string_lossy()
-                .to_string();
+            // An explicit --repo-path is an absolute server path (used by project
+            // sync); otherwise the repo is the current directory.
+            let repo = match &cli.repo_path {
+                Some(p) => p.clone(),
+                None => std::env::current_dir()?
+                    .canonicalize()?
+                    .to_string_lossy()
+                    .to_string(),
+            };
             let response = send_to_server(&format!("SUBMIT\t{repo}\t{prompt}")).await?;
             println!("{response}");
             // Optionally carry the full conversation context so the server

@@ -198,6 +198,11 @@ pub const COMMANDS: &[CommandInfo] = &[
         "Server",
     ),
     c(
+        "server submit",
+        "Sync this project to the server and queue a job",
+        "Server",
+    ),
+    c(
         "server status",
         "Refresh the remote server's job status",
         "Server",

@@ -99,6 +99,28 @@ fn parse_jobs_no_array_errors() {
 }
 
 #[test]
+fn rsync_args_exclude_build_artifacts_and_mirror() {
+    let args = rsync_args("/home/me/proj", "nerve-server", "/root/nerve-repos/proj");
+    assert_eq!(args[0], "-az");
+    assert!(args.iter().any(|a| a == "--delete"));
+    assert!(args.iter().any(|a| a == "--exclude=node_modules"));
+    assert!(args.iter().any(|a| a == "--exclude=target"));
+    assert!(args.iter().any(|a| a == "--exclude=.next"));
+    // .git and .nerve are NOT excluded — history + project memory travel along.
+    assert!(!args.iter().any(|a| a == "--exclude=.git"));
+    assert!(!args.iter().any(|a| a == "--exclude=.nerve"));
+    // Source has a trailing slash (copy contents); dest is host:remote/.
+    assert_eq!(args[args.len() - 2], "/home/me/proj/");
+    assert_eq!(args[args.len() - 1], "nerve-server:/root/nerve-repos/proj/");
+}
+
+#[test]
+fn rsync_args_normalizes_trailing_slash_on_source() {
+    let args = rsync_args("/home/me/proj/", "h", "/r");
+    assert_eq!(args[args.len() - 2], "/home/me/proj/");
+}
+
+#[test]
 fn ssh_args_build_expected_command() {
     let args = ssh_args("nerve-server", &["--jobs", "--json"]);
     assert_eq!(
