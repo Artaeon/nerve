@@ -77,9 +77,11 @@ async fn handle_client(stream: &mut UnixStream) {
     let request = String::from_utf8_lossy(&buf);
     let request = request.trim_end_matches(['\n', '\r']);
 
-    // Control command: shut the whole daemon down.
+    // Control command: shut the whole daemon down. Remove our own socket first
+    // so a stale `nerve.sock` isn't left behind for the next start to trip over.
     if request.trim() == "__SHUTDOWN__" {
         let _ = stream.write_all(b"Nerve daemon shutting down.").await;
+        let _ = std::fs::remove_file(socket_path());
         std::process::exit(0);
     }
 
