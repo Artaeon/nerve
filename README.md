@@ -17,7 +17,7 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-**47K lines of Rust | 1,840+ tests | 196 prompts | 12 agent tools | 6 providers | per-project memory | multi-agent /workflow | 6.8 MB binary**
+**47K lines of Rust | 1,970+ tests | 196 prompts | 12 agent tools | 6 providers | per-project memory | multi-agent /workflow | 24/7 server | 6.8 MB binary**
 
 [Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 
@@ -164,6 +164,23 @@ For non-trivial tasks, type `/workflow <task>` to run a 3-role pipeline on a fre
 4. **Reviewer** -- inspects the result (read-only tools, enforced at the tool layer)
 
 Reviewer ends with `VERDICT: APPROVED | NEEDS FIXES | REJECTED`. Press Esc at any time to stop.
+
+### 24/7 server — hand work off and close the laptop
+
+The same binary runs as an always-on **server** (`nerve --daemon`) with a
+persistent job queue and a worker that executes jobs autonomously. From your
+laptop's TUI you connect to it and schedule work — then walk away:
+
+```
+/server root@your-server              # connect (a ⛁ live queue indicator appears)
+/server submit refactor the auth module and add tests
+```
+
+`/server submit` rsyncs your whole project to the server (with `.git` history and
+`.nerve/` project memory — nothing lost), queues a job, and runs it on its own
+`nerve/job-<id>` branch, committing the result for you to review. The transport
+is plain **SSH** — no new ports, no new auth. See **[SERVER.md](SERVER.md)** for
+the full setup and workflow.
 
 ### Developer Workflow
 
@@ -360,6 +377,7 @@ Run `/help` inside Nerve for the complete list.
 ## Documentation
 
 - **[User Guide](docs/GUIDE.md)** -- comprehensive guide (2,200+ lines)
+- **[Server & client (24/7)](SERVER.md)** -- run nerve on a server, schedule work from your laptop
 - **[Manifesto](MANIFESTO.md)** -- why Nerve exists
 - **[Changelog](CHANGELOG.md)** -- release history
 

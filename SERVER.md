@@ -1,105 +1,148 @@
-# Nerve server & client — 24/7 coding
+# Nerve server & client — code 24/7
 
-One `nerve` binary, two roles. Run it as a **server** on an always-on machine and
-submit coding jobs to it from your **laptop**; close the laptop and the server
-keeps its queue. This document is the honest state of the feature — what works
-today and what is still being built.
+One `nerve` binary, two roles. Run it as a **server** on an always-on machine;
+from your **laptop**, connect to it, hand off a project, and close the lid — the
+server keeps working through its queue and commits results for you to review.
+
+Everything here is built and verified end-to-end against a real server.
+
+---
 
 ## The model
 
-- **Server**: a machine that has `nerve`, the Claude Code CLI (logged in), your
-  repos, and each project's environment set up. It runs `nerve --daemon` and
-  keeps a persistent job queue in `~/.nerve/queue/`.
-- **Client**: your laptop. You submit jobs to the server, list them, and cancel
-  them. When you close the laptop, the server's queue is untouched.
+- **Server** — an always-on machine with `nerve`, an authenticated AI provider,
+  and each project's toolchain. It runs `nerve --daemon`, which keeps a
+  persistent **job queue** and a **worker** that executes jobs.
+- **Client** — your laptop's `nerve` TUI (or the CLI). You connect to the
+  server, watch its live queue, and schedule work on it. Closing the laptop
+  doesn't stop anything.
 - **Transport = SSH.** There is **no new network port**. The daemon listens only
   on a HOME-anchored Unix socket (`~/.nerve/nerve.sock`, dir `0700`, socket
-  `0600` — owner-only). You reach it by running the client *on the server over
-  SSH*, which you already trust. Simple, and nothing new is exposed to the
-  internet.
+  `0600` — owner-only). The client reaches it by running `nerve` on the server
+  over the SSH you already trust. Nothing new is exposed to the internet.
+- **Guardrail** — every job runs on its own `nerve/job-<id>` git branch and is
+  committed there. Results never land on your working branch unreviewed.
 
-## Server setup
+---
+
+## Server setup (once)
 
 ```bash
-# on the server, as your user:
-cargo install --path .          # or copy the built `nerve` binary onto PATH
-claude login                    # the Claude Code CLI must be authenticated
-nerve --daemon                  # start the server (see "keep it running" below)
+# on the server:
+cargo build --release                       # or copy the nerve binary onto PATH
+sudo ln -s $PWD/target/release/nerve /usr/local/bin/nerve
+
+# authenticate an AI provider — pick ONE:
+claude login                                # Claude Code CLI (interactive), or
+export ANTHROPIC_API_KEY=sk-...             # non-interactive, or
+#   configure an OpenAI/OpenRouter key in ~/.config (see "Providers" below)
 ```
 
-Keep it running 24/7 with your init system. Example systemd unit
-(`~/.config/systemd/user/nerve.service`, then `systemctl --user enable --now nerve`):
+Run the daemon 24/7 under systemd (`/etc/systemd/system/nerve.service`):
 
 ```ini
 [Unit]
 Description=Nerve coding server
+After=network.target
+
 [Service]
-ExecStart=%h/.cargo/bin/nerve --daemon
+ExecStart=/usr/local/bin/nerve --daemon
 Restart=always
+Environment=HOME=/root
+# Optional: Environment=ANTHROPIC_API_KEY=sk-...
+
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
-
-macOS servers: enable **Remote Login** (System Settings → General → Sharing) so
-the client can SSH in, and run the daemon from a `launchd` agent.
-
-## Using it from your laptop
-
-Because the socket is owner-only, the client runs *on the server* over SSH — same
-user, same HOME, same socket:
 
 ```bash
-# submit a job; the repo is the directory you're in ON THE SERVER
-ssh myserver 'cd /srv/repos/api && nerve --submit "add rate limiting to the login route"'
-
-ssh myserver 'nerve --jobs'                 # list the queue
-ssh myserver 'nerve --cancel-job <id>'      # cancel a queued job
+systemctl daemon-reload && systemctl enable --now nerve
 ```
 
-Each job runs on its own branch `nerve/job-<id>` and is committed there for you
-to review — never straight to `main`. That is the guardrail: you pull the branch
-and merge if you like it.
+**Harden it** (recommended): SSH key auth only, `PasswordAuthentication no`, a
+firewall allowing just SSH. The daemon needs no inbound ports of its own.
 
-## Carrying your context (nothing lost)
+---
 
-`--with-session` attaches your full last conversation (the session JSON) to the
-job, so the server resumes with everything you had rather than a bare prompt:
+## Everyday use — from the TUI (recommended)
+
+In your project directory, launch `nerve` and:
+
+```
+/server root@your-server        # connect (saved to config; reconnects next run)
+/server                         # show the server's full queue
+/server submit <what to do>     # sync THIS project to the server and queue it
+/server status                  # refresh the indicator
+/server off                     # disconnect
+```
+
+`/server submit` rsyncs your whole project to the server (including `.git` and
+`.nerve/` project memory, excluding `node_modules`/`target`/`.next`…), then
+queues a job against that synced copy. The status bar shows a live **`⛁`
+indicator** — e.g. `⛁ 2 running · 5 queued` — so you can watch progress.
+
+## …or from the command line
+
+Because the client runs on the server over SSH, plain SSH works too:
 
 ```bash
-nerve --submit "continue the auth refactor" --with-session
+ssh your-server 'cd /path/to/repo && nerve --submit "add rate limiting"'
+ssh your-server 'nerve --jobs'                 # list the queue
+ssh your-server 'nerve --jobs --json'          # machine-readable
+ssh your-server 'nerve --cancel-job <id>'
+ssh your-server 'nerve --query "STATUS <id>"'  # detail incl. error/branch
 ```
 
-The session is stored durably next to the job as `<id>.context.json`, and
-`nerve --query "STATUS <id>"` shows `context: attached`. Note: `--with-session`
-reads the session of *whichever machine runs the client*. To hand off your
-laptop's exact context you currently run the client against a forwarded socket
-(`ssh -L`) or sync your session file — first-class laptop→server context sync is
-the next increment (see below).
+## Reviewing results
+
+Each finished job leaves a `nerve/job-<id>` branch on the server's copy of the
+repo (under `~/nerve-repos/<name>` when scheduled via `/server submit`). Review
+and pull it:
+
+```bash
+ssh your-server 'cd ~/nerve-repos/<name> && git log --oneline nerve/job-<id>'
+git fetch ssh://your-server/root/nerve-repos/<name> nerve/job-<id>
+```
+
+---
+
+## Carrying your conversation (nothing lost)
+
+`--submit --with-session` attaches your full last conversation to the job, so the
+server has everything you had, not just a one-line prompt. It's stored durably
+next to the job as `<id>.context.json`; `STATUS` shows `context: attached`.
+
+## Providers
+
+The worker builds its provider from the server's config on every run, so adding
+credentials takes effect without a restart. Supported: **Claude Code** CLI
+(`claude login` or `ANTHROPIC_API_KEY`), and any OpenAI-compatible endpoint —
+**OpenAI**, **OpenRouter**, **Ollama**, or a custom base URL — by setting the
+key in the server's nerve config. No code changes to switch.
 
 ## What is persisted, and where (durability)
 
-Everything nerve writes is saved atomically (write-temp-then-rename), so a crash
-never leaves a half-written file:
+Everything nerve writes is saved atomically (write-temp-then-rename):
 
+- **Job queue** → `~/.nerve/queue/` (one JSON per job + optional
+  `<id>.context.json`). Survives restarts and disconnects.
 - **Conversations / sessions** → `~/Library/Application Support/nerve/sessions/`
-  (Linux: `~/.local/share/nerve/sessions/`). Full message history, auto-saved
-  every turn, last-session + 25 named snapshots.
-- **The job queue** → `~/.nerve/queue/` (one JSON per job + optional
-  `<id>.context.json`). Survives restarts.
+  (Linux: `~/.local/share/nerve/sessions/`) — full history, auto-saved each turn.
 - **Per-project memory** → each repo's `.nerve/`: `brief.md`, `decisions.jsonl`,
   `journal.jsonl` (every change), `activity.jsonl`, `memory.md`. This is your
-  "complete database of every decision and change." **Commit `.nerve/` to git**
-  and it travels with the repo — git is the durable, synced history that both
-  the laptop and server share (push on one, pull on the other).
+  complete record of every decision and change, and it travels with the project
+  on every `/server submit`.
 
-## Status — what works today vs. next
+---
 
-**Works now:** the server (`--daemon`), the persistent queue, submit / list /
-cancel over SSH, job branches, and durable context bundles attached to jobs.
-Verified end-to-end (submit + attach a real session + status + persistence).
+## Status
 
-**Next increment (in progress):** the **worker** that drains the queue and
-actually *runs* each job (checkout branch → run the agent to completion → verify
-→ commit). It needs a headless agent runner extracted from the TUI event loop.
-After that: first-class laptop→server sync of session + `.nerve/` state so the
-handoff is fully automatic, and optional live attach to watch a running job.
+**Works today, verified end-to-end:** the daemon + worker (drains the queue and
+runs jobs to completion on isolated branches), `/server` connect + live queue
+indicator, `/server submit` project sync, submit/list/cancel over SSH, durable
+context bundles, and all providers above.
+
+**Rougher edges / next:** an attached session isn't yet used to *resume* a job
+(the worker runs the prompt against the synced project); pulling result branches
+back to the laptop is manual (`git fetch` as above); the `⛁` indicator refreshes
+on `/server` rather than polling in the background.
