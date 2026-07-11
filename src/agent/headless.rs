@@ -14,7 +14,10 @@ use crate::ai::provider::{AiProvider, ChatMessage};
 /// System prompt that frames the model as an autonomous worker. The tool
 /// protocol itself comes from `tools_system_prompt()`, appended after this.
 const AGENT_SYSTEM: &str = "You are Nerve, running autonomously as a background worker on a coding task. \
-Work step by step using the tools until the task is fully done. Verify your work where you can \
+Be DECISIVE and EFFICIENT — you have a limited number of tool rounds. Read only the few files you \
+genuinely need to match the project's conventions, then START WRITING code. Do NOT re-read files \
+you have already read, and do NOT explore indefinitely: once you understand the pattern, implement \
+it. Prefer making the change over gathering more context. Verify your work where you can \
 (build/tests). When — and only when — the task is complete, reply with a short plain-text summary \
 of what you changed and STOP (emit no further tool calls). If you cannot make progress, explain why \
 and stop.";
@@ -29,8 +32,9 @@ const WRITE_TOOLS: &[&str] = &[
     "update_tasks",
 ];
 
-/// Default safety cap on agent iterations for an unattended run.
-pub const DEFAULT_MAX_ITERATIONS: usize = 25;
+/// Default safety cap on agent iterations for an unattended run. Real multi-file
+/// features need room to read a few files, write several, and self-verify.
+pub const DEFAULT_MAX_ITERATIONS: usize = 40;
 
 /// The result of a headless agent run.
 #[derive(Debug, Clone)]
@@ -119,6 +123,13 @@ pub async fn run_headless_agent(
         }
 
         iterations += 1;
+        let tools_summary: Vec<&str> = tool_calls.iter().map(|c| c.tool.as_str()).collect();
+        tracing::info!(
+            "headless iter {iterations}/{max_iterations}: {} tool(s) [{}] (ctx ~{} msgs)",
+            tool_calls.len(),
+            tools_summary.join(", "),
+            messages.len(),
+        );
 
         let mut results = Vec::with_capacity(tool_calls.len());
         for call in &tool_calls {
