@@ -153,6 +153,64 @@ fn format_results_marks_success_and_failure() {
 }
 
 #[test]
+fn compact_context_leaves_short_history_untouched() {
+    let mut messages = vec![
+        ChatMessage::system("sys"),
+        ChatMessage::system("tools"),
+        ChatMessage::user("the task"),
+        ChatMessage::assistant("ok"),
+        ChatMessage::user("small tool result"),
+    ];
+    let before = messages.clone();
+    compact_context(&mut messages, 1); // tiny budget, but too few messages to touch
+    assert_eq!(messages.len(), before.len());
+    for (a, b) in messages.iter().zip(before.iter()) {
+        assert_eq!(a.content, b.content);
+    }
+}
+
+#[test]
+fn compact_context_stubs_old_tool_output_but_keeps_task_reasoning_and_tail() {
+    let big = "FILE CONTENTS ".repeat(60); // ~800 chars, an old tool dump
+    let mut messages = vec![
+        ChatMessage::system("SYS-A"),              // 0 head
+        ChatMessage::system("SYS-B"),              // 1 head
+        ChatMessage::user("TASK-original"),        // 2 head (the task)
+        ChatMessage::assistant("reasoning-old"),   // 3 compact range (assistant → kept)
+        ChatMessage::user(big.clone()),            // 4 compact range (big tool result → stubbed)
+        ChatMessage::assistant("reasoning-old-2"), // 5 compact range (assistant → kept)
+        ChatMessage::user("recent tool result"),   // 6 tail
+        ChatMessage::assistant("recent-1"),        // 7 tail
+        ChatMessage::user("recent tool result 2"), // 8 tail
+        ChatMessage::assistant("recent-2"),        // 9 tail
+        ChatMessage::user("recent tool result 3"), // 10 tail
+        ChatMessage::assistant("final"),           // 11 tail
+    ];
+    compact_context(&mut messages, 50); // force compaction
+
+    // The old big tool-output (index 4) is stubbed…
+    assert!(
+        messages[4].content.contains("compacted"),
+        "old dump not compacted"
+    );
+    // …but the head (task + system prompts) is preserved verbatim…
+    assert_eq!(messages[0].content, "SYS-A");
+    assert_eq!(messages[2].content, "TASK-original");
+    // …the model's own reasoning (assistant turns) is preserved…
+    assert_eq!(messages[3].content, "reasoning-old");
+    assert_eq!(messages[5].content, "reasoning-old-2");
+    // …and the recent tail is untouched.
+    assert_eq!(messages[6].content, "recent tool result");
+    assert_eq!(messages[11].content, "final");
+
+    // Idempotent: compacting again changes nothing further.
+    let snapshot: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
+    compact_context(&mut messages, 50);
+    let after: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
+    assert_eq!(snapshot, after);
+}
+
+#[test]
 fn truncate_output_caps_long_output() {
     let long = "x".repeat(6000);
     let t = truncate_output(&long);

@@ -36,6 +36,51 @@ const WRITE_TOOLS: &[&str] = &[
 /// features need room to read a few files, write several, and self-verify.
 pub const DEFAULT_MAX_ITERATIONS: usize = 40;
 
+/// Token budget above which the running history is compacted. Generous headroom
+/// under Claude's ~200k window so a long autonomous job stays token-efficient
+/// and never blows the context window, while keeping recent detail intact.
+const CONTEXT_BUDGET_TOKENS: usize = 100_000;
+
+/// Messages always kept verbatim at the head: the two system prompts + the
+/// original task (the agent must never lose sight of what it was asked to do).
+const HEAD_KEEP: usize = 3;
+
+/// Most-recent messages always kept verbatim at the tail.
+const TAIL_KEEP: usize = 6;
+
+/// Bound the running message history so a long job stays token-efficient.
+///
+/// Strategy: keep the system prompts + task (head) and the most recent
+/// exchanges (tail) verbatim; replace the *content* of older tool-RESULT
+/// messages (the big file/command dumps — role `"user"`) with a short stub once
+/// the total is over `budget_tokens`. The model keeps its own reasoning (every
+/// `assistant` turn is untouched) and can cheaply re-read a file if it truly
+/// needs it again — so we shed the expensive raw bytes without losing the plot.
+/// Idempotent: re-stubbing an already-stubbed message is a no-op.
+fn compact_context(messages: &mut [ChatMessage], budget_tokens: usize) {
+    if messages.len() <= HEAD_KEEP + TAIL_KEEP {
+        return;
+    }
+    let total: usize = messages
+        .iter()
+        .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
+        .sum();
+    if total <= budget_tokens {
+        return;
+    }
+
+    const STUB: &str =
+        "[earlier tool output compacted to save context — re-read the file if you need it again]";
+    let cut_end = messages.len() - TAIL_KEEP;
+    for msg in &mut messages[HEAD_KEEP..cut_end] {
+        // Only shrink big tool-result messages (role "user"); leave the model's
+        // own assistant turns intact so its reasoning trail is preserved.
+        if msg.role == "user" && msg.content.len() > STUB.len() + 100 {
+            msg.content = STUB.to_string();
+        }
+    }
+}
+
 /// The result of a headless agent run.
 #[derive(Debug, Clone)]
 pub struct HeadlessOutcome {
@@ -113,6 +158,10 @@ pub async fn run_headless_agent(
     let mut hit_max_iterations = false;
 
     loop {
+        // Keep the history within budget before each model call, so a long job
+        // stays efficient and never overflows the context window.
+        compact_context(&mut messages, CONTEXT_BUDGET_TOKENS);
+
         let response = provider.chat(&messages, model).await?;
         messages.push(ChatMessage::assistant(&response));
         final_response = response.clone();
