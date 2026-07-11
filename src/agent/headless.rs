@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::agent::pipeline::ToolPolicy;
 use crate::agent::tools::{ToolResult, execute_tool, parse_tool_calls, tools_system_prompt};
 use crate::ai::provider::{AiProvider, ChatMessage};
 
@@ -132,11 +133,8 @@ fn format_results(results: &[ToolResult]) -> String {
     out
 }
 
-/// Run the agent loop to completion for `task`, returning what happened.
-///
-/// The loop: ask the model → parse `<tool_call>`s → if none, we're done →
-/// otherwise execute each (mutating tools run on the blocking pool) → feed the
-/// results back → repeat, up to `max_iterations`.
+/// Run the agent loop to completion for `task` with full tool access — the
+/// normal single-agent path used by the worker.
 pub async fn run_headless_agent(
     provider: &Arc<dyn AiProvider>,
     model: &str,
@@ -144,8 +142,37 @@ pub async fn run_headless_agent(
     max_iterations: usize,
     command_timeout_secs: u64,
 ) -> anyhow::Result<HeadlessOutcome> {
+    run_role(
+        provider,
+        model,
+        AGENT_SYSTEM,
+        ToolPolicy::Full,
+        task,
+        max_iterations,
+        command_timeout_secs,
+    )
+    .await
+}
+
+/// Core agent loop, parameterized by the role's `system_prompt` and its
+/// `policy`. Under [`ToolPolicy::ReadOnly`] any write/command tool is blocked
+/// (returned as a failed result) so planner/reviewer roles can inspect but not
+/// mutate — mirroring the interactive pipeline's tool-layer enforcement.
+///
+/// The loop: ask the model → parse `<tool_call>`s → if none, we're done →
+/// otherwise execute each (mutating tools run on the blocking pool) → feed the
+/// results back → repeat, up to `max_iterations`.
+async fn run_role(
+    provider: &Arc<dyn AiProvider>,
+    model: &str,
+    system_prompt: &str,
+    policy: ToolPolicy,
+    task: &str,
+    max_iterations: usize,
+    command_timeout_secs: u64,
+) -> anyhow::Result<HeadlessOutcome> {
     let mut messages = vec![
-        ChatMessage::system(AGENT_SYSTEM),
+        ChatMessage::system(system_prompt),
         ChatMessage::system(tools_system_prompt()),
         ChatMessage::user(task),
     ];
@@ -182,18 +209,30 @@ pub async fn run_headless_agent(
 
         let mut results = Vec::with_capacity(tool_calls.len());
         for call in &tool_calls {
-            if WRITE_TOOLS.contains(&call.tool.as_str()) {
-                edited = true;
-            }
-            let call = call.clone();
-            let result =
+            let is_write = WRITE_TOOLS.contains(&call.tool.as_str());
+            let result = if is_write && policy == ToolPolicy::ReadOnly {
+                ToolResult {
+                    tool: call.tool.clone(),
+                    success: false,
+                    output: format!(
+                        "Blocked: `{}` is not permitted for a read-only role. Use read_file, \
+                         read_lines, search_code, list_files or find_files and report findings.",
+                        call.tool
+                    ),
+                }
+            } else {
+                if is_write {
+                    edited = true;
+                }
+                let call = call.clone();
                 tokio::task::spawn_blocking(move || execute_tool(&call, command_timeout_secs))
                     .await
                     .unwrap_or_else(|e| ToolResult {
                         tool: "<panicked>".into(),
                         success: false,
                         output: format!("tool task panicked: {e}"),
-                    });
+                    })
+            };
             results.push(result);
         }
 
@@ -211,6 +250,137 @@ pub async fn run_headless_agent(
         final_response,
         hit_max_iterations,
     })
+}
+
+// ── Multi-agent workflow (planner → coder → reviewer) ────────────────────────
+
+const PLANNER_SYSTEM: &str = "You are the PLANNER in a plan → code → review pipeline. Explore the \
+codebase with READ-ONLY tools and produce a concise, numbered implementation plan grounded in the \
+ACTUAL code and its conventions: which files to add or change, and how. You CANNOT write code or \
+run commands — planning only. Be efficient: read only what you need to plan well. End your reply \
+with the final plan as a numbered list.";
+
+const REVIEWER_SYSTEM: &str = "You are the REVIEWER in a plan → code → review pipeline. Using \
+READ-ONLY tools, inspect the code that was just written and judge whether it correctly and cleanly \
+implements the task and matches the project's conventions. You CANNOT write or run commands. Call \
+out concrete problems if there are any. End your reply with EXACTLY one final line: \
+`VERDICT: APPROVED` or `VERDICT: NEEDS FIXES: <short reason>`.";
+
+/// Outcome of a multi-agent workflow run.
+#[derive(Debug, Clone)]
+pub struct WorkflowOutcome {
+    /// Whether the coder edited files.
+    pub edited: bool,
+    /// Total coder (+ fix) iterations.
+    pub coder_iterations: usize,
+    /// The planner's numbered plan.
+    pub plan: String,
+    /// The reviewer's verdict text.
+    pub review: String,
+    /// Whether any coding phase hit the iteration cap.
+    pub hit_max_iterations: bool,
+}
+
+/// Run a **planner → coder → reviewer** workflow for `task`, the headless
+/// equivalent of the interactive `/workflow` pipeline. The planner (read-only)
+/// grounds a plan in the real code; the coder (full tools) implements it; the
+/// reviewer (read-only) judges the result and, if it flags fixes, the coder
+/// gets one corrective round. Returns the combined outcome.
+pub async fn run_workflow(
+    provider: &Arc<dyn AiProvider>,
+    model: &str,
+    task: &str,
+    max_iterations: usize,
+    command_timeout_secs: u64,
+) -> anyhow::Result<WorkflowOutcome> {
+    // 1. Plan — read-only.
+    let planner = run_role(
+        provider,
+        model,
+        PLANNER_SYSTEM,
+        ToolPolicy::ReadOnly,
+        task,
+        max_iterations,
+        command_timeout_secs,
+    )
+    .await?;
+    let plan = planner.final_response.clone();
+    tracing::info!(
+        "workflow: plan ready after {} planning iteration(s)",
+        planner.iterations
+    );
+
+    // 2. Code — full tools, guided by the plan.
+    let coder_task =
+        format!("{task}\n\n## Approved implementation plan\n{plan}\n\nImplement this plan now.");
+    let mut coder = run_role(
+        provider,
+        model,
+        AGENT_SYSTEM,
+        ToolPolicy::Full,
+        &coder_task,
+        max_iterations,
+        command_timeout_secs,
+    )
+    .await?;
+
+    // 3. Review — read-only.
+    let review_task = format!(
+        "The task was:\n{task}\n\nThe plan was:\n{plan}\n\nReview the code that now exists in the \
+         repository for correctness, quality and conventions."
+    );
+    let reviewer = run_role(
+        provider,
+        model,
+        REVIEWER_SYSTEM,
+        ToolPolicy::ReadOnly,
+        &review_task,
+        max_iterations,
+        command_timeout_secs,
+    )
+    .await?;
+    let review = reviewer.final_response.clone();
+    tracing::info!("workflow: review done — {}", first_review_line(&review));
+
+    // 4. One corrective round if the reviewer flagged fixes.
+    if review.to_uppercase().contains("NEEDS FIXES") {
+        tracing::info!("workflow: reviewer requested fixes; running one coder correction round");
+        let fix_task = format!(
+            "A reviewer flagged issues with your implementation:\n\n{review}\n\nFix them. The \
+             original task was: {task}"
+        );
+        let fixo = run_role(
+            provider,
+            model,
+            AGENT_SYSTEM,
+            ToolPolicy::Full,
+            &fix_task,
+            max_iterations,
+            command_timeout_secs,
+        )
+        .await?;
+        coder.edited = coder.edited || fixo.edited;
+        coder.iterations += fixo.iterations;
+        coder.hit_max_iterations = coder.hit_max_iterations || fixo.hit_max_iterations;
+    }
+
+    Ok(WorkflowOutcome {
+        edited: coder.edited,
+        coder_iterations: coder.iterations,
+        plan,
+        review,
+        hit_max_iterations: coder.hit_max_iterations,
+    })
+}
+
+/// The reviewer's `VERDICT:` line (or a short prefix) for logging.
+fn first_review_line(review: &str) -> String {
+    review
+        .lines()
+        .rev()
+        .find(|l| l.to_uppercase().contains("VERDICT"))
+        .map(|l| l.trim().to_string())
+        .unwrap_or_else(|| crate::agent::context::smart_truncate(review.trim(), 80))
 }
 
 #[cfg(test)]

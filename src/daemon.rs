@@ -102,15 +102,22 @@ pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> Str
 
     match cmd {
         "PING" => "PONG".to_string(),
-        "SUBMIT" => {
+        "SUBMIT" | "SUBMITWF" => {
             let repo = parts.next().unwrap_or("").trim();
             let prompt = parts.next().unwrap_or("").trim();
             if repo.is_empty() || prompt.is_empty() {
-                return "ERR usage: SUBMIT <repo>\\t<prompt>".to_string();
+                return format!("ERR usage: {cmd} <repo>\\t<prompt>");
             }
-            match queue.enqueue(repo, prompt) {
+            let is_workflow = cmd == "SUBMITWF";
+            let queued = if is_workflow {
+                queue.enqueue_workflow(repo, prompt)
+            } else {
+                queue.enqueue(repo, prompt)
+            };
+            match queued {
                 Ok(job) => format!(
-                    "OK queued job {} on branch {}",
+                    "OK queued{} job {} on branch {}",
+                    if is_workflow { " workflow" } else { "" },
                     job.id,
                     job.branch.as_deref().unwrap_or("-")
                 ),
@@ -159,9 +166,14 @@ pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> Str
             match queue.get(id) {
                 Ok(Some(job)) => {
                     let mut out = format!(
-                        "job {}\n  status:  {}\n  repo:    {}\n  branch:  {}\n  context: {}\n",
+                        "job {}\n  status:  {}\n  mode:    {}\n  repo:    {}\n  branch:  {}\n  context: {}\n",
                         job.id,
                         job.status.label(),
+                        if job.workflow {
+                            "workflow (planner → coder → reviewer)"
+                        } else {
+                            "single agent"
+                        },
                         job.repo,
                         job.branch.as_deref().unwrap_or("-"),
                         if job.has_context {
@@ -246,6 +258,25 @@ mod tests {
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].repo, "/srv/repo");
         assert_eq!(jobs[0].prompt, "add rate limiting");
+    }
+
+    #[test]
+    fn process_submitwf_queues_a_workflow_job() {
+        let (_d, q) = temp_queue();
+        let reply = process_command("SUBMITWF\t/srv/repo\tbuild a feature", &q);
+        assert!(reply.contains("workflow"), "got: {reply}");
+        let jobs = q.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].workflow, "job should be flagged as a workflow");
+        // A plain SUBMIT stays single-agent.
+        process_command("SUBMIT\t/r\tplain", &q);
+        let plain = q
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|j| j.prompt == "plain")
+            .unwrap();
+        assert!(!plain.workflow);
     }
 
     #[test]

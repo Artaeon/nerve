@@ -162,11 +162,22 @@ async fn run_in_repo(
     timeout: u64,
     config: &crate::config::Config,
     repo: &Path,
-    _job: &Job,
+    job: &Job,
 ) -> anyhow::Result<(crate::agent::headless::HeadlessOutcome, String)> {
-    let mut outcome =
-        crate::agent::headless::run_headless_agent(provider, model, task, MAX_ITER, timeout)
-            .await?;
+    // Multi-agent workflow (planner → coder → reviewer) when requested, else a
+    // single agent. The verify gate below applies to both.
+    let mut outcome = if job.workflow {
+        let wf =
+            crate::agent::headless::run_workflow(provider, model, task, MAX_ITER, timeout).await?;
+        crate::agent::headless::HeadlessOutcome {
+            edited: wf.edited,
+            iterations: wf.coder_iterations,
+            final_response: format!("## Plan\n{}\n\n## Review\n{}", wf.plan, wf.review),
+            hit_max_iterations: wf.hit_max_iterations,
+        }
+    } else {
+        crate::agent::headless::run_headless_agent(provider, model, task, MAX_ITER, timeout).await?
+    };
 
     if !outcome.edited || !config.auto_verify {
         return Ok((outcome, "not run".to_string()));
@@ -379,6 +390,7 @@ mod tests {
             status: crate::queue::JobStatus::Queued,
             branch: None,
             has_context,
+            workflow: false,
             created_at: 0,
             started_at: None,
             finished_at: None,

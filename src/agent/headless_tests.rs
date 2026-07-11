@@ -131,6 +131,64 @@ async fn propagates_provider_error() {
     assert!(err.to_string().contains("mock provider failure"));
 }
 
+#[tokio::test]
+async fn read_only_role_blocks_write_tools() {
+    // A read-only role that tries to write must be blocked — no edit happens.
+    let provider = MockProvider::scripted(&[
+        "<tool_call>tool: write_file\npath: nope.txt\ncontent: x</tool_call>",
+        "I was blocked from writing. Done.",
+    ]);
+    let out = run_role(
+        &provider,
+        "m",
+        "sys",
+        ToolPolicy::ReadOnly,
+        "look only",
+        25,
+        5,
+    )
+    .await
+    .unwrap();
+    assert!(!out.edited, "read-only role must never edit");
+    assert_eq!(out.iterations, 1);
+}
+
+#[tokio::test]
+async fn workflow_runs_planner_then_coder_then_reviewer() {
+    // planner (no tools → plan text) → coder (run_command → edited) → reviewer (verdict).
+    let provider = MockProvider::scripted(&[
+        "1. Add the file\n2. Wire it up", // planner plan
+        "<tool_call>tool: run_command\ncommand: echo wf-coder</tool_call>", // coder acts
+        "Implemented the plan.",          // coder done
+        "Looks correct.\nVERDICT: APPROVED", // reviewer
+    ]);
+    let wf = run_workflow(&provider, "m", "build a thing", 25, 5)
+        .await
+        .unwrap();
+    assert!(wf.edited, "coder should have edited (run_command)");
+    assert!(
+        wf.plan.contains("Add the file"),
+        "plan captured: {}",
+        wf.plan
+    );
+    assert!(
+        wf.review.contains("APPROVED"),
+        "review captured: {}",
+        wf.review
+    );
+    assert!(!wf.hit_max_iterations);
+}
+
+#[test]
+fn first_review_line_extracts_the_verdict() {
+    assert_eq!(
+        first_review_line("some notes\nVERDICT: NEEDS FIXES: missing test"),
+        "VERDICT: NEEDS FIXES: missing test"
+    );
+    // No verdict line → a short prefix, not empty.
+    assert!(!first_review_line("just some prose here").is_empty());
+}
+
 #[test]
 fn format_results_marks_success_and_failure() {
     let results = vec![

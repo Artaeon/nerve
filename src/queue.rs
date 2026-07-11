@@ -70,6 +70,10 @@ pub struct Job {
     /// jobs written before context bundles existed.
     #[serde(default)]
     pub has_context: bool,
+    /// Run this job through the multi-agent workflow (planner → coder →
+    /// reviewer) instead of a single agent. Defaulted for backward compat.
+    #[serde(default)]
+    pub workflow: bool,
     /// Unix seconds when the job was created.
     pub created_at: u64,
     /// Unix seconds when the worker started it.
@@ -122,8 +126,17 @@ impl Queue {
         self.root.join(format!("{id}.context.json"))
     }
 
-    /// Add a new job in the `Queued` state and persist it.
+    /// Add a new single-agent job in the `Queued` state and persist it.
     pub fn enqueue(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
+        self.enqueue_inner(repo, prompt, false)
+    }
+
+    /// Add a new job that runs through the multi-agent workflow.
+    pub fn enqueue_workflow(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
+        self.enqueue_inner(repo, prompt, true)
+    }
+
+    fn enqueue_inner(&self, repo: &str, prompt: &str, workflow: bool) -> anyhow::Result<Job> {
         std::fs::create_dir_all(&self.root)?;
         // uuid v4 is collision-free; 8 hex chars is plenty to disambiguate and
         // stays readable in listings and branch names.
@@ -135,6 +148,7 @@ impl Queue {
             prompt: prompt.to_string(),
             status: JobStatus::Queued,
             has_context: false,
+            workflow,
             created_at: now_secs(),
             started_at: None,
             finished_at: None,

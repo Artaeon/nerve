@@ -134,6 +134,11 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     repo_path: Option<String>,
 
+    /// With --submit: run the job through the multi-agent workflow
+    /// (planner → coder → reviewer) instead of a single agent.
+    #[arg(long)]
+    workflow: bool,
+
     /// List jobs on the running server (Unix only)
     #[arg(long)]
     jobs: bool,
@@ -223,7 +228,8 @@ async fn main() -> anyhow::Result<()> {
                     .to_string_lossy()
                     .to_string(),
             };
-            let response = send_to_server(&format!("SUBMIT\t{repo}\t{prompt}")).await?;
+            let verb = if cli.workflow { "SUBMITWF" } else { "SUBMIT" };
+            let response = send_to_server(&format!("{verb}\t{repo}\t{prompt}")).await?;
             println!("{response}");
             // Optionally carry the full conversation context so the server
             // resumes exactly where the client left off. The job id is the
