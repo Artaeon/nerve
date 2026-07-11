@@ -204,13 +204,15 @@ pub fn sync_and_submit(
     host: &str,
     local_repo: &std::path::Path,
     prompt: &str,
+    workflow: bool,
 ) -> anyhow::Result<String> {
     let remote_path = sync_repo(host, local_repo)?;
     // Shell-escape so a multi-word prompt survives the remote shell intact.
     let command = format!(
-        "nerve --submit {} --repo-path {}",
+        "nerve --submit {} --repo-path {}{}",
         crate::shell::shell_escape(prompt),
         crate::shell::shell_escape(&remote_path),
+        if workflow { " --workflow" } else { "" },
     );
     let reply = run_ssh_shell(host, &command)?;
     Ok(format!(

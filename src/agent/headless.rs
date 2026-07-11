@@ -255,16 +255,18 @@ async fn run_role(
 // ── Multi-agent workflow (planner → coder → reviewer) ────────────────────────
 
 const PLANNER_SYSTEM: &str = "You are the PLANNER in a plan → code → review pipeline. Explore the \
-codebase with READ-ONLY tools and produce a concise, numbered implementation plan grounded in the \
-ACTUAL code and its conventions: which files to add or change, and how. You CANNOT write code or \
-run commands — planning only. Be efficient: read only what you need to plan well. End your reply \
-with the final plan as a numbered list.";
+codebase with READ-ONLY file tools (read_file, read_lines, search_code, list_files, find_files) \
+and produce a concise, numbered implementation plan grounded in the ACTUAL code and its \
+conventions: which files to add or change, and how. The write_file/edit_file/run_command tools are \
+DISABLED for you and will be rejected — planning only, do not attempt them. Be efficient: read only \
+what you need to plan well. End your reply with the final plan as a numbered list.";
 
-const REVIEWER_SYSTEM: &str = "You are the REVIEWER in a plan → code → review pipeline. Using \
-READ-ONLY tools, inspect the code that was just written and judge whether it correctly and cleanly \
-implements the task and matches the project's conventions. You CANNOT write or run commands. Call \
-out concrete problems if there are any. End your reply with EXACTLY one final line: \
-`VERDICT: APPROVED` or `VERDICT: NEEDS FIXES: <short reason>`.";
+const REVIEWER_SYSTEM: &str = "You are the REVIEWER in a plan → code → review pipeline. You are given \
+the DIFF of what was just implemented; judge whether it correctly and cleanly implements the task \
+and matches the project's conventions. You may use READ-ONLY file tools (read_file, read_lines, \
+search_code, list_files, find_files) for extra context. The run_command tool is DISABLED for you \
+and will be rejected — do not attempt it. Call out concrete problems if there are any. End your \
+reply with EXACTLY one final line: `VERDICT: APPROVED` or `VERDICT: NEEDS FIXES: <short reason>`.";
 
 /// Outcome of a multi-agent workflow run.
 #[derive(Debug, Clone)]
@@ -324,11 +326,19 @@ pub async fn run_workflow(
     )
     .await?;
 
-    // 3. Review — read-only.
-    let review_task = format!(
-        "The task was:\n{task}\n\nThe plan was:\n{plan}\n\nReview the code that now exists in the \
-         repository for correctness, quality and conventions."
-    );
+    // 3. Review — read-only, given the actual diff of the coder's work so it
+    // reviews what changed rather than having to reconstruct it.
+    let review_task = match working_diff() {
+        Some(diff) => format!(
+            "The task was:\n{task}\n\nThe plan was:\n{plan}\n\nHere is the diff of what was just \
+             implemented:\n\n```diff\n{diff}\n```\n\nReview it for correctness, quality and \
+             conventions; read files for extra context if needed."
+        ),
+        None => format!(
+            "The task was:\n{task}\n\nThe plan was:\n{plan}\n\nReview the code that now exists in \
+             the repository for correctness, quality and conventions."
+        ),
+    };
     let reviewer = run_role(
         provider,
         model,
@@ -371,6 +381,24 @@ pub async fn run_workflow(
         review,
         hit_max_iterations: coder.hit_max_iterations,
     })
+}
+
+/// The uncommitted diff in the current directory (the coder's changes, which
+/// the worker commits *after* the workflow), truncated for the reviewer's
+/// context. Best-effort: `None` if git isn't available or there's no diff.
+/// Assumes CWD is the repo (the worker sets it before running the workflow).
+fn working_diff() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-c", "safe.directory=*", "diff", "HEAD"])
+        .output()
+        .ok()?;
+    let diff = String::from_utf8_lossy(&output.stdout);
+    let diff = diff.trim();
+    if diff.is_empty() {
+        None
+    } else {
+        Some(crate::agent::context::smart_truncate(diff, 12_000))
+    }
 }
 
 /// The reviewer's `VERDICT:` line (or a short prefix) for logging.

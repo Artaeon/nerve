@@ -42,17 +42,24 @@ pub fn handle(app: &mut App, args: &str) -> bool {
 
 /// Sync the current project to the connected server and queue a job for it —
 /// the "schedule it on the server" path. Blocking (rsync + ssh), user-invoked.
-fn submit_to_server(app: &mut App, prompt: &str) {
+///
+/// A leading `--workflow` runs the multi-agent pipeline (planner → coder →
+/// reviewer) instead of a single agent: `/server submit --workflow <prompt>`.
+fn submit_to_server(app: &mut App, args: &str) {
     let Some(host) = app.remote_server.clone() else {
         app.add_assistant_message(
             "No remote server connected. Use `/server <ssh-host>` first, then \
-             `/server submit <prompt>`."
+             `/server submit [--workflow] <prompt>`."
                 .to_string(),
         );
         return;
     };
+    let (workflow, prompt) = match args.strip_prefix("--workflow") {
+        Some(rest) => (true, rest.trim()),
+        None => (false, args),
+    };
     if prompt.is_empty() {
-        app.set_status("Usage: /server submit <prompt>");
+        app.set_status("Usage: /server submit [--workflow] <prompt>");
         return;
     }
     let repo = match std::env::current_dir() {
@@ -62,7 +69,7 @@ fn submit_to_server(app: &mut App, prompt: &str) {
             return;
         }
     };
-    match crate::remote::sync_and_submit(&host, &repo, prompt) {
+    match crate::remote::sync_and_submit(&host, &repo, prompt, workflow) {
         Ok(msg) => {
             app.add_assistant_message(msg);
             refresh(app);
