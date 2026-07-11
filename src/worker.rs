@@ -101,18 +101,15 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
 
     // Tools operate on the process CWD. The worker is sequential, so switching
     // into the repo for the duration of the job is safe; restore afterwards.
+    // The agent run AND the verify → fix loop both need CWD == repo, so keep it
+    // set across the whole in-repo section and restore once at the end.
     let prev_cwd = std::env::current_dir().ok();
     std::env::set_current_dir(repo)?;
-
-    let outcome =
-        crate::agent::headless::run_headless_agent(&provider, &model, &task, MAX_ITER, timeout)
-            .await;
-
+    let in_repo = run_in_repo(&provider, &model, &task, timeout, &config, repo, job).await;
     if let Some(prev) = prev_cwd {
         let _ = std::env::set_current_dir(prev);
     }
-
-    let outcome = outcome?;
+    let (outcome, verify_summary) = in_repo?;
 
     // Commit ONLY the paths this job newly touched, on its own branch, for
     // review — leaving any pre-existing unrelated changes untouched.
@@ -127,10 +124,20 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
         }
     }
 
+    // Record the job in the project's memory (`.nerve/activity.jsonl`) so the
+    // work is journaled the same way the interactive agent journals its turns —
+    // nothing is forgotten. Best-effort.
+    let _ = crate::project::ProjectStore::for_workspace(repo).record_activity(
+        &job.prompt,
+        outcome.edited,
+        &verify_summary,
+    );
+
     tracing::info!(
-        "job {} finished in {} iteration(s): {}",
+        "job {} finished in {} iteration(s) [verify: {}]: {}",
         job.id,
         outcome.iterations,
+        verify_summary,
         first_line(&outcome.final_response)
     );
     if outcome.hit_max_iterations {
@@ -141,6 +148,85 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Run the agent for `task`, then — if it edited files and auto-verify is on —
+/// run the project's verify command and feed any failure back to the agent to
+/// self-correct (up to `MAX_VERIFY_ROUNDS`), exactly like the interactive gate.
+/// Returns the final outcome plus a human-readable verify summary for the log
+/// and the activity journal. Assumes CWD is already the repo.
+async fn run_in_repo(
+    provider: &Arc<dyn AiProvider>,
+    model: &str,
+    task: &str,
+    timeout: u64,
+    config: &crate::config::Config,
+    repo: &Path,
+    _job: &Job,
+) -> anyhow::Result<(crate::agent::headless::HeadlessOutcome, String)> {
+    let mut outcome =
+        crate::agent::headless::run_headless_agent(provider, model, task, MAX_ITER, timeout)
+            .await?;
+
+    if !outcome.edited || !config.auto_verify {
+        return Ok((outcome, "not run".to_string()));
+    }
+    let Some(cmd) = config
+        .verify_command
+        .clone()
+        .or_else(|| crate::verify::detect_verify_command(repo))
+    else {
+        return Ok((outcome, "no verify command".to_string()));
+    };
+
+    let mut rounds: u8 = 0;
+    loop {
+        let (ok, output) = run_verify(repo, &cmd);
+        if ok {
+            let note = if rounds == 0 {
+                format!("{cmd} → passed")
+            } else {
+                format!("{cmd} → passed after {rounds} fix round(s)")
+            };
+            return Ok((outcome, note));
+        }
+        rounds += 1;
+        if rounds > crate::verify::MAX_VERIFY_ROUNDS {
+            return Ok((
+                outcome,
+                format!("{cmd} → STILL FAILING after {} rounds", rounds - 1),
+            ));
+        }
+        tracing::info!("job verify failed (round {rounds}); asking the agent to fix");
+        let fix_task = format!(
+            "The verification command `{cmd}` failed after your changes:\n\n```\n{}\n```\n\n\
+             Fix the code so this check passes. Do not revert unrelated work.",
+            crate::agent::context::smart_truncate(output.trim(), 4000)
+        );
+        let fixed = crate::agent::headless::run_headless_agent(
+            provider, model, &fix_task, MAX_ITER, timeout,
+        )
+        .await?;
+        outcome.edited = outcome.edited || fixed.edited;
+    }
+}
+
+/// Run a verify command (a shell string like `cargo check` / `npm run -s lint`)
+/// in `repo`, returning (success, combined stdout+stderr).
+fn run_verify(repo: &Path, cmd: &str) -> (bool, String) {
+    match std::process::Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .current_dir(repo)
+        .output()
+    {
+        Ok(o) => {
+            let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
+            combined.push_str(&String::from_utf8_lossy(&o.stderr));
+            (o.status.success(), combined)
+        }
+        Err(e) => (false, format!("could not run verify command: {e}")),
+    }
 }
 
 /// Iteration cap for an unattended run.
@@ -248,6 +334,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A fresh temp dir is not a git work tree.
         assert!(git(dir.path(), &["rev-parse", "--is-inside-work-tree"]).is_err());
+    }
+
+    #[test]
+    fn run_verify_reports_success_and_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ok, _) = run_verify(dir.path(), "exit 0");
+        assert!(ok);
+        let (ok, out) = run_verify(dir.path(), "echo boom >&2; exit 1");
+        assert!(!ok);
+        assert!(out.contains("boom"));
     }
 
     #[test]
