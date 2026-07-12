@@ -54,6 +54,13 @@ pub struct ChangeRecord {
 }
 
 /// A single auto-captured record of what a turn worked on.
+///
+/// The first four fields are the mechanical record (that a job ran and its
+/// verify status). The last three are the *semantic* record — the agent's own
+/// account of what it changed and why, the concrete files it touched, and the
+/// effort it spent — so the journal answers "what happened here and why", not
+/// just "a job ran". All three are `#[serde(default)]` so records written by
+/// older versions (which lacked them) still deserialize cleanly.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityRecord {
     pub timestamp: String,
@@ -61,6 +68,16 @@ pub struct ActivityRecord {
     pub edited: bool,
     /// "passed" | "failed" | "none".
     pub verify: String,
+    /// The agent's own final summary: what it changed and why. Empty for older
+    /// records or turns that produced no summary.
+    #[serde(default)]
+    pub summary: String,
+    /// The concrete files the turn modified (repo-relative). Empty when unknown.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Tool-executing iterations the turn spent (0 when unknown).
+    #[serde(default)]
+    pub iterations: usize,
 }
 
 /// A backlog entry in the improvements directory.
@@ -314,8 +331,30 @@ impl ProjectStore {
         self.dir.join("activity.jsonl")
     }
 
-    /// Append an auto-captured record of what a turn worked on.
+    /// Append a *mechanical* activity record (no semantic summary/files). Thin
+    /// wrapper over [`record_activity_full`] for callers that only know request +
+    /// edited + verify (e.g. the interactive turn journaler).
     pub fn record_activity(&self, request: &str, edited: bool, verify: &str) -> anyhow::Result<()> {
+        self.record_activity_full(request, edited, verify, "", &[], 0)
+    }
+
+    /// Append a *semantic* activity record: alongside the mechanical fields, it
+    /// captures the agent's own summary (what changed and why), the files it
+    /// touched, and the iterations it spent. This is what makes the journal
+    /// answer "what happened here", so a later run — or a human — can pick up
+    /// the thread without re-deriving it from a diff.
+    ///
+    /// The summary is length-bounded so a verbose model reply (or a full
+    /// workflow plan+review) can't bloat the journal.
+    pub fn record_activity_full(
+        &self,
+        request: &str,
+        edited: bool,
+        verify: &str,
+        summary: &str,
+        files: &[String],
+        iterations: usize,
+    ) -> anyhow::Result<()> {
         let request = sanitize_line(request);
         self.ensure_dir()?;
         let record = ActivityRecord {
@@ -323,6 +362,9 @@ impl ProjectStore {
             request,
             edited,
             verify: verify.to_string(),
+            summary: crate::agent::context::smart_truncate(summary.trim(), 800),
+            files: files.to_vec(),
+            iterations,
         };
         let line = serde_json::to_string(&record)?;
         let path = self.activity_path();
@@ -617,6 +659,66 @@ mod tests {
         s.record_activity("line one\nline two", false, "none")
             .unwrap();
         assert_eq!(s.recent_activity(10)[0].request, "line one line two");
+    }
+
+    #[test]
+    fn activity_full_captures_semantic_fields() {
+        let (_d, s) = store();
+        s.record_activity_full(
+            "add ICS export",
+            true,
+            "npm run -s lint → passed",
+            "Added lib/booking/ics.ts implementing RFC 5545 with 75-octet folding.",
+            &[
+                "lib/booking/ics.ts".into(),
+                "lib/booking/ics.test.ts".into(),
+            ],
+            35,
+        )
+        .unwrap();
+        let rec = &s.recent_activity(1)[0];
+        assert_eq!(rec.request, "add ICS export");
+        assert!(rec.edited);
+        assert_eq!(rec.verify, "npm run -s lint → passed");
+        assert!(rec.summary.contains("RFC 5545"));
+        assert_eq!(
+            rec.files,
+            vec!["lib/booking/ics.ts", "lib/booking/ics.test.ts"]
+        );
+        assert_eq!(rec.iterations, 35);
+    }
+
+    #[test]
+    fn activity_full_bounds_a_long_summary() {
+        let (_d, s) = store();
+        let huge = "detail ".repeat(1000); // ~7000 chars
+        s.record_activity_full("t", true, "none", &huge, &[], 1)
+            .unwrap();
+        // The stored summary is length-bounded so a verbose reply can't bloat
+        // the journal, but is still non-empty.
+        let rec = &s.recent_activity(1)[0];
+        assert!(!rec.summary.is_empty());
+        assert!(
+            rec.summary.len() <= 820,
+            "summary not bounded: {}",
+            rec.summary.len()
+        );
+    }
+
+    #[test]
+    fn activity_old_records_without_semantic_fields_still_deserialize() {
+        // A record written by an older nerve (no summary/files/iterations) must
+        // still load — those fields default rather than failing the whole line.
+        let (_d, s) = store();
+        s.ensure_dir().unwrap();
+        let legacy = r#"{"timestamp":"2026-01-01T00:00:00Z","request":"old job","edited":true,"verify":"passed"}"#;
+        std::fs::write(s.activity_path(), format!("{legacy}\n")).unwrap();
+        let rec = &s.recent_activity(10)[0];
+        assert_eq!(rec.request, "old job");
+        assert!(rec.edited);
+        assert_eq!(rec.summary, "");
+        assert!(rec.files.is_empty());
+        assert_eq!(rec.iterations, 0);
     }
 
     #[test]

@@ -112,25 +112,33 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
     let (outcome, verify_summary) = in_repo?;
 
     // Commit ONLY the paths this job newly touched, on its own branch, for
-    // review — leaving any pre-existing unrelated changes untouched.
-    if outcome.edited && is_git {
-        let changed: Vec<String> = dirty_paths(repo).difference(&pre_dirty).cloned().collect();
-        if !changed.is_empty() {
-            let mut add = vec!["add", "--"];
-            add.extend(changed.iter().map(String::as_str));
-            let _ = git(repo, &add);
-            let msg = format!("nerve job {}: {}", job.id, first_line(&job.prompt));
-            let _ = git(repo, &["commit", "-m", &msg]);
-        }
+    // review — leaving any pre-existing unrelated changes untouched. The changed
+    // set is also journaled below, so compute it whenever the job edited.
+    let changed: Vec<String> = if outcome.edited && is_git {
+        dirty_paths(repo).difference(&pre_dirty).cloned().collect()
+    } else {
+        Vec::new()
+    };
+    if !changed.is_empty() {
+        let mut add = vec!["add", "--"];
+        add.extend(changed.iter().map(String::as_str));
+        let _ = git(repo, &add);
+        let msg = format!("nerve job {}: {}", job.id, first_line(&job.prompt));
+        let _ = git(repo, &["commit", "-m", &msg]);
     }
 
     // Record the job in the project's memory (`.nerve/activity.jsonl`) so the
     // work is journaled the same way the interactive agent journals its turns —
-    // nothing is forgotten. Best-effort.
-    let _ = crate::project::ProjectStore::for_workspace(repo).record_activity(
+    // nothing is forgotten. We journal the *semantic* record: the agent's own
+    // summary (what changed and why), the concrete files it touched, and the
+    // iterations spent — not just that a job ran. Best-effort.
+    let _ = crate::project::ProjectStore::for_workspace(repo).record_activity_full(
         &job.prompt,
         outcome.edited,
         &verify_summary,
+        &outcome.final_response,
+        &changed,
+        outcome.iterations,
     );
 
     tracing::info!(

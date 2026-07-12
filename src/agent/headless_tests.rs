@@ -140,9 +140,17 @@ async fn nudges_a_full_role_that_talks_instead_of_acting() {
         "<tool_call>tool: run_command\ncommand: echo did-it</tool_call>", // acts after nudge
         "Done.",
     ]);
-    let out = run_role(&provider, "m", "sys", ToolPolicy::Full, "do the task", 25, 5)
-        .await
-        .unwrap();
+    let out = run_role(
+        &provider,
+        "m",
+        "sys",
+        ToolPolicy::Full,
+        "do the task",
+        25,
+        5,
+    )
+    .await
+    .unwrap();
     assert!(out.edited, "the nudge should have driven the agent to act");
     assert_eq!(out.iterations, 1);
 }
@@ -151,9 +159,17 @@ async fn nudges_a_full_role_that_talks_instead_of_acting() {
 async fn read_only_role_finishes_with_prose_and_is_not_nudged() {
     // A planner/reviewer legitimately finishes with prose (no tools) — no nudge.
     let provider = MockProvider::scripted(&["Here is my plan:\n1. do x\n2. do y"]);
-    let out = run_role(&provider, "m", "sys", ToolPolicy::ReadOnly, "plan it", 25, 5)
-        .await
-        .unwrap();
+    let out = run_role(
+        &provider,
+        "m",
+        "sys",
+        ToolPolicy::ReadOnly,
+        "plan it",
+        25,
+        5,
+    )
+    .await
+    .unwrap();
     assert_eq!(out.iterations, 0);
     assert!(out.final_response.contains("plan"));
 }

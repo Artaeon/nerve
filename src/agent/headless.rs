@@ -209,7 +209,9 @@ async fn run_role(
             // them.
             if policy == ToolPolicy::Full && !edited && nudges < MAX_NUDGES {
                 nudges += 1;
-                tracing::info!("headless: replied without acting — nudging ({nudges}/{MAX_NUDGES})");
+                tracing::info!(
+                    "headless: replied without acting — nudging ({nudges}/{MAX_NUDGES})"
+                );
                 messages.push(ChatMessage::user(
                     "You have not used any tools or changed anything yet. If this task needs code \
                      changes, implement them NOW with write_file/edit_file/run_command — do not \

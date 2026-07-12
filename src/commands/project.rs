@@ -172,10 +172,22 @@ pub async fn handle(app: &mut App, text: &str, provider: &Arc<dyn AiProvider>) -
             for a in &activity {
                 let ts = format_change_timestamp(&a.timestamp);
                 let edited = if a.edited { "edited" } else { "no edits" };
+                let iters = if a.iterations > 0 {
+                    format!(", {} iters", a.iterations)
+                } else {
+                    String::new()
+                };
                 out.push_str(&format!(
-                    "- [{ts}] {} ({edited}, verify: {})\n",
+                    "- [{ts}] {} ({edited}, verify: {}{iters})\n",
                     a.request, a.verify
                 ));
+                // Semantic detail — the agent's own account + the files touched.
+                if !a.summary.is_empty() {
+                    out.push_str(&format!("  {}\n", a.summary.replace('\n', " ")));
+                }
+                if !a.files.is_empty() {
+                    out.push_str(&format!("  files: {}\n", a.files.join(", ")));
+                }
             }
             app.add_assistant_message(out);
             true

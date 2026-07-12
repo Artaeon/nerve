@@ -291,7 +291,16 @@ pub fn always_on_context(store: &ProjectStore, max_chars: usize) -> Option<Strin
             .rev()
             .map(|a| {
                 let edited = if a.edited { "yes" } else { "no" };
-                format!("- {} (edited: {edited})", a.request)
+                let mut line = format!("- {} (edited: {edited})", a.request);
+                // Prefer the semantic summary when present — it says what
+                // actually happened, not just what was asked.
+                if !a.summary.is_empty() {
+                    line.push_str(&format!("\n  → {}", first_sentence(&a.summary)));
+                }
+                if !a.files.is_empty() {
+                    line.push_str(&format!("\n  files: {}", a.files.join(", ")));
+                }
+                line
             })
             .collect::<Vec<_>>()
             .join("\n");
@@ -355,6 +364,24 @@ fn brief_headline(brief: &str, max_chars: usize) -> String {
         format!("{}…", head.trim_end())
     } else {
         cleaned
+    }
+}
+
+/// First sentence (or first line) of a summary, capped, for a one-line preview
+/// in the always-on activity list. Keeps the journal detail rich on disk while
+/// the header stays tiny.
+fn first_sentence(summary: &str) -> String {
+    let flat = summary.split_whitespace().collect::<Vec<_>>().join(" ");
+    let end = flat
+        .find(". ")
+        .map(|i| i + 1)
+        .unwrap_or_else(|| flat.len().min(160));
+    let s = flat[..end.min(flat.len())].trim_end();
+    if s.chars().count() > 160 {
+        let head: String = s.chars().take(160).collect();
+        format!("{}…", head.trim_end())
+    } else {
+        s.to_string()
     }
 }
 
