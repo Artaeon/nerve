@@ -377,6 +377,8 @@ Run `/help` inside Nerve for the complete list.
 ## Documentation
 
 - **[User Guide](docs/GUIDE.md)** -- comprehensive guide (2,200+ lines)
+- **[Feature inventory](docs/FEATURES.md)** -- every feature, grounded in the source
+- **[Test status](docs/TEST-STATUS.md)** -- honest record of what's verified vs. untested
 - **[Server & client (24/7)](SERVER.md)** -- run nerve on a server, schedule work from your laptop
 - **[Manifesto](MANIFESTO.md)** -- why Nerve exists
 - **[Changelog](CHANGELOG.md)** -- release history
