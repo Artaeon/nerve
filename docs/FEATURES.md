@@ -68,7 +68,7 @@ Retry/backoff in `ai/retry.rs`; health checks + friendly guidance in `provider_h
 ## 7. Project memory — the `.nerve/` directory (`src/project.rs`)
 
 All plain-text/JSONL, inspectable, atomic writes, one-line-sanitized (can't forge extra rows):
-`memory.md` (facts), `brief.md` (`/init`), `design.md` (principles/presets), `decisions.jsonl`, `journal.jsonl` (`{timestamp,tool,path,summary}`), `activity.jsonl` (`{request,edited,verify}` per turn + per worker job), `improvements.json`, `tasks.json`.
+`memory.md` (facts), `brief.md` (`/init`), `design.md` (principles/presets), `decisions.jsonl`, `journal.jsonl` (`{timestamp,tool,path,summary}`), `activity.jsonl` (**semantic** turn/job record: `{request, edited, verify, summary, files[], iterations}` — the agent's own account of *what changed and why*, the files it touched, and effort spent; `summary`/`files`/`iterations` are `#[serde(default)]` so older records still load), `improvements.json`, `tasks.json`.
 **Security:** `.nerve/` is a protected write target — a prompt-injected model can't poison memory via write/edit tools; only user commands + the inert `remember` tool write it.
 **Pull-based retrieval (`memory_recall.rs`):** memory is *retrieved, not force-fed* — `always_on_context` injects only a tiny header (project headline, open tasks, last-3 activity, count-only pointers); the `recall` tool searches on demand, so token cost scales with relevance, not memory size.
 

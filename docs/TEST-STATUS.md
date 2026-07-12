@@ -111,8 +111,16 @@ interactively this session:
   alone ~8 min / 18 read-only iterations) vs. ~2–4 min single-agent. Use
   `--workflow` for non-trivial features only. *(Lever: curb planner exploration;
   run planner/reviewer on a cheaper model.)*
-- **`.nerve/journal.jsonl` summaries are mechanical** ("replaced N-char with
-  M-char snippet") rather than semantic. Complete, but low-signal.
+- **`.nerve/journal.jsonl` (`record_change`) summaries are still mechanical**
+  ("replaced N-char with M-char snippet") rather than semantic — low-signal but
+  complete. *(Note: the separate `activity.jsonl` job/turn journal was upgraded
+  — see below — this line is only about the per-tool `journal.jsonl`.)*
+- ~~**`.nerve/activity.jsonl` records only that a job ran**~~ **FIXED (2026-07-12).**
+  Records now carry the agent's own summary (what changed & why), the concrete
+  files touched, and the iterations spent — the *semantic* record, not just
+  `{request, edited, verify}`. Old records still deserialize (`#[serde(default)]`).
+  `/activity` and the always-on recall header surface the summary + files.
+  Unit-tested (semantic round-trip, long-summary bound, legacy back-compat). ✅
 - **In-place `--submit` on a live working tree** switches your checked-out branch
   and (before the fix) could sweep unrelated WIP into a commit. Fixed to
   commit-only-what-changed; still: **run jobs against a dedicated server copy**,
