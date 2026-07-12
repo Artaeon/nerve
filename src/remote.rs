@@ -159,6 +159,13 @@ fn run_ssh_shell(host: &str, command: &str) -> anyhow::Result<String> {
 /// the server mirrors the client, and `--exclude`s the regenerable trees.
 fn rsync_args(local: &str, host: &str, remote: &str) -> Vec<String> {
     let mut args: Vec<String> = vec!["-az".into(), "--delete".into()];
+    // Preserve the server's OWN git state across re-syncs — never DELETE anything
+    // under `.git` (its `nerve/job-*` result branches + their commit objects),
+    // only add/update it from the client. Without this, `--delete` wipes the
+    // branches the worker committed previous jobs to, silently losing nerve's
+    // work on the next submit. (Trade-off: the server's `.git` only grows; a
+    // periodic `git gc` reclaims space.)
+    args.push("--filter=protect .git/**".into());
     for ex in SYNC_EXCLUDES {
         args.push(format!("--exclude={ex}"));
     }

@@ -104,6 +104,8 @@ fn rsync_args_exclude_build_artifacts_and_mirror() {
     let args = rsync_args("/home/me/proj", "nerve-server", "/root/nerve-repos/proj");
     assert_eq!(args[0], "-az");
     assert!(args.iter().any(|a| a == "--delete"));
+    // The server's .git is protected from deletion so job-result branches survive.
+    assert!(args.iter().any(|a| a == "--filter=protect .git/**"));
     assert!(args.iter().any(|a| a == "--exclude=node_modules"));
     assert!(args.iter().any(|a| a == "--exclude=target"));
     assert!(args.iter().any(|a| a == "--exclude=.next"));
