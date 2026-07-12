@@ -179,6 +179,23 @@ async fn workflow_runs_planner_then_coder_then_reviewer() {
     assert!(!wf.hit_max_iterations);
 }
 
+#[tokio::test]
+async fn workflow_runs_a_fix_round_when_reviewer_concludes_needs_fixes() {
+    let provider = MockProvider::scripted(&[
+        "1. plan",                                                      // planner
+        "<tool_call>tool: run_command\ncommand: echo code</tool_call>", // coder acts
+        "coded it",                                                     // coder done
+        "VERDICT: NEEDS FIXES: add a guard", // reviewer concludes (not cap)
+        "<tool_call>tool: run_command\ncommand: echo fix</tool_call>", // fix round acts
+        "fixed it",                          // fix done
+    ]);
+    let wf = run_workflow(&provider, "m", "task", 25, 5).await.unwrap();
+    // coder (1) + fix round (1) = 2 iterations, proving the fix round ran.
+    assert_eq!(wf.coder_iterations, 2, "fix round should have run");
+    assert!(wf.review.contains("NEEDS FIXES"));
+    assert!(wf.edited);
+}
+
 #[test]
 fn first_review_line_extracts_the_verdict() {
     assert_eq!(

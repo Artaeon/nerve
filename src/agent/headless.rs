@@ -352,8 +352,11 @@ pub async fn run_workflow(
     let review = reviewer.final_response.clone();
     tracing::info!("workflow: review done — {}", first_review_line(&review));
 
-    // 4. One corrective round if the reviewer flagged fixes.
-    if review.to_uppercase().contains("NEEDS FIXES") {
+    // 4. One corrective round — but ONLY if the reviewer actually reached a
+    // conclusion. A reviewer that ran out of iterations produces an unreliable
+    // "NEEDS FIXES" (it never finished inspecting); treating that as a real
+    // verdict just burns another coding round for nothing.
+    if !reviewer.hit_max_iterations && review.to_uppercase().contains("NEEDS FIXES") {
         tracing::info!("workflow: reviewer requested fixes; running one coder correction round");
         let fix_task = format!(
             "A reviewer flagged issues with your implementation:\n\n{review}\n\nFix them. The \
