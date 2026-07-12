@@ -49,6 +49,10 @@ const HEAD_KEEP: usize = 3;
 /// Most-recent messages always kept verbatim at the tail.
 const TAIL_KEEP: usize = 6;
 
+/// How many times to nudge a full-tool agent that replied with prose but made
+/// no changes, before accepting it as genuinely done.
+const MAX_NUDGES: usize = 2;
+
 /// Bound the running message history so a long job stays token-efficient.
 ///
 /// Strategy: keep the system prompts + task (head) and the most recent
@@ -179,6 +183,7 @@ async fn run_role(
 
     let mut iterations = 0usize;
     let mut edited = false;
+    let mut nudges = 0usize;
     // Assigned on every loop iteration before any break, so it is always set by
     // the time we read it after the loop.
     let mut final_response;
@@ -195,6 +200,23 @@ async fn run_role(
 
         let tool_calls = parse_tool_calls(&response);
         if tool_calls.is_empty() {
+            // A full-tool agent that replied with prose but changed nothing has
+            // usually just *described* the work (models sometimes plan first).
+            // Nudge it to actually act before accepting it as done — this is the
+            // difference between a job that builds the feature and one that
+            // "finishes in 0 iterations" having done nothing. Read-only roles
+            // (planner/reviewer) legitimately finish with prose, so never nudge
+            // them.
+            if policy == ToolPolicy::Full && !edited && nudges < MAX_NUDGES {
+                nudges += 1;
+                tracing::info!("headless: replied without acting — nudging ({nudges}/{MAX_NUDGES})");
+                messages.push(ChatMessage::user(
+                    "You have not used any tools or changed anything yet. If this task needs code \
+                     changes, implement them NOW with write_file/edit_file/run_command — do not \
+                     just describe them. If it genuinely needs no changes, say so briefly and stop.",
+                ));
+                continue;
+            }
             break; // no more tools requested → the agent is finished
         }
 
