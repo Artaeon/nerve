@@ -69,7 +69,8 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
 
     // Build the provider from the CURRENT on-disk config each run, so adding an
     // API key or authenticating the Claude CLI takes effect without a restart.
-    let config = crate::config::Config::load().unwrap_or_default();
+    let mut config = crate::config::Config::load().unwrap_or_default();
+    default_deterministic_sampling(&mut config);
     let provider = crate::provider_setup::create_provider(&config, None)
         .map_err(|e| anyhow::anyhow!("no AI provider configured on the server: {e}"))?;
     let provider: Arc<dyn AiProvider> = Arc::from(provider);
@@ -299,6 +300,18 @@ fn parse_status_path(line: &str) -> Option<String> {
     Some(path.trim_matches('"').to_string())
 }
 
+/// Unattended runs default to deterministic sampling (temperature 0) on
+/// providers that support it, so the same job produces the same result as
+/// closely as the model allows — a background worker exists for reproducibility,
+/// not creativity. An explicit operator-set temperature is always respected.
+/// (The `claude_code` CLI exposes no temperature knob, so this is a no-op there;
+/// its residual non-determinism is inherent and documented in DETERMINISM.md.)
+fn default_deterministic_sampling(config: &mut crate::config::Config) {
+    if config.temperature.is_none() {
+        config.temperature = Some(0.0);
+    }
+}
+
 /// First line of a prompt, truncated, for a commit subject.
 fn first_line(prompt: &str) -> String {
     let line = prompt.lines().next().unwrap_or("").trim();
@@ -346,6 +359,25 @@ mod tests {
         assert_eq!(first_line("do a thing\nand then more"), "do a thing");
         let long = "x".repeat(200);
         assert!(first_line(&long).len() < 200);
+    }
+
+    #[test]
+    fn deterministic_sampling_defaults_temperature_but_respects_explicit() {
+        // Unset temperature → defaults to 0 for reproducible unattended runs.
+        let mut c = crate::config::Config {
+            temperature: None,
+            ..Default::default()
+        };
+        default_deterministic_sampling(&mut c);
+        assert_eq!(c.temperature, Some(0.0));
+
+        // An operator-set temperature is left untouched.
+        let mut c2 = crate::config::Config {
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        default_deterministic_sampling(&mut c2);
+        assert_eq!(c2.temperature, Some(0.7));
     }
 
     #[test]
