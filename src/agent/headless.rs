@@ -15,13 +15,17 @@ use crate::ai::provider::{AiProvider, ChatMessage};
 /// System prompt that frames the model as an autonomous worker. The tool
 /// protocol itself comes from `tools_system_prompt()`, appended after this.
 const AGENT_SYSTEM: &str = "You are Nerve, running autonomously as a background worker on a coding task. \
-Be DECISIVE and EFFICIENT — you have a limited number of tool rounds. Read only the few files you \
-genuinely need to match the project's conventions, then START WRITING code. Do NOT re-read files \
-you have already read, and do NOT explore indefinitely: once you understand the pattern, implement \
-it. Prefer making the change over gathering more context. Verify your work where you can \
-(build/tests). When — and only when — the task is complete, reply with a short plain-text summary \
-of what you changed and STOP (emit no further tool calls). If you cannot make progress, explain why \
-and stop.";
+Be DECISIVE and EFFICIENT: read only the few files you genuinely need to match the project's \
+conventions, then START WRITING code. Do NOT re-read files you have already read, and do NOT explore \
+indefinitely — once you understand the pattern, implement it. Prefer making the change over gathering \
+more context. Verify your work where you can (build/tests). \
+IMPORTANT: there is NO limit on the number of tool calls or 'tool executions' you may make in this \
+session — no such per-session cap exists. Never stop, and never claim you have 'hit a tool execution \
+limit' or 'cannot continue this session': keep going until the task is actually complete. The ONLY \
+valid reasons to stop are (a) the task is genuinely done, or (b) you are truly blocked by missing \
+information or a broken environment that no further tool call could resolve — and in case (b) you \
+must first have actually attempted the change. When the task is complete, reply with a short \
+plain-text summary of what you changed and STOP (emit no further tool calls).";
 
 /// Tools that mutate the workspace — used to flag whether a run edited files.
 const WRITE_TOOLS: &[&str] = &[
@@ -212,11 +216,29 @@ async fn run_role(
                 tracing::info!(
                     "headless: replied without acting — nudging ({nudges}/{MAX_NUDGES})"
                 );
-                messages.push(ChatMessage::user(
+                // Models sometimes give up mid-loop by confabulating a "tool
+                // execution limit" / "cannot continue this session". There is no
+                // such limit — rebut it directly so the agent resumes instead of
+                // abandoning a task it never actually started.
+                let bailed = {
+                    let r = response.to_lowercase();
+                    (r.contains("limit") || r.contains("cannot") || r.contains("can't"))
+                        && (r.contains("session")
+                            || r.contains("tool")
+                            || r.contains("continue")
+                            || r.contains("progress"))
+                };
+                let msg = if bailed {
+                    "There is NO tool-execution or per-session limit — that constraint does not \
+                     exist. You have made no changes yet. Stop explaining and IMPLEMENT the task \
+                     NOW with write_file/edit_file/run_command. Only stop once the change is \
+                     actually written."
+                } else {
                     "You have not used any tools or changed anything yet. If this task needs code \
                      changes, implement them NOW with write_file/edit_file/run_command — do not \
-                     just describe them. If it genuinely needs no changes, say so briefly and stop.",
-                ));
+                     just describe them. If it genuinely needs no changes, say so briefly and stop."
+                };
+                messages.push(ChatMessage::user(msg));
                 continue;
             }
             break; // no more tools requested → the agent is finished

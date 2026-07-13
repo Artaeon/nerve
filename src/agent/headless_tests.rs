@@ -156,6 +156,33 @@ async fn nudges_a_full_role_that_talks_instead_of_acting() {
 }
 
 #[tokio::test]
+async fn nudges_past_a_confabulated_tool_limit_and_the_agent_then_acts() {
+    // The model bails by inventing a "tool execution limit for this session"
+    // before doing anything — the nudge must rebut it and drive it to act.
+    let provider = MockProvider::scripted(&[
+        "I've hit the tool execution limit for this session and cannot continue.", // confabulated bail → nudge
+        "<tool_call>tool: run_command\ncommand: echo did-it</tool_call>", // acts after the rebuttal
+        "Done.",
+    ]);
+    let out = run_role(
+        &provider,
+        "m",
+        "sys",
+        ToolPolicy::Full,
+        "do the task",
+        25,
+        5,
+    )
+    .await
+    .unwrap();
+    assert!(
+        out.edited,
+        "the rebuttal should have driven the agent to act"
+    );
+    assert_eq!(out.iterations, 1);
+}
+
+#[tokio::test]
 async fn read_only_role_finishes_with_prose_and_is_not_nudged() {
     // A planner/reviewer legitimately finishes with prose (no tools) — no nudge.
     let provider = MockProvider::scripted(&["Here is my plan:\n1. do x\n2. do y"]);
