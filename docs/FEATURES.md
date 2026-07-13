@@ -13,7 +13,7 @@ knowledge base, a 196-entry prompt library, project scaffolding, a design linter
 automations, and a sandbox-lite plugin system.
 
 **Headline numbers (from source):** ~53,300 lines of Rust across ~90 files ·
-**1,991 tests** passing (1 ignored), clippy+fmt clean · **102 catalogued slash
+**2,003 tests** passing (1 ignored), clippy+fmt clean · **102 catalogued slash
 commands** (+~12 dispatched but uncatalogued) · **13 agent tools** · **6 provider
 names via 3 impls** · **196 prompts** · **10 themes** · **8 scaffold templates** ·
 **3 design presets** · **5 automations** · v0.2.0, MIT, rust 1.85.

@@ -130,6 +130,27 @@ interactively this session:
 
 ---
 
+## Session 2026-07-13 — worker reliability trilogy + a full app built on nerve
+
+**nerve reliability (all found by dogfooding a long multi-wave build, all with tests, all deployed):**
+- **Semantic activity journal** — `.nerve/activity.jsonl` now records the agent's own summary + files touched + iterations (not just that a job ran). ✅
+- **Deterministic sampling default** for unattended runs (temp 0 where the provider allows; `claude_code` CLI has no knob — documented in `DETERMINISM.md`). ✅
+- **First empirical determinism measurement** (`DETERMINISM.md §4a`): the same task run twice produced **byte-identical code**, only the tests differed. ✅
+- **`edited` keys on write SUCCESS not invocation** — a job whose writes all failed no longer fakes a green verify. ✅
+- **Worker wedge — the trilogy.** After ~a dozen jobs the long-running worker reaches a state where *every* tool call fails (not fds/mem — accumulated in-process state; only a fresh process clears it). Three layers now handle it: (1) **reactive self-heal** — detect "several tool rounds, zero successes" → exit for a systemd restart; (2) **proactive recycle** — restart every `RESTART_AFTER_JOBS=6` before it can wedge; (3) **auto-requeue** — a job that hit the wedge is put back on the queue (`Job.attempts` ≤ `MAX_WEDGE_RETRIES=2`) so the fresh worker retries it with no manual resubmit. After deploying these, a 5-job waitlist vertical + a theme + SEO batch all landed cleanly. ✅
+- **`base_branch` fork** — every queued job forks from a clean base, not the previous job's branch. ✅
+- **Anti-confabulation** — prompt + nudge rebut the model's invented "tool execution limit." (Reduced, not eliminated — still recurs on very edit-heavy single jobs; mitigation = decompose.) 🧪
+
+**Proof nerve builds a real app (vollgebucht, ~20+ features this session, each reviewed + verified + merged):**
+iCalendar export · health readiness probe · security headers · timezone-parameterized formatters · SMS fallback sender + delivery tier · Vercel cron + DEPLOY.md · extracted+tested validation schemas · **per-studio WhatsApp channels end-to-end** (outbound override + inbound resolver + routing) · SEO robots/sitemap · 404 + error boundary + EmptyState · "Dein Plan" page · booking-page customization · **terracotta 12px theme + consistent radii + terracotta navbar** · **per-studio booking headline** (schema→migration→settings→render) · **waitlist / cancellation-fill vertical** (table→service→API+form→dashboard, proven end-to-end with a live POST). vollgebucht: **191 tests, tsc clean**, running locally.
+
+**Honest quality findings this session:**
+- nerve is production-grade on **additive / pure / testable / prescriptive** work; **unreliable when handed a whole cross-cutting change at once** (especially editing existing *mocked tests*) → **decompose** into prescriptive, code-only, ≤2-file jobs.
+- Its verify gate checks type/test correctness, **not deployment safety** (caught a `tsx`-in-prod-config hazard and a Vercel-cron GET/Bearer mismatch in review) → **human review still required**.
+- Its design-system UI is on-brand and self-consistent when the tokens/classes are named, but it doesn't always check whether a class/component **already exists** (duplicated `.card`/`.well`; downgraded an existing empty state) → **review for duplication/regressions**.
+
+---
+
 ## How to extend this record
 When a feature is genuinely exercised, move it up (❔ → 💨 → ✅) with a one-line
 note of *what was run* and *what was observed*. Keep it honest: "passes its unit
