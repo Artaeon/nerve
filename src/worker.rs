@@ -63,8 +63,19 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
         .branch
         .clone()
         .unwrap_or_else(|| format!("nerve/job-{}", job.id));
-    if is_git && git(repo, &["checkout", "-b", &branch]).is_err() {
-        let _ = git(repo, &["checkout", &branch]);
+    if is_git {
+        // Fork every job from a CLEAN base (the repo's main branch), not from
+        // wherever HEAD happens to be. The worker is sequential and leaves HEAD
+        // on the previous job's `nerve/job-*` branch — without this reset, each
+        // job would branch off the last one's result and inherit (and possibly
+        // build on) its changes, so one bad job silently contaminates every job
+        // after it. Best-effort: if the base can't be checked out (dirty tree,
+        // no such branch) we fall back to branching from the current HEAD.
+        let base = base_branch(repo);
+        let _ = git(repo, &["checkout", &base]);
+        if git(repo, &["checkout", "-b", &branch]).is_err() {
+            let _ = git(repo, &["checkout", &branch]);
+        }
     }
 
     // Build the provider from the CURRENT on-disk config each run, so adding an
@@ -300,6 +311,22 @@ fn parse_status_path(line: &str) -> Option<String> {
     Some(path.trim_matches('"').to_string())
 }
 
+/// The branch each job should be forked from — a clean base, never a prior
+/// job's result branch. Prefers `main`, then `master`; otherwise falls back to
+/// the branch currently checked out (unless that is itself a `nerve/job-*`
+/// branch, in which case there is no better answer than the current HEAD and we
+/// return it — the caller's checkout is best-effort anyway).
+fn base_branch(repo: &Path) -> String {
+    for cand in ["main", "master"] {
+        if git(repo, &["rev-parse", "--verify", "--quiet", cand]).is_ok() {
+            return cand.to_string();
+        }
+    }
+    git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "HEAD".to_string())
+}
+
 /// Unattended runs default to deterministic sampling (temperature 0) on
 /// providers that support it, so the same job produces the same result as
 /// closely as the model allows — a background worker exists for reproducibility,
@@ -385,6 +412,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // A fresh temp dir is not a git work tree.
         assert!(git(dir.path(), &["rev-parse", "--is-inside-work-tree"]).is_err());
+    }
+
+    #[test]
+    fn base_branch_prefers_main_over_a_job_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]).unwrap();
+        git(p, &["config", "user.email", "t@t"]).unwrap();
+        git(p, &["config", "user.name", "t"]).unwrap();
+        git(p, &["checkout", "-q", "-b", "main"]).unwrap();
+        std::fs::write(p.join("f.txt"), "x").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "init"]).unwrap();
+        // Simulate the worker having left HEAD on a previous job's branch.
+        git(p, &["checkout", "-q", "-b", "nerve/job-deadbeef"]).unwrap();
+        // The next job must still fork from main, not from the job branch.
+        assert_eq!(base_branch(p), "main");
     }
 
     #[test]
