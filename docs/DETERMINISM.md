@@ -107,15 +107,44 @@ Determinism is worthless if context leaks away between runs. nerve's rule is
 
 ---
 
+## 4a. First empirical measurement (2026-07-13)
+
+The same well-scoped task ("parameterize `lib/format.ts` display helpers by
+timezone, default Europe/Vienna, with tests") was run **twice, fully
+independently** on the server (`claude_code`/sonnet — the provider with *no*
+temperature knob), from the same `main` snapshot:
+
+| Artifact | Run 1 (`fe9beb37`) | Run 2 (`d76161a1`) | Result |
+|----------|--------------------|--------------------|--------|
+| `lib/format.ts` (the code contract) | 27-line change | 27-line change | **byte-for-byte identical** |
+| `lib/format.test.ts` | 1 minimal test (11 lines) | 5-helper suite + midnight-boundary case (38 lines) | **diverged** |
+| verify | `npm run -s lint` → passed | `npm run -s lint` → passed | both green |
+| iterations | 4 | 3 | — |
+
+**Reading:** on a well-scoped task, the *production code* converged exactly —
+identical signatures, identical `= TZ` defaults, even identical comment edits —
+despite the provider having no sampling control. The variance lived entirely in
+*auxiliary elaboration* (how thorough the tests were). So nerve is reliable about
+**what to build** and variable about **how much to test around it**. Practical
+implication: for production, enforce test depth via the workflow reviewer or a
+prescriptive prompt, and prefer the more-thorough run — the code itself is stable.
+
+This is a single data point, not a distribution. The lever below (a real harness)
+is about turning this one observation into a measured, tracked number.
+
+---
+
 ## 5. What would make it *more* deterministic (open levers)
 
 Honest backlog, roughly by leverage:
 
 1. **A reproducibility harness** — run the same job N times against a fixed repo
-   snapshot and diff the outcomes (files changed, verify result). We assert
-   *harness* determinism in unit tests but have not yet *measured* end-to-end
-   outcome variance. This is the single most valuable next step, because it turns
-   "feels flaky" into a number we can drive down.
+   snapshot and diff the outcomes (files changed, verify result). The first
+   manual run of this (§4a) showed byte-identical *code* with divergent *tests*;
+   the next step is to automate it (an `--repeat N` mode + an outcome-diff report)
+   so this becomes a tracked number instead of a one-off observation. This is the
+   single most valuable next step, because it turns "feels flaky" into a number
+   we can drive down.
 2. **Local pinned model + seed** for the paths that need true reproducibility
    (ollama with a fixed seed) — the only route to near-bit-exactness.
 3. **Plan-adherence enforcement** in the workflow — feed the coder the plan
