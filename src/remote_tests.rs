@@ -13,6 +13,7 @@ fn job(id: &str, status: JobStatus) -> Job {
         started_at: None,
         finished_at: None,
         error: None,
+        attempts: 0,
     }
 }
 

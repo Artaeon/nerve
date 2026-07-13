@@ -82,6 +82,11 @@ pub struct Job {
     pub finished_at: Option<u64>,
     /// Failure detail when `status == Failed`.
     pub error: Option<String>,
+    /// How many times this job has been retried after a worker wedge. Bounds the
+    /// auto-requeue so a genuinely-unrunnable job can't loop forever. Defaulted
+    /// for backward compat with jobs written before auto-requeue existed.
+    #[serde(default)]
+    pub attempts: u32,
 }
 
 impl Job {
@@ -153,6 +158,7 @@ impl Queue {
             started_at: None,
             finished_at: None,
             error: None,
+            attempts: 0,
         };
         self.save(&job)?;
         Ok(job)
@@ -267,6 +273,22 @@ impl Queue {
             job.finished_at = Some(now_secs());
             job.error = Some(error);
         })
+    }
+
+    /// Put a job back on the queue after a worker wedge, incrementing its retry
+    /// counter, so a fresh worker picks it up again. Returns the new attempt
+    /// count. Used by the reactive self-heal so a job that failed only because
+    /// the worker process was wedged recovers automatically instead of needing a
+    /// manual resubmit.
+    pub fn requeue(&self, id: &str) -> anyhow::Result<u32> {
+        let updated = self.update(id, |job| {
+            job.status = JobStatus::Queued;
+            job.started_at = None;
+            job.finished_at = None;
+            job.error = None;
+            job.attempts += 1;
+        })?;
+        Ok(updated.map(|j| j.attempts).unwrap_or(0))
     }
 
     /// Cancel a job. Only jobs that haven't started yet can be cancelled;

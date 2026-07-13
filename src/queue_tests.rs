@@ -7,6 +7,22 @@ fn temp_queue() -> (tempfile::TempDir, Queue) {
 }
 
 #[test]
+fn requeue_returns_a_job_to_the_queue_and_counts_attempts() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/srv/repo", "do a thing").unwrap();
+    q.mark_running(&job.id).unwrap();
+    // First wedge → requeued, attempts = 1, back to Queued, cleared timestamps.
+    let attempts = q.requeue(&job.id).unwrap();
+    assert_eq!(attempts, 1);
+    let reloaded = q.get(&job.id).unwrap().unwrap();
+    assert_eq!(reloaded.status, JobStatus::Queued);
+    assert!(reloaded.started_at.is_none());
+    assert!(reloaded.error.is_none());
+    // A second wedge increments again.
+    assert_eq!(q.requeue(&job.id).unwrap(), 2);
+}
+
+#[test]
 fn enqueue_creates_a_queued_job_with_branch() {
     let (_d, q) = temp_queue();
     let job = q.enqueue("/srv/repo", "add tests").unwrap();

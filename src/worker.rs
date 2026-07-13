@@ -70,20 +70,30 @@ async fn run_one(queue: &Queue, job: Job) {
         Ok(Wedge::Wedged) => {
             // Every tool call failed — the long-running worker process is wedged
             // (accumulated in-process state that only a fresh process clears).
-            // Mark the job failed with a clear message and EXIT so systemd
-            // (Restart=always) brings up a fresh worker; the disk-backed queue
-            // means remaining jobs are picked up on restart. Proven recovery:
-            // a fresh process runs the identical job cleanly.
-            let _ = queue.mark_failed(
-                &id,
-                "worker environment was wedged (every tool call failed); the worker has been \
-                 restarted to recover — please resubmit this job.",
-            );
-            tracing::error!(
-                "job {id}: all tool calls failed — worker appears wedged; exiting for a fresh \
-                 restart via systemd"
-            );
-            // Give tracing a moment to flush, then exit for a clean restart.
+            // A fresh process runs the identical job cleanly, so auto-requeue the
+            // job (bounded by MAX_WEDGE_RETRIES) and EXIT for a systemd restart —
+            // the disk-backed queue means the fresh worker picks it right back
+            // up with no manual resubmit. Past the retry bound we mark it failed
+            // so a genuinely-unrunnable job can't loop forever.
+            match queue.requeue(&id) {
+                Ok(attempts) if attempts <= MAX_WEDGE_RETRIES => {
+                    tracing::error!(
+                        "job {id}: worker wedged (all tools failed) — requeued (attempt \
+                         {attempts}/{MAX_WEDGE_RETRIES}); exiting for a fresh worker"
+                    );
+                }
+                _ => {
+                    let _ = queue.mark_failed(
+                        &id,
+                        "worker wedged repeatedly on this job (every tool call failed); giving up \
+                         after retries — please resubmit.",
+                    );
+                    tracing::error!(
+                        "job {id}: wedged past {MAX_WEDGE_RETRIES} retries — marked failed; \
+                         exiting for a fresh worker"
+                    );
+                }
+            }
             std::process::exit(1);
         }
         Err(e) => {
@@ -321,6 +331,11 @@ fn run_verify(repo: &Path, cmd: &str) -> (bool, String) {
 /// Iteration cap for an unattended run.
 const MAX_ITER: usize = crate::agent::headless::DEFAULT_MAX_ITERATIONS;
 
+/// How many times to auto-requeue a job that failed to a worker wedge before
+/// giving up. A fresh worker almost always runs it cleanly, so a small bound is
+/// enough; the bound only guards against a job that somehow wedges every worker.
+const MAX_WEDGE_RETRIES: u32 = 2;
+
 /// Run a git subcommand in `repo` (uses `-C`, not the process CWD, so it works
 /// regardless of where the worker currently is). Returns stdout or an error
 /// carrying stderr.
@@ -537,6 +552,7 @@ mod tests {
             started_at: None,
             finished_at: None,
             error: None,
+            attempts: 0,
         }
     }
 
