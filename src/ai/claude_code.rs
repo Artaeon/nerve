@@ -148,16 +148,20 @@ impl ClaudeCodeProvider {
 
     /// Build the common CLI argument list shared by streaming and
     /// non-streaming calls. Only `output_format` differs ("text" vs "json").
+    /// The prompt is NOT included here — it is written to the child's STDIN by
+    /// the caller. Passing it as an argv argument capped a run at Linux's 128 KB
+    /// per-argument limit (`MAX_ARG_STRLEN`), so any large-context job (a file
+    /// audit, a big multi-file feature) blew `execve` with E2BIG, surfacing as
+    /// "failed to run claude CLI". `claude -p` reads the prompt from stdin when
+    /// no positional prompt is given, so there is no size limit.
     fn build_args(
         &self,
-        prompt: &str,
         model: &str,
         output_format: &str,
         system_prompt: &Option<String>,
     ) -> Vec<String> {
         let mut args: Vec<String> = vec![
             "-p".into(),
-            prompt.into(),
             "--output-format".into(),
             output_format.into(),
             "--model".into(),
@@ -228,11 +232,9 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(());
             }
 
-            let args = self.build_args(&prompt, model, "stream-json", &system_prompt);
+            let args = self.build_args(model, "stream-json", &system_prompt);
 
-            // stdin is set to null: the TUI runs the terminal in raw mode with
-            // the alternate screen buffer, and a child inheriting that tty as
-            // stdin can consume the user's keystrokes or block.
+            // The prompt is piped via stdin (no argv size limit — see build_args).
             //
             // kill_on_drop(true) ensures the subprocess is SIGKILLed the
             // moment this future is dropped — e.g. when the user cancels
@@ -240,12 +242,25 @@ impl AiProvider for ClaudeCodeProvider {
             // against the subscription.
             let mut child = Command::new(&self.claude_binary)
                 .args(&args)
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true)
                 .spawn()
                 .context("failed to spawn claude CLI — is it installed and in PATH?")?;
+
+            // Write the prompt to stdin concurrently, then close it so claude
+            // starts producing output. A larger-than-pipe-buffer prompt can't
+            // deadlock because claude drains stdin while we stream stdout.
+            let stdin = child.stdin.take();
+            let prompt_bytes = prompt.into_bytes();
+            tokio::spawn(async move {
+                if let Some(mut si) = stdin {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = si.write_all(&prompt_bytes).await;
+                    let _ = si.shutdown().await;
+                }
+            });
 
             let stdout = child
                 .stdout
@@ -387,16 +402,34 @@ impl AiProvider for ClaudeCodeProvider {
                 return Ok(String::new());
             }
 
-            let args = self.build_args(&prompt, model, "json", &system_prompt);
+            let args = self.build_args(model, "json", &system_prompt);
 
-            let output = Command::new(&self.claude_binary)
+            let mut child = Command::new(&self.claude_binary)
                 .args(&args)
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
+                .spawn()
+                .context("failed to run claude CLI — is it installed and in PATH?")?;
+
+            // Feed the prompt via stdin (no argv size limit). Write concurrently
+            // with collecting output so a prompt larger than the pipe buffer
+            // can't deadlock: claude drains stdin while we await its output.
+            let stdin = child.stdin.take();
+            let prompt_bytes = prompt.into_bytes();
+            let write_task = tokio::spawn(async move {
+                if let Some(mut si) = stdin {
+                    use tokio::io::AsyncWriteExt;
+                    let _ = si.write_all(&prompt_bytes).await;
+                    let _ = si.shutdown().await;
+                }
+            });
+
+            let output = child
+                .wait_with_output()
                 .await
                 .context("failed to run claude CLI — is it installed and in PATH?")?;
+            let _ = write_task.await;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -834,26 +867,27 @@ mod tests {
     #[test]
     fn build_args_basic_structure() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hello", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
+        // The prompt is NOT in argv (it goes via stdin) — `-p` reads stdin.
         assert_eq!(args[0], "-p");
-        assert_eq!(args[1], "hello");
-        assert_eq!(args[2], "--output-format");
-        assert_eq!(args[3], "text");
-        assert_eq!(args[4], "--model");
-        assert_eq!(args[5], "sonnet");
+        assert_eq!(args[1], "--output-format");
+        assert_eq!(args[2], "text");
+        assert_eq!(args[3], "--model");
+        assert_eq!(args[4], "sonnet");
+        assert!(!args.iter().any(|a| a == "hello"));
     }
 
     #[test]
     fn build_args_json_format() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("prompt", "opus", "json", &None);
-        assert_eq!(args[3], "json");
+        let args = p.build_args("opus", "json", &None);
+        assert_eq!(args[2], "json");
     }
 
     #[test]
     fn build_args_tools_disabled_removes_native_tools() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         // `--tools ""` fully removes the CLI's built-in tools so the model
         // uses nerve's text protocol instead of hitting the permission gate.
         // (`--allowedTools ""` does NOT disable tools — see build_args.)
@@ -866,7 +900,7 @@ mod tests {
     #[test]
     fn build_args_tools_enabled_adds_dangerous_flag() {
         let p = ClaudeCodeProvider::with_tools();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(args.contains(&"--dangerously-skip-permissions".to_string()));
         assert!(!args.contains(&"--allowedTools".to_string()));
     }
@@ -874,7 +908,7 @@ mod tests {
     #[test]
     fn build_args_no_session_adds_no_persistence() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(args.contains(&"--no-session-persistence".to_string()));
         assert!(!args.contains(&"--resume".to_string()));
     }
@@ -883,7 +917,7 @@ mod tests {
     fn build_args_with_session_adds_resume() {
         let mut p = ClaudeCodeProvider::new();
         p.session_id = Some("sess-123".into());
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(args.contains(&"--resume".to_string()));
         assert!(args.contains(&"sess-123".to_string()));
         assert!(!args.contains(&"--no-session-persistence".to_string()));
@@ -892,7 +926,7 @@ mod tests {
     #[test]
     fn build_args_with_working_dir() {
         let p = ClaudeCodeProvider::new().with_working_dir("/project".into());
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(args.contains(&"--add-dir".to_string()));
         assert!(args.contains(&"/project".to_string()));
     }
@@ -900,7 +934,7 @@ mod tests {
     #[test]
     fn build_args_without_working_dir() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(!args.contains(&"--add-dir".to_string()));
     }
 
@@ -908,7 +942,7 @@ mod tests {
     fn build_args_with_system_prompt() {
         let p = ClaudeCodeProvider::new();
         let sys = Some("You are helpful.".to_string());
-        let args = p.build_args("hi", "sonnet", "text", &sys);
+        let args = p.build_args("sonnet", "text", &sys);
         assert!(args.contains(&"--system-prompt".to_string()));
         assert!(args.contains(&"You are helpful.".to_string()));
     }
@@ -916,23 +950,23 @@ mod tests {
     #[test]
     fn build_args_without_system_prompt() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(!args.contains(&"--system-prompt".to_string()));
     }
 
     #[test]
     fn build_args_stream_json_adds_verbose_and_partial() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "stream-json", &None);
+        let args = p.build_args("sonnet", "stream-json", &None);
         assert!(args.contains(&"--verbose".to_string()));
         assert!(args.contains(&"--include-partial-messages".to_string()));
-        assert_eq!(args[3], "stream-json");
+        assert_eq!(args[2], "stream-json");
     }
 
     #[test]
     fn build_args_text_does_not_add_stream_flags() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "text", &None);
+        let args = p.build_args("sonnet", "text", &None);
         assert!(!args.contains(&"--verbose".to_string()));
         assert!(!args.contains(&"--include-partial-messages".to_string()));
     }
@@ -940,17 +974,21 @@ mod tests {
     #[test]
     fn build_args_json_does_not_add_stream_flags() {
         let p = ClaudeCodeProvider::new();
-        let args = p.build_args("hi", "sonnet", "json", &None);
+        let args = p.build_args("sonnet", "json", &None);
         assert!(!args.contains(&"--verbose".to_string()));
         assert!(!args.contains(&"--include-partial-messages".to_string()));
     }
 
     #[test]
-    fn build_args_special_characters_in_prompt() {
+    fn build_args_never_contains_the_prompt() {
+        // The prompt travels via stdin, never argv — so there is no per-arg
+        // size limit and no shell-escaping concern for special characters.
         let p = ClaudeCodeProvider::new();
-        let prompt = "hello 'world' \"test\" $VAR `cmd`";
-        let args = p.build_args(prompt, "sonnet", "text", &None);
-        assert_eq!(args[1], prompt);
+        let args = p.build_args("sonnet", "text", &None);
+        let huge = "x".repeat(200_000); // would blow MAX_ARG_STRLEN if it were an arg
+        assert!(!args.iter().any(|a| a.contains(&huge)));
+        // A prompt with shell metacharacters needs no escaping via stdin.
+        assert!(!args.iter().any(|a| a.contains("$VAR")));
     }
 
     // ── Live integration: requires `claude` CLI + valid auth ────────────
