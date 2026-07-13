@@ -17,13 +17,37 @@ use crate::queue::{Job, Queue};
 /// How often to check for new work when the queue is empty.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 
-/// Drain the queue forever. Never returns; spawned as a background task.
+/// How many jobs to run before proactively restarting the worker process.
+///
+/// The long-running worker accumulates in-process state that, past roughly a
+/// dozen jobs' worth of tool activity, wedges it so every tool call fails (see
+/// the reactive self-heal in `run_one`). Rather than only recover *after* a
+/// wedge corrupts a job, we cycle the process well before that threshold: after
+/// this many completed jobs the worker exits cleanly and systemd (Restart=always)
+/// brings up a fresh one. The disk-backed queue means remaining jobs resume
+/// seamlessly on the next process. Kept conservative — a restart costs ~1s and a
+/// mid-batch wedge costs a whole job.
+const RESTART_AFTER_JOBS: usize = 6;
+
+/// Drain the queue forever (until a proactive restart). Spawned as a background
+/// task inside the daemon.
 pub async fn run_worker() {
     let queue = Queue::default_location();
     tracing::info!("nerve worker started; draining {:?}", "~/.nerve/queue");
+    let mut completed = 0usize;
     loop {
         match queue.next_queued() {
-            Ok(Some(job)) => run_one(&queue, job).await,
+            Ok(Some(job)) => {
+                run_one(&queue, job).await;
+                completed += 1;
+                if completed >= RESTART_AFTER_JOBS {
+                    tracing::info!(
+                        "worker: {completed} jobs done — recycling the process (fresh worker) \
+                         before in-process state can accumulate into a wedge"
+                    );
+                    std::process::exit(0);
+                }
+            }
             Ok(None) => tokio::time::sleep(POLL_INTERVAL).await,
             Err(e) => {
                 tracing::warn!("worker: could not read queue: {e}");
