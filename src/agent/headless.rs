@@ -90,6 +90,60 @@ fn compact_context(messages: &mut [ChatMessage], budget_tokens: usize) {
     }
 }
 
+/// Assemble the repo's persisted `.nerve/` knowledge into a compact block so a
+/// headless job honors the project's conventions, design system, and prior
+/// decisions. Reads the store rooted at the current working directory (the
+/// worker sets CWD to the repo before the run). Returns `None` when there is no
+/// `.nerve/` memory. Bounded so it stays token-efficient.
+fn project_memory_context() -> Option<String> {
+    let root = std::env::current_dir().ok()?;
+    project_memory_context_from(&crate::project::ProjectStore::for_workspace(&root))
+}
+
+/// Testable core of [`project_memory_context`]: assemble from an explicit store.
+fn project_memory_context_from(store: &crate::project::ProjectStore) -> Option<String> {
+    use crate::agent::context::smart_truncate;
+    let mut sections = Vec::new();
+    if let Some(brief) = store.load_brief() {
+        sections.push(format!(
+            "### What this project is\n{}",
+            smart_truncate(&brief, 1200)
+        ));
+    }
+    if let Some(mem) = store.load_memory() {
+        sections.push(format!(
+            "### Facts & conventions to follow\n{}",
+            smart_truncate(&mem, 1500)
+        ));
+    }
+    if let Some(design) = store.load_design() {
+        sections.push(format!(
+            "### Design principles — follow these for ANY UI/CSS work\n{}",
+            smart_truncate(&design, 1500)
+        ));
+    }
+    let decisions = store.recent_decisions(6);
+    if !decisions.is_empty() {
+        let list = decisions
+            .iter()
+            .map(|d| format!("- {}", d.text))
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(format!(
+            "### Recent project decisions\n{}",
+            smart_truncate(&list, 800)
+        ));
+    }
+    if sections.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "PROJECT KNOWLEDGE (from this repo's .nerve/ memory — honor it so your work stays \
+         consistent with the project's conventions, design system, and decisions):\n\n{}",
+        sections.join("\n\n")
+    ))
+}
+
 /// The result of a headless agent run.
 #[derive(Debug, Clone)]
 pub struct HeadlessOutcome {
@@ -184,9 +238,19 @@ async fn run_role(
     max_iterations: usize,
     command_timeout_secs: u64,
 ) -> anyhow::Result<HeadlessOutcome> {
+    // Fold the project's persisted `.nerve/` knowledge (brief, conventions,
+    // design principles, recent decisions) into the tools system message so a
+    // headless job follows the project's conventions and design system instead
+    // of starting amnesiac — the same "don't forget what this project is" the
+    // interactive loop gets. Riding in an existing HEAD-kept system message
+    // keeps it verbatim through compaction without changing HEAD_KEEP.
+    let tools_prompt = match project_memory_context() {
+        Some(ctx) => format!("{}\n\n{ctx}", tools_system_prompt()),
+        None => tools_system_prompt(),
+    };
     let mut messages = vec![
         ChatMessage::system(system_prompt),
-        ChatMessage::system(tools_system_prompt()),
+        ChatMessage::system(tools_prompt),
         ChatMessage::user(task),
     ];
 

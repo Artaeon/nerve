@@ -146,6 +146,33 @@ async fn all_tools_failed_flags_a_wedged_environment() {
     );
 }
 
+#[test]
+fn project_memory_context_assembles_brief_conventions_and_design() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::project::ProjectStore::for_workspace(dir.path());
+    store
+        .save_brief("Vollgebucht is a booking assistant.")
+        .unwrap();
+    store
+        .remember("Buttons use the terracotta accent.")
+        .unwrap();
+    store
+        .save_design("No gradients. Warm paper background.")
+        .unwrap();
+    let ctx = project_memory_context_from(&store).expect("should assemble a context");
+    assert!(ctx.contains("PROJECT KNOWLEDGE"));
+    assert!(ctx.contains("booking assistant"));
+    assert!(ctx.contains("terracotta"));
+    assert!(ctx.contains("No gradients"));
+}
+
+#[test]
+fn project_memory_context_is_none_without_nerve_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::project::ProjectStore::for_workspace(dir.path());
+    assert!(project_memory_context_from(&store).is_none());
+}
+
 #[tokio::test]
 async fn all_tools_failed_is_false_when_a_tool_succeeds() {
     // A successful read-only tool then done → not wedged.
