@@ -112,6 +112,24 @@ async fn flags_edited_when_a_write_tool_runs() {
 }
 
 #[tokio::test]
+async fn a_failed_write_tool_does_not_flag_edited() {
+    // A mutating tool that FAILS (here: a non-zero run_command) must not set
+    // `edited` — otherwise the worker runs verify on an unchanged tree and logs
+    // the job as a success that changed nothing.
+    let provider = MockProvider::scripted(&[
+        "<tool_call>tool: run_command\ncommand: exit 7</tool_call>",
+        "The command failed; nothing was changed.",
+    ]);
+    let out = run_headless_agent(&provider, "m", "run a failing command", 25, 5)
+        .await
+        .unwrap();
+    assert!(
+        !out.edited,
+        "a failed mutating tool must not flag the run as edited"
+    );
+}
+
+#[tokio::test]
 async fn stops_at_iteration_cap() {
     // Always emits a tool call → the loop must stop at max_iterations.
     let provider = MockProvider::scripted(&["<tool_call>tool: list_files\npath: .</tool_call>"]);

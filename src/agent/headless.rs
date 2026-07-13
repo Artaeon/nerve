@@ -267,17 +267,25 @@ async fn run_role(
                     ),
                 }
             } else {
-                if is_write {
+                let call = call.clone();
+                let result =
+                    tokio::task::spawn_blocking(move || execute_tool(&call, command_timeout_secs))
+                        .await
+                        .unwrap_or_else(|e| ToolResult {
+                            tool: "<panicked>".into(),
+                            success: false,
+                            output: format!("tool task panicked: {e}"),
+                        });
+                // Count the run as having edited ONLY when a mutating tool
+                // actually SUCCEEDED. Flagging on mere invocation was a real bug:
+                // a job whose every write_file failed still set `edited`, so the
+                // verify gate ran against an unchanged tree, "passed", and the
+                // job was logged/journaled as a success that wrote nothing (and
+                // the worker skips the commit when nothing truly changed anyway).
+                if is_write && result.success {
                     edited = true;
                 }
-                let call = call.clone();
-                tokio::task::spawn_blocking(move || execute_tool(&call, command_timeout_secs))
-                    .await
-                    .unwrap_or_else(|e| ToolResult {
-                        tool: "<panicked>".into(),
-                        success: false,
-                        output: format!("tool task panicked: {e}"),
-                    })
+                result
             };
             results.push(result);
         }
