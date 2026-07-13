@@ -101,6 +101,11 @@ pub struct HeadlessOutcome {
     pub final_response: String,
     /// Whether the run stopped because it hit the iteration cap (vs. finished).
     pub hit_max_iterations: bool,
+    /// True when the run executed several tool rounds but *not a single* tool
+    /// call succeeded — the signature of a wedged worker process (every tool,
+    /// even `read_file`, failing). A healthy run always has at least one
+    /// successful read. The worker uses this to self-heal via a fresh restart.
+    pub all_tools_failed: bool,
 }
 
 /// Char-safe truncation of tool output, matching the interactive runner's cap.
@@ -187,6 +192,7 @@ async fn run_role(
 
     let mut iterations = 0usize;
     let mut edited = false;
+    let mut any_tool_succeeded = false;
     let mut nudges = 0usize;
     // Assigned on every loop iteration before any break, so it is always set by
     // the time we read it after the loop.
@@ -282,8 +288,11 @@ async fn run_role(
                 // verify gate ran against an unchanged tree, "passed", and the
                 // job was logged/journaled as a success that wrote nothing (and
                 // the worker skips the commit when nothing truly changed anyway).
-                if is_write && result.success {
-                    edited = true;
+                if result.success {
+                    any_tool_succeeded = true;
+                    if is_write {
+                        edited = true;
+                    }
                 }
                 result
             };
@@ -303,6 +312,9 @@ async fn run_role(
         edited,
         final_response,
         hit_max_iterations,
+        // Several tool rounds ran but nothing ever succeeded → the environment
+        // is wedged (a healthy run always lands at least one successful read).
+        all_tools_failed: iterations >= 3 && !any_tool_succeeded,
     })
 }
 

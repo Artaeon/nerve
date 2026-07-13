@@ -39,9 +39,28 @@ async fn run_one(queue: &Queue, job: Job) {
     let id = job.id.clone();
     let _ = queue.mark_running(&id);
     match execute(&job).await {
-        Ok(()) => {
+        Ok(Wedge::Healthy) => {
             let _ = queue.mark_done(&id);
             tracing::info!("job {id} done");
+        }
+        Ok(Wedge::Wedged) => {
+            // Every tool call failed — the long-running worker process is wedged
+            // (accumulated in-process state that only a fresh process clears).
+            // Mark the job failed with a clear message and EXIT so systemd
+            // (Restart=always) brings up a fresh worker; the disk-backed queue
+            // means remaining jobs are picked up on restart. Proven recovery:
+            // a fresh process runs the identical job cleanly.
+            let _ = queue.mark_failed(
+                &id,
+                "worker environment was wedged (every tool call failed); the worker has been \
+                 restarted to recover — please resubmit this job.",
+            );
+            tracing::error!(
+                "job {id}: all tool calls failed — worker appears wedged; exiting for a fresh \
+                 restart via systemd"
+            );
+            // Give tracing a moment to flush, then exit for a clean restart.
+            std::process::exit(1);
         }
         Err(e) => {
             let _ = queue.mark_failed(&id, &e.to_string());
@@ -50,7 +69,13 @@ async fn run_one(queue: &Queue, job: Job) {
     }
 }
 
-async fn execute(job: &Job) -> anyhow::Result<()> {
+/// Whether a job ran on a healthy worker or hit the all-tools-failed wedge.
+enum Wedge {
+    Healthy,
+    Wedged,
+}
+
+async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     let repo = Path::new(&job.repo);
     if !repo.is_dir() {
         anyhow::bail!("repository path not found on the server: {}", job.repo);
@@ -123,6 +148,14 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
     }
     let (outcome, verify_summary) = in_repo?;
 
+    // Wedge check: if every tool call failed, the worker process is in a bad
+    // state that only a fresh restart clears. Nothing was written (all writes
+    // failed), so there is nothing to commit or journal — bail out and let
+    // `run_one` mark the job failed and restart the worker.
+    if outcome.all_tools_failed {
+        return Ok(Wedge::Wedged);
+    }
+
     // Commit ONLY the paths this job newly touched, on its own branch, for
     // review — leaving any pre-existing unrelated changes untouched. The changed
     // set is also journaled below, so compute it whenever the job edited.
@@ -167,7 +200,7 @@ async fn execute(job: &Job) -> anyhow::Result<()> {
         );
     }
 
-    Ok(())
+    Ok(Wedge::Healthy)
 }
 
 /// Run the agent for `task`, then — if it edited files and auto-verify is on —
@@ -194,6 +227,7 @@ async fn run_in_repo(
             iterations: wf.coder_iterations,
             final_response: format!("## Plan\n{}\n\n## Review\n{}", wf.plan, wf.review),
             hit_max_iterations: wf.hit_max_iterations,
+            all_tools_failed: false,
         }
     } else {
         crate::agent::headless::run_headless_agent(provider, model, task, MAX_ITER, timeout).await?

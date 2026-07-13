@@ -130,6 +130,34 @@ async fn a_failed_write_tool_does_not_flag_edited() {
 }
 
 #[tokio::test]
+async fn all_tools_failed_flags_a_wedged_environment() {
+    // Every tool round fails (a non-zero run_command each time) → the run must
+    // flag all_tools_failed so the worker can self-heal with a fresh restart.
+    let provider =
+        MockProvider::scripted(&["<tool_call>tool: run_command\ncommand: exit 1</tool_call>"]);
+    let out = run_headless_agent(&provider, "m", "everything fails", 5, 5)
+        .await
+        .unwrap();
+    assert!(out.iterations >= 3);
+    assert!(!out.edited);
+    assert!(
+        out.all_tools_failed,
+        "a run where no tool ever succeeds must flag all_tools_failed"
+    );
+}
+
+#[tokio::test]
+async fn all_tools_failed_is_false_when_a_tool_succeeds() {
+    // A successful read-only tool then done → not wedged.
+    let provider =
+        MockProvider::scripted(&["<tool_call>tool: list_files\npath: .</tool_call>", "Done."]);
+    let out = run_headless_agent(&provider, "m", "list", 25, 5)
+        .await
+        .unwrap();
+    assert!(!out.all_tools_failed);
+}
+
+#[tokio::test]
 async fn stops_at_iteration_cap() {
     // Always emits a tool call → the loop must stop at max_iterations.
     let provider = MockProvider::scripted(&["<tool_call>tool: list_files\npath: .</tool_call>"]);
