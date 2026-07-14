@@ -142,12 +142,28 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         // on the previous job's `nerve/job-*` branch — without this reset, each
         // job would branch off the last one's result and inherit (and possibly
         // build on) its changes, so one bad job silently contaminates every job
-        // after it. Best-effort: if the base can't be checked out (dirty tree,
-        // no such branch) we fall back to branching from the current HEAD.
+        // after it.
+        //
+        // CRUCIAL: start from a truly PRISTINE tree. `git checkout <base>` alone
+        // leaves any uncommitted edits in place — and a job that hung mid-edit
+        // and was then reclaimed carries that stale dirt into the retry. Stale
+        // dirt lands in the `pre_dirty` snapshot below and is then EXCLUDED from
+        // the commit (`changed = dirty − pre_dirty`), so the job's *real* edit is
+        // silently dropped — producing a commit that references a change that
+        // isn't there (seen live on job 962b6d94: service.ts + a test referenced
+        // a template field whose defining edit was dropped, so the branch didn't
+        // even compile while the log said "verify passed"). Force-checkout,
+        // hard-reset, and clean untracked (non-ignored) files so `pre_dirty` is
+        // empty and `changed` is exactly this job's diff. Safe on the dedicated
+        // server copy the worker operates on, where any pre-existing dirt is a
+        // stale leftover, never precious WIP.
         let base = base_branch(repo);
-        let _ = git(repo, &["checkout", &base]);
+        let _ = git(repo, &["checkout", "-f", &base]);
+        let _ = git(repo, &["reset", "--hard", &base]);
+        let _ = git(repo, &["clean", "-fd"]);
         if git(repo, &["checkout", "-b", &branch]).is_err() {
-            let _ = git(repo, &["checkout", &branch]);
+            let _ = git(repo, &["checkout", "-f", &branch]);
+            let _ = git(repo, &["reset", "--hard", &base]);
         }
     }
 
