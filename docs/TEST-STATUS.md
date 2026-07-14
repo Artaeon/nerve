@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-14 · **Unit tests:** 2,018 passing (`cargo test`),
+**Last updated:** 2026-07-14 · **Unit tests:** 2,023 passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -235,6 +235,37 @@ responsive mobile nav · responsive tables · studio cover image (2 jobs). Clean
 first try on additive/pure/new-file jobs (8–21 iters); cross-cutting edit-existing
 jobs (customer-linking, DSGVO consent) still failed at the cap → decompose. The
 INCOMPLETE flag + running tsc+vitest per branch caught every bad output.
+
+### 2026-07-14 (late) — the self-decompose loop, built + dogfooded
+
+The one real nerve weakness (cross-cutting edit-existing tasks thrash to the
+iteration cap) got a systematic fix: `--decompose` runs a read-only PLANNER that
+splits the task into small ordered JSON sub-tasks, then executes each through the
+normal agent, with a safe fallback to a single run if planning yields nothing.
+Wired end-to-end (`--decompose` → `SUBMITDC` → `Job.decompose` → worker dispatch),
++6 tests, deployed (2,023 tests).
+
+**First dogfood — the vollgebucht marketing overhaul as ONE `--decompose` job:**
+- ✅ The planner produced **8 sensible, well-scoped sub-tasks** (globals utility
+  classes → footer grid → per-page hero/well fixes) — exactly the right split.
+- ✅ Executed steps 1-7 cleanly.
+- 🐞 **Then the worker WEDGED** — a decompose job runs 9+ sub-agents in ONE
+  process, well past the wedge threshold. The auto-requeue's clean-start
+  **discarded steps 1-7**, and the retry's planner didn't emit parseable JSON so
+  it **fell back to a single agent** (the safety net) — which completed the
+  (mechanical) overhaul in 19 iters; the test-gate (`lint && npm test`) verified
+  it. Result merged, correct, 222 tests.
+- **Fix shipped (commit adf1ad2):** decompose now COMMITS each finished step to
+  the branch, and a requeued job's clean-start KEEPS its branch commits instead
+  of resetting to base — so a mid-run wedge now RESUMES with the done steps
+  instead of starting over. Deployed; the durable end-state (subprocess isolation
+  per sub-task, which would make decompose wedge-immune) remains the next big
+  lever.
+
+**Honest read:** the decompose loop's *core is sound* (it planned + executed a
+real cross-cutting task well) and the fallback makes it safe, but it stresses the
+long-standing worker wedge harder than any single job — the wedge is now the
+top reliability bottleneck to eliminate.
 
 ## How to extend this record
 When a feature is genuinely exercised, move it up (❔ → 💨 → ✅) with a one-line
