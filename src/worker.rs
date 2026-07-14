@@ -340,12 +340,21 @@ async fn run_in_repo(
     if !outcome.edited || !config.auto_verify {
         return Ok((outcome, "not run".to_string()));
     }
-    let Some(cmd) = config
+    let Some(typecheck) = config
         .verify_command
         .clone()
         .or_else(|| crate::verify::detect_verify_command(repo))
     else {
         return Ok((outcome, "no verify command".to_string()));
+    };
+    // Run the project's TEST suite too, chained after the type-check (fix types
+    // first, then tests). A lint-only gate this session let a job commit a
+    // *failing test* that only human review caught — the suite closes that gap
+    // and its failures feed back into the same self-correct loop below. Skipped
+    // for watch-mode test scripts (detect_test_command returns None).
+    let cmd = match crate::verify::detect_test_command(repo) {
+        Some(test) => format!("{typecheck} && {test}"),
+        None => typecheck,
     };
 
     let mut rounds: u8 = 0;

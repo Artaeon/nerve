@@ -37,6 +37,36 @@ pub fn detect_verify_command(root: &Path) -> Option<String> {
     None
 }
 
+/// Detect the project's TEST command, so the worker gate can run the suite in
+/// addition to the type-check. A type-check alone is not enough: this session a
+/// job committed a *failing test* that `tsc`/`lint` happily passed, and only
+/// human review caught it. Runs after the type-check (chained), never instead.
+///
+/// Returns `None` (skip tests) when the test script is a WATCHER — a watch-mode
+/// runner never exits and would hang the job until the timeout. We only run a
+/// test command we can be confident terminates.
+pub fn detect_test_command(root: &Path) -> Option<String> {
+    if root.join("Cargo.toml").exists() {
+        return Some("cargo test --quiet 2>&1".into());
+    }
+    if root.join("package.json").exists() {
+        let pkg = std::fs::read_to_string(root.join("package.json")).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&pkg).ok()?;
+        let test = json.get("scripts")?.get("test")?.as_str()?;
+        // Skip watchers and placeholder scripts.
+        let lowered = test.to_lowercase();
+        if lowered.contains("watch")
+            || lowered.contains("--watch")
+            || lowered.contains("no test specified")
+            || test.trim().is_empty()
+        {
+            return None;
+        }
+        return Some("npm test --silent 2>&1".into());
+    }
+    None
+}
+
 /// Whether to run the verify step now: it's enabled, we have a command, the
 /// agent actually edited files this turn, and rounds remain.
 pub fn should_run_verify(
@@ -68,6 +98,67 @@ mod tests {
             detect_verify_command(dir.path()).as_deref(),
             Some("cargo check --quiet 2>&1")
         );
+    }
+
+    #[test]
+    fn detect_test_command_npm_run_script() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "vitest run", "lint": "tsc --noEmit"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()).as_deref(),
+            Some("npm test --silent 2>&1")
+        );
+    }
+
+    #[test]
+    fn detect_test_command_skips_watchers_and_placeholders() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "vitest --watch"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()),
+            None,
+            "watch mode must be skipped"
+        );
+
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()),
+            None,
+            "placeholder must be skipped"
+        );
+    }
+
+    #[test]
+    fn detect_test_command_cargo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        assert_eq!(
+            detect_test_command(dir.path()).as_deref(),
+            Some("cargo test --quiet 2>&1")
+        );
+    }
+
+    #[test]
+    fn detect_test_command_none_without_test_script() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"lint": "tsc --noEmit"}}"#,
+        )
+        .unwrap();
+        assert_eq!(detect_test_command(dir.path()), None);
     }
 
     #[test]
