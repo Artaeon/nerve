@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-14 · **Unit tests:** 2,007 passing (`cargo test`),
+**Last updated:** 2026-07-14 · **Unit tests:** 2,018 passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -194,6 +194,47 @@ exact JSX to render, explicit acceptance criteria: "X must actually be CALLED",
 decompose cross-cutting UI wiring into prescriptive, code-only jobs, and
 human-review every result for completeness — the verify gate checks type/test
 correctness, not feature completeness.
+
+### 2026-07-14 continued — five more reliability/efficiency fixes + a full feature wave
+
+Driven by dogfooding a large vollgebucht build (14 jobs), five more fixes shipped
+(all tested → **2,018 green**, deployed):
+- **Cap-stopped jobs flagged INCOMPLETE** (`worker.rs`) — a single-agent job that
+  hits the iteration cap can commit a partial stub that type-checks; the
+  incompleteness is now appended to the commit message + activity journal so a
+  reviewer sees it. Caught 3 real stubs this session. ✅
+- **Orphaned `Running` jobs reclaimed on startup** (`queue.rs`) — a crash/hang/
+  restart no longer strands a job; the fresh worker requeues it (bounded). Fixed a
+  live worker hang. ✅
+- **Every job starts from a pristine tree** (`worker.rs`) — `checkout <base>` left
+  stale dirt from a reclaimed job, which `pre_dirty` then excluded from the commit,
+  silently dropping the real edit (a committed branch that didn't even compile
+  while the log said "verify passed"). Now force-checkout + reset --hard + clean.
+  This is the subtle one — it made a "verify passed" commit non-compiling. ✅
+- **Explore-nudge (token efficiency)** (`headless.rs`) — after 8 tool-iterations
+  with no edit, a one-time positive "you have enough context, implement now" nudge
+  (never says "limit"). **Measured effect: comparable jobs went 29–40 → 8–24
+  iterations.** ✅
+- **Quota-defer** (`worker.rs`/`queue.rs`) — a provider session/quota limit now
+  DEFERS the job (`Job.not_before`) to resume after the window resets, instead of
+  failing it. Hit live when a job burst exhausted the claude.ai session quota. ✅
+- **Test suite in the verify gate** (`verify.rs`/`worker.rs`) — the gate ran
+  lint/typecheck only, so a job could commit a *failing test* (seen live). It now
+  chains the project's test command (`detect_test_command`; cargo test / npm test,
+  skipping watch-mode) after the type-check into the same self-correct loop. ✅
+
+**Efficiency verdict (answers "does nerve burn too many tokens?"):** the context
+*system* is lean, but the *execution loop* was expensive (29–40 iters, quadratic
+re-send) — enough to exhaust the claude.ai session quota mid-batch. The
+explore-nudge + prescriptive specs cut that to 8–24 iters. Open lever: route
+exploration to a cheaper model.
+
+**Feature-wave result (8 vollgebucht features, nerve-built, verified + merged):**
+reports page · customer CRM page · review link in email · reschedule UI ·
+responsive mobile nav · responsive tables · studio cover image (2 jobs). Clean
+first try on additive/pure/new-file jobs (8–21 iters); cross-cutting edit-existing
+jobs (customer-linking, DSGVO consent) still failed at the cap → decompose. The
+INCOMPLETE flag + running tsc+vitest per branch caught every bad output.
 
 ## How to extend this record
 When a feature is genuinely exercised, move it up (❔ → 💨 → ✅) with a one-line
