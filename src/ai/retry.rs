@@ -210,8 +210,9 @@ fn redact_after(
 
 /// Inner helper that operates on the stringified error message.
 fn is_retryable_message(msg: &str) -> bool {
-    // HTTP status codes embedded in error messages (e.g. "API error (429)")
-    let retryable_statuses = ["408", "429", "500", "502", "503", "504"];
+    // HTTP status codes embedded in error messages (e.g. "API error (429)").
+    // 529 is Anthropic's "overloaded" status — transient, worth retrying.
+    let retryable_statuses = ["408", "429", "500", "502", "503", "504", "529"];
     let non_retryable_statuses = ["400", "401", "403", "404"];
 
     // Check for non-retryable status codes first (more specific match)
@@ -247,6 +248,7 @@ fn is_retryable_message(msg: &str) -> bool {
         "dns error",
         "resolve error",
         "no route to host",
+        "overloaded", // Anthropic transient overload
     ];
 
     let lower = msg.to_lowercase();
@@ -451,6 +453,15 @@ mod tests {
     #[test]
     fn not_retryable_unknown_error() {
         assert!(!is_retryable_message("failed to parse JSON response"));
+    }
+
+    #[test]
+    fn retryable_anthropic_overloaded_529() {
+        // Anthropic's overloaded status and its textual form are transient.
+        assert!(is_retryable_message("API error (529): overloaded_error"));
+        assert!(is_retryable_message(
+            "claude exited: Overloaded, please retry"
+        ));
     }
 
     #[test]

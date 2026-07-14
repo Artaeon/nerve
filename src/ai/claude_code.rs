@@ -212,6 +212,67 @@ impl ClaudeCodeProvider {
 
         args
     }
+
+    /// A single (non-retried) invocation of the claude CLI in JSON mode.
+    /// `chat` wraps this in exponential-backoff retry so a transient CLI/API
+    /// failure doesn't abort the turn.
+    async fn chat_once(&self, messages: &[ChatMessage], model: &str) -> anyhow::Result<String> {
+        let (system_prompt, prompt) = Self::build_prompt(messages);
+        let model = self.resolve_model(model);
+
+        if prompt.is_empty() {
+            return Ok(String::new());
+        }
+
+        let args = self.build_args(model, "json", &system_prompt);
+
+        let mut child = Command::new(&self.claude_binary)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("failed to run claude CLI — is it installed and in PATH?")?;
+
+        // Feed the prompt via stdin (no argv size limit). Write concurrently
+        // with collecting output so a prompt larger than the pipe buffer
+        // can't deadlock: claude drains stdin while we await its output.
+        let stdin = child.stdin.take();
+        let prompt_bytes = prompt.into_bytes();
+        let write_task = tokio::spawn(async move {
+            if let Some(mut si) = stdin {
+                use tokio::io::AsyncWriteExt;
+                let _ = si.write_all(&prompt_bytes).await;
+                let _ = si.shutdown().await;
+            }
+        });
+
+        let output = child
+            .wait_with_output()
+            .await
+            .context("failed to run claude CLI — is it installed and in PATH?")?;
+        let _ = write_task.await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            return Err(anyhow!(friendly_cli_error(&stderr, &stdout)));
+        }
+
+        // The JSON output has a "result" field containing the response text.
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("failed to parse claude JSON output")?;
+
+        // Capture session ID for continuity (logged for now; the trait
+        // returns only a String so we cannot propagate it directly).
+        if let Some(sid) = json["session_id"].as_str() {
+            tracing::info!("Claude Code session: {sid}");
+        }
+
+        let result = json["result"].as_str().unwrap_or("").to_string();
+
+        Ok(result)
+    }
 }
 
 impl AiProvider for ClaudeCodeProvider {
@@ -395,61 +456,15 @@ impl AiProvider for ClaudeCodeProvider {
         let messages = messages.to_vec();
         let model = model.to_string();
         Box::pin(async move {
-            let (system_prompt, prompt) = Self::build_prompt(&messages);
-            let model = self.resolve_model(&model);
-
-            if prompt.is_empty() {
-                return Ok(String::new());
-            }
-
-            let args = self.build_args(model, "json", &system_prompt);
-
-            let mut child = Command::new(&self.claude_binary)
-                .args(&args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .context("failed to run claude CLI — is it installed and in PATH?")?;
-
-            // Feed the prompt via stdin (no argv size limit). Write concurrently
-            // with collecting output so a prompt larger than the pipe buffer
-            // can't deadlock: claude drains stdin while we await its output.
-            let stdin = child.stdin.take();
-            let prompt_bytes = prompt.into_bytes();
-            let write_task = tokio::spawn(async move {
-                if let Some(mut si) = stdin {
-                    use tokio::io::AsyncWriteExt;
-                    let _ = si.write_all(&prompt_bytes).await;
-                    let _ = si.shutdown().await;
-                }
-            });
-
-            let output = child
-                .wait_with_output()
-                .await
-                .context("failed to run claude CLI — is it installed and in PATH?")?;
-            let _ = write_task.await;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return Err(anyhow!(friendly_cli_error(&stderr, &stdout)));
-            }
-
-            // The JSON output has a "result" field containing the response text.
-            let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-                .context("failed to parse claude JSON output")?;
-
-            // Capture session ID for continuity (logged for now; the trait
-            // returns only a String so we cannot propagate it directly).
-            if let Some(sid) = json["session_id"].as_str() {
-                tracing::info!("Claude Code session: {sid}");
-            }
-
-            let result = json["result"].as_str().unwrap_or("").to_string();
-
-            Ok(result)
+            // The claude CLI can fail transiently (network blip, API 429/5xx/529,
+            // "overloaded"). This is the DEFAULT provider and drives the
+            // unattended worker, so a single hiccup must not abort the whole
+            // turn — retry with the shared exponential backoff instead.
+            let cfg = crate::ai::retry::RetryConfig::default();
+            crate::ai::retry::retry_async(&cfg, crate::ai::retry::is_retryable_error, || {
+                self.chat_once(&messages, &model)
+            })
+            .await
         })
     }
 
