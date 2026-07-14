@@ -34,6 +34,20 @@ const RESTART_AFTER_JOBS: usize = 6;
 pub async fn run_worker() {
     let queue = Queue::default_location();
     tracing::info!("nerve worker started; draining {:?}", "~/.nerve/queue");
+    // A fresh worker means any job still marked `Running` was orphaned by the
+    // previous process (crash, hang, or a proactive recycle mid-job). Reclaim
+    // them onto the queue so nothing is stranded — bounded by MAX_WEDGE_RETRIES
+    // so a job that reliably kills the worker eventually fails instead of looping.
+    match queue.reclaim_orphaned_running(MAX_WEDGE_RETRIES) {
+        Ok(ids) if !ids.is_empty() => {
+            tracing::warn!(
+                "worker: reclaimed {} orphaned running job(s): {ids:?}",
+                ids.len()
+            )
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("worker: could not reclaim orphaned jobs: {e}"),
+    }
     let mut completed = 0usize;
     loop {
         match queue.next_queued() {

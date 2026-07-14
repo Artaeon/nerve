@@ -291,6 +291,36 @@ impl Queue {
         Ok(updated.map(|j| j.attempts).unwrap_or(0))
     }
 
+    /// Reclaim jobs stuck in `Running` — orphaned by a worker crash, hang, or
+    /// restart. The worker is single-instance, so on startup ANY `Running` job
+    /// is definitionally orphaned (no live worker is processing it). Each is put
+    /// back on the queue (incrementing `attempts`) up to `max_attempts`, past
+    /// which it is marked failed so a job that reliably hangs/crashes the worker
+    /// can't strand the queue forever. Returns the ids that were requeued.
+    ///
+    /// Without this, a restart left a `Running` job orphaned indefinitely and
+    /// the worker skipped straight past it to the next `Queued` job — silently
+    /// dropping work.
+    pub fn reclaim_orphaned_running(&self, max_attempts: u32) -> anyhow::Result<Vec<String>> {
+        let mut requeued = Vec::new();
+        for job in self.list()?.into_iter() {
+            if job.status != JobStatus::Running {
+                continue;
+            }
+            if job.attempts >= max_attempts {
+                let _ = self.mark_failed(
+                    &job.id,
+                    "worker crashed or hung on this job repeatedly; giving up after retries — \
+                     please resubmit.",
+                );
+            } else {
+                let _ = self.requeue(&job.id);
+                requeued.push(job.id);
+            }
+        }
+        Ok(requeued)
+    }
+
     /// Cancel a job. Only jobs that haven't started yet can be cancelled;
     /// returns `true` if the job was queued and is now cancelled.
     pub fn cancel(&self, id: &str) -> anyhow::Result<bool> {

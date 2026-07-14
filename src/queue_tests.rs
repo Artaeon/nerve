@@ -23,6 +23,37 @@ fn requeue_returns_a_job_to_the_queue_and_counts_attempts() {
 }
 
 #[test]
+fn reclaim_orphaned_running_requeues_stuck_jobs() {
+    let (_d, q) = temp_queue();
+    let a = q.enqueue("/srv/repo", "job a").unwrap();
+    let b = q.enqueue("/srv/repo", "job b").unwrap();
+    // `a` is mid-flight (Running) when the worker dies; `b` is still Queued.
+    q.mark_running(&a.id).unwrap();
+    let reclaimed = q.reclaim_orphaned_running(2).unwrap();
+    assert_eq!(reclaimed, vec![a.id.clone()]);
+    // `a` is back on the queue with an incremented attempt count.
+    let ra = q.get(&a.id).unwrap().unwrap();
+    assert_eq!(ra.status, JobStatus::Queued);
+    assert_eq!(ra.attempts, 1);
+    // `b` is untouched.
+    assert_eq!(q.get(&b.id).unwrap().unwrap().attempts, 0);
+}
+
+#[test]
+fn reclaim_orphaned_running_fails_a_job_past_the_attempt_bound() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/srv/repo", "cursed job").unwrap();
+    // Simulate a job that has already exhausted its retries and is Running again.
+    q.mark_running(&job.id).unwrap();
+    q.requeue(&job.id).unwrap(); // attempts = 1
+    q.requeue(&job.id).unwrap(); // attempts = 2
+    q.mark_running(&job.id).unwrap();
+    let reclaimed = q.reclaim_orphaned_running(2).unwrap();
+    assert!(reclaimed.is_empty(), "should not requeue past the bound");
+    assert_eq!(q.get(&job.id).unwrap().unwrap().status, JobStatus::Failed);
+}
+
+#[test]
 fn enqueue_creates_a_queued_job_with_branch() {
     let (_d, q) = temp_queue();
     let job = q.enqueue("/srv/repo", "add tests").unwrap();
