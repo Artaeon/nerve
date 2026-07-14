@@ -685,6 +685,15 @@ pub async fn run_decomposed_agent(
         edited = edited || out.edited;
         hit_cap = hit_cap || out.hit_max_iterations;
 
+        // Commit each finished step to the job branch so progress is DURABLE: a
+        // decompose job runs many sub-agents in one process and can hit the
+        // worker wedge mid-way — committing per step means a wedge-triggered
+        // requeue resumes with the completed steps intact instead of starting
+        // over (the requeue path keeps the branch's commits). Best-effort.
+        if out.edited {
+            commit_step(i + 1, n, title);
+        }
+
         // A wedged environment (every tool failing) won't recover within this
         // process — stop and let the worker self-heal via a restart.
         if out.all_tools_failed {
@@ -709,6 +718,23 @@ pub async fn run_decomposed_agent(
         hit_max_iterations: hit_cap,
         all_tools_failed: wedged,
     })
+}
+
+/// Commit the current working-tree changes to the job branch as one decompose
+/// step, so progress survives a mid-run wedge + requeue. Best-effort: any git
+/// failure is ignored (the worker still commits any remaining dirt at the end).
+/// Assumes CWD is the repo (the worker sets it before the run).
+fn commit_step(step: usize, total: usize, title: &str) {
+    let run = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(["-c", "safe.directory=*"])
+            .args(args)
+            .output()
+    };
+    let _ = run(&["add", "-A"]);
+    let msg = format!("decompose step {step}/{total}: {title}");
+    // --no-verify so a repo's pre-commit hook can't block the autonomous run.
+    let _ = run(&["commit", "--no-verify", "-m", &msg]);
 }
 
 /// The uncommitted diff in the current directory (the coder's changes, which

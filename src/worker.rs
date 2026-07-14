@@ -183,8 +183,15 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         let _ = git(repo, &["reset", "--hard", &base]);
         let _ = git(repo, &["clean", "-fd"]);
         if git(repo, &["checkout", "-b", &branch]).is_err() {
+            // The branch already exists — this is a REQUEUED attempt. Its branch
+            // may carry committed progress from a prior attempt (a decompose job
+            // commits each finished sub-task, so a mid-run wedge doesn't discard
+            // the steps already done). Switch to it and clean only UNCOMMITTED
+            // dirt — do NOT reset to base, which would throw that progress away.
+            // A normal job has no commits ahead of base, so this is equivalent to
+            // the old reset for it.
             let _ = git(repo, &["checkout", "-f", &branch]);
-            let _ = git(repo, &["reset", "--hard", &base]);
+            let _ = git(repo, &["clean", "-fd"]);
         }
     }
 
