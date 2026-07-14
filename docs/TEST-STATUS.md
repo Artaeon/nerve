@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-10 · **Unit tests:** 1,990 passing (`cargo test`),
+**Last updated:** 2026-07-14 · **Unit tests:** 2,007 passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -150,6 +150,50 @@ iCalendar export · health readiness probe · security headers · timezone-param
 - Its design-system UI is on-brand and self-consistent when the tokens/classes are named, but it doesn't always check whether a class/component **already exists** (duplicated `.card`/`.well`; downgraded an existing empty state) → **review for duplication/regressions**.
 
 ---
+
+## Session 2026-07-14 — context-durability audit + three deterministic fixes
+
+A deep audit of nerve's own context management (token efficiency + "does it
+forget?") drove three fixes, each with tests, all landed green (2,007 tests,
+clippy + fmt clean):
+
+- **Interactive compaction now pins the task.** `compact_messages`
+  (`src/agent/context.rs`) previously protected only *leading system* prompts,
+  so on a long TUI conversation the original user request could be summarized
+  into a lossy 150-char blurb and lost irreversibly. It now keeps the first user
+  turn verbatim — parity with the headless loop's `HEAD_KEEP`. This was the
+  single biggest durability asymmetry. ✅ (regression test added)
+- **Tool-result feedback no longer truncated below the read cap.** `read_file`
+  returns up to 50,000 chars but both runners re-truncated every tool result to
+  5,000 — the model saw only the first 10% of a file it just read, and
+  re-reading returned the same clipped window. A single source of truth
+  (`MAX_TOOL_OUTPUT_CHARS = 50_000`, `src/agent/tools/fs.rs`) now governs the
+  read cap and both feedback caps. ✅
+- **Default provider retries transient failures.** `claude_code.rs` (the default,
+  and what drives the unattended worker) had *no* retry — a network blip or API
+  429/5xx/529/overload aborted the whole turn; only `openai.rs` used the existing
+  backoff. Extracted `chat_once` and wrapped `chat()` in `retry_async`; taught the
+  classifier about Anthropic's 529 "overloaded". ✅
+
+**Honest verdict from the audit:** token efficiency is above average (pull-based
+BM25 memory, <1,200-char always-on header, last-turn-only `@file` expansion); the
+headless/worker path does **not** forget (task + project `.nerve` pinned, journals
+durable + corruption-tolerant); the interactive path *could* forget until the fix
+above. Remaining known weaknesses: two divergent compactors (interactive vs
+headless) should eventually be unified, and budgeting still uses a `chars/3`
+heuristic rather than a real tokenizer.
+
+**Dogfooding finding (vollgebucht, 2026-07-14):** a "reschedule button" job
+(edit-existing UI wiring) produced a **stub** — it imported `rescheduleAppointment`
+and defined helper constants but rendered no form and called nothing; tsc passed
+only because vollgebucht's config doesn't flag unused locals. Same "reads but
+half-acts" failure mode seen before on edit-existing tasks. **Mitigation that
+worked:** re-issue with a fully prescriptive spec (exact function signatures, the
+exact JSX to render, explicit acceptance criteria: "X must actually be CALLED",
+"a datetime input must actually be RENDERED"). Reinforces the standing rule:
+decompose cross-cutting UI wiring into prescriptive, code-only jobs, and
+human-review every result for completeness — the verify gate checks type/test
+correctness, not feature completeness.
 
 ## How to extend this record
 When a feature is genuinely exercised, move it up (❔ → 💨 → ✅) with a one-line
