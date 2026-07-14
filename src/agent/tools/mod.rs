@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod exec;
-mod fs;
+pub mod fs;
 pub mod parse;
 
 pub use parse::parse_tool_calls;

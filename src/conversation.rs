@@ -836,9 +836,15 @@ pub(crate) async fn run_agent_tools_task(
 
         let status_icon = if result.success { "OK" } else { "ERROR" };
         // Char-safe truncation — tool output can be arbitrary bytes
-        // (file contents in any language, subprocess stdout, etc.).
-        let output_str = if result.output.len() > 5000 {
-            let head: String = result.output.chars().take(5000).collect();
+        // (file contents in any language, subprocess stdout, etc.). The cap
+        // matches `read_file`'s own cap so a file the model just read is fed
+        // back whole, not re-truncated to a smaller window.
+        let output_str = if result.output.len() > crate::agent::tools::fs::MAX_TOOL_OUTPUT_CHARS {
+            let head: String = result
+                .output
+                .chars()
+                .take(crate::agent::tools::fs::MAX_TOOL_OUTPUT_CHARS)
+                .collect();
             format!(
                 "{head}...\n[Output truncated: {} bytes total]",
                 result.output.len()

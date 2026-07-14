@@ -6,6 +6,14 @@ use std::path::{Path, PathBuf};
 
 use super::{ToolCall, ToolResult, require_arg};
 
+/// The single source of truth for how many characters of a tool result reach
+/// the model. `read_file` caps a large file at this size, and the agent runners
+/// (interactive + headless) cap the tool-result feedback at the SAME size — so a
+/// file the model just read is never re-truncated to a smaller window on the way
+/// back. Previously the feedback cap (5,000) was 10x smaller than this read cap,
+/// silently dropping the tail of every large read.
+pub const MAX_TOOL_OUTPUT_CHARS: usize = 50_000;
+
 pub(super) fn execute_read_file(call: &ToolCall) -> ToolResult {
     let path = match require_arg(call, "path") {
         Ok(p) => p,
@@ -26,8 +34,8 @@ pub(super) fn execute_read_file(call: &ToolCall) -> ToolResult {
             // Truncate very large files. Byte-slicing here would panic
             // on any file whose byte 50_000 lies mid UTF-8 char (common
             // for CJK source, JSON with non-ASCII strings, etc.).
-            let truncated = if content.len() > 50_000 {
-                let head: String = content.chars().take(50_000).collect();
+            let truncated = if content.len() > MAX_TOOL_OUTPUT_CHARS {
+                let head: String = content.chars().take(MAX_TOOL_OUTPUT_CHARS).collect();
                 format!("{head}...\n\n[Truncated: file is {} bytes]", content.len())
             } else {
                 content

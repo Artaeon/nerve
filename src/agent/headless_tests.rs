@@ -430,10 +430,19 @@ fn compact_context_stubs_old_tool_output_but_keeps_task_reasoning_and_tail() {
 
 #[test]
 fn truncate_output_caps_long_output() {
-    let long = "x".repeat(6000);
+    use crate::agent::tools::fs::MAX_TOOL_OUTPUT_CHARS;
+    // Output larger than the shared cap is truncated to that cap.
+    let long = "x".repeat(MAX_TOOL_OUTPUT_CHARS + 1000);
     let t = truncate_output(&long);
-    assert!(t.contains("[Output truncated: 6000 bytes total]"));
-    assert!(t.len() < 5200);
+    assert!(t.contains(&format!(
+        "[Output truncated: {} bytes total]",
+        MAX_TOOL_OUTPUT_CHARS + 1000
+    )));
+    assert!(t.chars().count() < MAX_TOOL_OUTPUT_CHARS + 200);
+    // A large-but-in-cap read (e.g. a 40k file `read_file` returned) is fed back
+    // WHOLE — no longer clipped to the old 5,000-char window.
+    let file = "y".repeat(40_000);
+    assert_eq!(truncate_output(&file), file);
     // Short output is returned verbatim.
     assert_eq!(truncate_output("short"), "short");
 }

@@ -163,9 +163,12 @@ pub struct HeadlessOutcome {
 }
 
 /// Char-safe truncation of tool output, matching the interactive runner's cap.
+/// The cap equals `read_file`'s own cap (`MAX_TOOL_OUTPUT_CHARS`) so a file the
+/// model just read is passed back whole rather than clipped to a smaller window.
 fn truncate_output(output: &str) -> String {
-    if output.len() > 5000 {
-        let head: String = output.chars().take(5000).collect();
+    use crate::agent::tools::fs::MAX_TOOL_OUTPUT_CHARS;
+    if output.len() > MAX_TOOL_OUTPUT_CHARS {
+        let head: String = output.chars().take(MAX_TOOL_OUTPUT_CHARS).collect();
         format!(
             "{head}...\n[Output truncated: {} bytes total]",
             output.len()
