@@ -198,11 +198,25 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     } else {
         Vec::new()
     };
+    // When the agent stopped at the iteration cap, the commit may be a partial
+    // result (it ran out of steps mid-task). Mark that plainly IN the commit
+    // message so a reviewer scanning `git log` sees it — the verify gate proves
+    // the code type-checks, not that the feature is complete.
+    let incomplete_note = if outcome.hit_max_iterations {
+        " [INCOMPLETE: stopped at iteration cap — review for missing work]"
+    } else {
+        ""
+    };
     if !changed.is_empty() {
         let mut add = vec!["add", "--"];
         add.extend(changed.iter().map(String::as_str));
         let _ = git(repo, &add);
-        let msg = format!("nerve job {}: {}", job.id, first_line(&job.prompt));
+        let msg = format!(
+            "nerve job {}: {}{}",
+            job.id,
+            first_line(&job.prompt),
+            incomplete_note
+        );
         let _ = git(repo, &["commit", "-m", &msg]);
     }
 
@@ -211,10 +225,15 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     // nothing is forgotten. We journal the *semantic* record: the agent's own
     // summary (what changed and why), the concrete files it touched, and the
     // iterations spent — not just that a job ran. Best-effort.
+    let journal_verify = if outcome.hit_max_iterations {
+        format!("{verify_summary} · INCOMPLETE (hit iteration cap)")
+    } else {
+        verify_summary.clone()
+    };
     let _ = crate::project::ProjectStore::for_workspace(repo).record_activity_full(
         &job.prompt,
         outcome.edited,
-        &verify_summary,
+        &journal_verify,
         &outcome.final_response,
         &changed,
         outcome.iterations,
