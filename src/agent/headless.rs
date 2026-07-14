@@ -57,6 +57,17 @@ const TAIL_KEEP: usize = 6;
 /// no changes, before accepting it as genuinely done.
 const MAX_NUDGES: usize = 2;
 
+/// After this many tool iterations with no edit yet, nudge a full-tool agent to
+/// stop exploring and start implementing. The single biggest token sink observed
+/// in practice is the model reading/searching a dozen-plus files before it makes
+/// its first change — and because each iteration re-sends the growing context,
+/// exploration cost is roughly quadratic. A one-time act-now nudge cuts the long
+/// read-only prefix without forcing premature action (the model may still read
+/// more if it genuinely needs to). Deliberately framed as "you have enough
+/// context, proceed" — never as a *limit*, which makes the model confabulate a
+/// tool cap and quit (see the anti-confabulation nudge below).
+const EXPLORE_NUDGE_AFTER: usize = 8;
+
 /// Bound the running message history so a long job stays token-efficient.
 ///
 /// Strategy: keep the system prompts + task (head) and the most recent
@@ -261,6 +272,9 @@ async fn run_role(
     let mut edited = false;
     let mut any_tool_succeeded = false;
     let mut nudges = 0usize;
+    // Whether we have already delivered the one-time "stop exploring, implement
+    // now" nudge, so it fires at most once per run.
+    let mut explore_nudged = false;
     // Assigned on every loop iteration before any break, so it is always set by
     // the time we read it after the loop.
     let mut final_response;
@@ -367,6 +381,28 @@ async fn run_role(
         }
 
         messages.push(ChatMessage::user(format_results(&results)));
+
+        // Token-efficiency: if a full-tool agent has spent many iterations
+        // exploring and still hasn't made a single change, nudge it — ONCE — to
+        // proceed. This trims the long read-only prefix that dominates token
+        // cost (each iteration re-sends the growing context). It never forces
+        // action: the model can keep reading if it truly needs to. Positive
+        // framing only — no mention of any "limit" (that makes the model quit).
+        if policy == ToolPolicy::Full
+            && !edited
+            && !explore_nudged
+            && iterations >= EXPLORE_NUDGE_AFTER
+        {
+            explore_nudged = true;
+            tracing::info!(
+                "headless: {iterations} iterations without an edit — nudging to implement"
+            );
+            messages.push(ChatMessage::user(
+                "You have now gathered plenty of context and have made no changes yet. You almost \
+                 certainly have enough to proceed — start IMPLEMENTING now with \
+                 write_file/edit_file. Read more only if a specific edit truly requires it.",
+            ));
+        }
 
         if iterations >= max_iterations {
             hit_max_iterations = true;

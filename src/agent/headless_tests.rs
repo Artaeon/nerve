@@ -13,6 +13,10 @@ struct MockProvider {
     responses: Vec<String>,
     idx: Mutex<usize>,
     fail: bool,
+    /// When set, `chat` flips this to true the moment it receives a message
+    /// containing the explore-nudge phrase — letting a test assert the nudge
+    /// fired without exposing the whole message history.
+    nudge_seen: Option<Arc<Mutex<bool>>>,
 }
 
 impl MockProvider {
@@ -21,6 +25,7 @@ impl MockProvider {
             responses: responses.iter().map(|s| s.to_string()).collect(),
             idx: Mutex::new(0),
             fail: false,
+            nudge_seen: None,
         })
     }
     fn failing() -> Arc<dyn AiProvider> {
@@ -28,7 +33,20 @@ impl MockProvider {
             responses: vec![],
             idx: Mutex::new(0),
             fail: true,
+            nudge_seen: None,
         })
+    }
+    /// Like `scripted`, but also returns a flag set true once the loop delivers
+    /// the "start IMPLEMENTING now" explore-nudge.
+    fn scripted_capturing(responses: &[&str]) -> (Arc<dyn AiProvider>, Arc<Mutex<bool>>) {
+        let flag = Arc::new(Mutex::new(false));
+        let provider = Arc::new(Self {
+            responses: responses.iter().map(|s| s.to_string()).collect(),
+            idx: Mutex::new(0),
+            fail: false,
+            nudge_seen: Some(flag.clone()),
+        });
+        (provider, flag)
     }
 }
 
@@ -44,11 +62,18 @@ impl AiProvider for MockProvider {
 
     fn chat(
         &self,
-        _messages: &[ChatMessage],
+        messages: &[ChatMessage],
         _model: &str,
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
         if self.fail {
             return Box::pin(async { Err(anyhow::anyhow!("mock provider failure")) });
+        }
+        if let Some(flag) = &self.nudge_seen
+            && messages
+                .iter()
+                .any(|m| m.content.contains("start IMPLEMENTING now"))
+        {
+            *flag.lock().unwrap() = true;
         }
         let resp = {
             let mut idx = self.idx.lock().unwrap();
@@ -193,6 +218,35 @@ async fn stops_at_iteration_cap() {
         .unwrap();
     assert_eq!(out.iterations, 3);
     assert!(out.hit_max_iterations);
+}
+
+#[tokio::test]
+async fn nudges_to_implement_after_long_read_only_exploration() {
+    // A run that only ever reads (never edits) should, past EXPLORE_NUDGE_AFTER
+    // iterations, get the one-time "start IMPLEMENTING now" nudge — the
+    // token-efficiency guard against endless exploration.
+    let (provider, nudged) =
+        MockProvider::scripted_capturing(&["<tool_call>tool: list_files\npath: .</tool_call>"]);
+    let _ = run_headless_agent(&provider, "m", "explore", EXPLORE_NUDGE_AFTER + 3, 5)
+        .await
+        .unwrap();
+    assert!(
+        *nudged.lock().unwrap(),
+        "expected an implement-now nudge after {EXPLORE_NUDGE_AFTER} read-only iterations"
+    );
+}
+
+#[tokio::test]
+async fn no_explore_nudge_when_work_is_quick() {
+    // A run that reads once then finishes must NOT receive the explore nudge.
+    let (provider, nudged) = MockProvider::scripted_capturing(&[
+        "<tool_call>tool: list_files\npath: .</tool_call>",
+        "Done.",
+    ]);
+    let _ = run_headless_agent(&provider, "m", "quick", 25, 5)
+        .await
+        .unwrap();
+    assert!(!*nudged.lock().unwrap(), "should not nudge a quick run");
 }
 
 #[tokio::test]
