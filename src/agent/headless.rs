@@ -156,7 +156,7 @@ fn project_memory_context_from(store: &crate::project::ProjectStore) -> Option<S
 }
 
 /// The result of a headless agent run.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HeadlessOutcome {
     /// Number of tool-executing iterations that ran.
     pub iterations: usize,
@@ -171,6 +171,63 @@ pub struct HeadlessOutcome {
     /// even `read_file`, failing). A healthy run always has at least one
     /// successful read. The worker uses this to self-heal via a fresh restart.
     pub all_tools_failed: bool,
+}
+
+/// Request handed to a fresh `nerve --exec-agent` child process: run ONE
+/// full-tool agent for `task` in `cwd`, then exit. Serialized over the child's
+/// stdin; the child writes a [`HeadlessOutcome`] JSON back on stdout.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExecAgentRequest {
+    pub task: String,
+    pub model: String,
+    pub max_iterations: usize,
+    pub timeout: u64,
+    pub cwd: String,
+}
+
+/// Run one agent step in a FRESH child process (`nerve --exec-agent`), so the
+/// long-running worker's "wedge" (accumulated in-process state that eventually
+/// makes every tool fail) cannot build up across a decompose job's many steps —
+/// each step gets a pristine process. Returns `None` on ANY spawn/IO/parse
+/// failure so the caller can fall back to running the step in-process.
+async fn exec_step_subprocess(
+    task: &str,
+    model: &str,
+    max_iterations: usize,
+    timeout: u64,
+) -> Option<HeadlessOutcome> {
+    use tokio::io::AsyncWriteExt;
+    let cwd = std::env::current_dir().ok()?.to_string_lossy().to_string();
+    let req = ExecAgentRequest {
+        task: task.to_string(),
+        model: model.to_string(),
+        max_iterations,
+        timeout,
+        cwd,
+    };
+    let req_json = serde_json::to_string(&req).ok()?;
+    let exe = std::env::current_exe().ok()?;
+
+    let mut child = tokio::process::Command::new(exe)
+        .arg("--exec-agent")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit()) // logs still flow to journald
+        .spawn()
+        .ok()?;
+
+    // The request is small (fits the pipe buffer), so write-then-wait can't
+    // deadlock. Drop stdin to signal EOF before collecting output.
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(req_json.as_bytes()).await.ok()?;
+        stdin.shutdown().await.ok()?;
+    }
+    let output = child.wait_with_output().await.ok()?;
+    if !output.status.success() {
+        tracing::warn!("exec-agent child exited unsuccessfully; falling back to in-process");
+        return None;
+    }
+    serde_json::from_slice::<HeadlessOutcome>(&output.stdout).ok()
 }
 
 /// Char-safe truncation of tool output, matching the interactive runner's cap.
@@ -671,16 +728,28 @@ pub async fn run_decomposed_agent(
             step = i + 1,
         );
         tracing::info!("decompose: step {}/{n}: {title}", i + 1);
-        let out = run_role(
-            provider,
-            model,
-            AGENT_SYSTEM,
-            ToolPolicy::Full,
-            &step_task,
-            max_iterations,
-            command_timeout_secs,
-        )
-        .await?;
+        // Run each step in a FRESH process so the wedge can't accumulate across
+        // the job's many steps. Fall back to in-process if spawning fails, so
+        // decomposition still works in environments where a self-exec isn't
+        // possible (e.g. tests).
+        let out =
+            match exec_step_subprocess(&step_task, model, max_iterations, command_timeout_secs)
+                .await
+            {
+                Some(out) => out,
+                None => {
+                    run_role(
+                        provider,
+                        model,
+                        AGENT_SYSTEM,
+                        ToolPolicy::Full,
+                        &step_task,
+                        max_iterations,
+                        command_timeout_secs,
+                    )
+                    .await?
+                }
+            };
         total_iters += out.iterations;
         edited = edited || out.edited;
         hit_cap = hit_cap || out.hit_max_iterations;

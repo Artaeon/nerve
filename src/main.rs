@@ -145,6 +145,14 @@ struct Cli {
     #[arg(long)]
     decompose: bool,
 
+    /// Internal: execute a SINGLE headless agent step in this fresh process,
+    /// reading a JSON request on stdin and writing the JSON outcome to stdout.
+    /// Used by the worker/decompose loop to isolate each step in its own process
+    /// so the long-running-worker "wedge" (accumulated in-process state) can't
+    /// build up. Not meant to be run by hand.
+    #[arg(long, hide = true)]
+    exec_agent: bool,
+
     /// List jobs on the running server (Unix only)
     #[arg(long)]
     jobs: bool,
@@ -201,6 +209,11 @@ async fn main() -> anyhow::Result<()> {
     if let Some(shell) = cli.completions {
         clap_complete::generate(shell, &mut Cli::command(), "nerve", &mut std::io::stdout());
         return Ok(());
+    }
+
+    // ── Isolated single-agent execution (fresh process per step) ─────
+    if cli.exec_agent {
+        return worker::run_exec_agent().await;
     }
 
     // ── Daemon commands (no provider needed, Unix only) ──────────────

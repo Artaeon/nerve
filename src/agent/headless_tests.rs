@@ -276,6 +276,37 @@ fn parse_subtasks_empty_on_garbage() {
 }
 
 #[test]
+fn exec_agent_request_and_outcome_json_roundtrip() {
+    // The subprocess boundary sends an ExecAgentRequest over stdin and a
+    // HeadlessOutcome back over stdout — both must serde round-trip exactly.
+    let req = ExecAgentRequest {
+        task: "do the thing".into(),
+        model: "sonnet".into(),
+        max_iterations: 40,
+        timeout: 300,
+        cwd: "/srv/repo".into(),
+    };
+    let json = serde_json::to_string(&req).unwrap();
+    let back: ExecAgentRequest = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.task, "do the thing");
+    assert_eq!(back.max_iterations, 40);
+    assert_eq!(back.cwd, "/srv/repo");
+
+    let outcome = HeadlessOutcome {
+        iterations: 7,
+        edited: true,
+        final_response: "done".into(),
+        hit_max_iterations: false,
+        all_tools_failed: false,
+    };
+    let oj = serde_json::to_string(&outcome).unwrap();
+    let ob: HeadlessOutcome = serde_json::from_str(&oj).unwrap();
+    assert_eq!(ob.iterations, 7);
+    assert!(ob.edited);
+    assert_eq!(ob.final_response, "done");
+}
+
+#[test]
 fn parse_subtasks_caps_at_max() {
     let items: Vec<String> = (0..30)
         .map(|i| format!("{{\"title\":\"t{i}\",\"instruction\":\"do {i}\"}}"))

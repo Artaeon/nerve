@@ -77,6 +77,41 @@ pub async fn run_worker() {
     }
 }
 
+/// Entry point for `nerve --exec-agent`: read an [`ExecAgentRequest`] JSON from
+/// stdin, run ONE full-tool agent in the requested repo, and write the resulting
+/// [`HeadlessOutcome`] JSON to stdout. This runs as a FRESH child process spawned
+/// by the decompose loop, so accumulated in-process state (the worker "wedge")
+/// can't build up across a job's many steps. Logs go to stderr (set up in main),
+/// so stdout carries only the outcome JSON.
+pub async fn run_exec_agent() -> anyhow::Result<()> {
+    use std::io::Read;
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    let req: crate::agent::headless::ExecAgentRequest = serde_json::from_str(&input)
+        .map_err(|e| anyhow::anyhow!("exec-agent: invalid request JSON: {e}"))?;
+
+    std::env::set_current_dir(&req.cwd)
+        .map_err(|e| anyhow::anyhow!("exec-agent: cannot enter {}: {e}", req.cwd))?;
+
+    let mut config = crate::config::Config::load().unwrap_or_default();
+    default_deterministic_sampling(&mut config);
+    let provider = crate::provider_setup::create_provider(&config, None)
+        .map_err(|e| anyhow::anyhow!("exec-agent: no AI provider configured: {e}"))?;
+    let provider: Arc<dyn AiProvider> = Arc::from(provider);
+
+    let outcome = crate::agent::headless::run_headless_agent(
+        &provider,
+        &req.model,
+        &req.task,
+        req.max_iterations,
+        req.timeout,
+    )
+    .await?;
+
+    println!("{}", serde_json::to_string(&outcome)?);
+    Ok(())
+}
+
 /// Run a single job, translating any failure into a `Failed` status with the
 /// error recorded on the job (so the client can see why).
 async fn run_one(queue: &Queue, job: Job) {
