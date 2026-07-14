@@ -54,6 +54,36 @@ fn reclaim_orphaned_running_fails_a_job_past_the_attempt_bound() {
 }
 
 #[test]
+fn defer_keeps_job_queued_and_next_queued_skips_it_until_due() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/srv/repo", "needs quota").unwrap();
+    let far_future = super::now_secs() + 3600;
+    q.defer(&job.id, far_future, "deferred (provider quota)")
+        .unwrap();
+    // Still Queued, but gated behind not_before.
+    let reloaded = q.get(&job.id).unwrap().unwrap();
+    assert_eq!(reloaded.status, JobStatus::Queued);
+    assert_eq!(reloaded.not_before, Some(far_future));
+    // The worker must NOT pick it while it's deferred into the future.
+    assert!(q.next_queued().unwrap().is_none());
+}
+
+#[test]
+fn next_queued_returns_a_job_whose_defer_has_elapsed() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/srv/repo", "quota reset").unwrap();
+    // Deferred to a moment already in the past → due now.
+    q.defer(
+        &job.id,
+        super::now_secs().saturating_sub(10),
+        "was deferred",
+    )
+    .unwrap();
+    let next = q.next_queued().unwrap();
+    assert_eq!(next.map(|j| j.id), Some(job.id));
+}
+
+#[test]
 fn enqueue_creates_a_queued_job_with_branch() {
     let (_d, q) = temp_queue();
     let job = q.enqueue("/srv/repo", "add tests").unwrap();

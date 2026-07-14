@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::ai::provider::AiProvider;
-use crate::queue::{Job, Queue};
+use crate::queue::{Job, Queue, now_secs};
 
 /// How often to check for new work when the queue is empty.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
@@ -28,6 +28,12 @@ const POLL_INTERVAL: Duration = Duration::from_secs(3);
 /// seamlessly on the next process. Kept conservative — a restart costs ~1s and a
 /// mid-batch wedge costs a whole job.
 const RESTART_AFTER_JOBS: usize = 6;
+
+/// How long to defer a job when the provider reports a quota / session-limit
+/// exhaustion. The worker keeps polling, so once the usage window resets the job
+/// runs on the next poll after this delay; if still limited it defers again. A
+/// conservative value avoids hammering the provider while a window is closed.
+const QUOTA_BACKOFF_SECS: u64 = 20 * 60;
 
 /// Drain the queue forever (until a proactive restart). Spawned as a background
 /// task inside the daemon.
@@ -111,8 +117,23 @@ async fn run_one(queue: &Queue, job: Job) {
             std::process::exit(1);
         }
         Err(e) => {
-            let _ = queue.mark_failed(&id, &e.to_string());
-            tracing::warn!("job {id} failed: {e}");
+            // A provider quota / session-limit exhaustion doesn't clear on retry —
+            // it clears when the usage window resets. DEFER the job (keep it
+            // Queued, gated behind `not_before`) so it resumes automatically once
+            // the window reopens, instead of failing and losing the work. Any
+            // other error is a real failure.
+            if crate::ai::retry::is_quota_error(&e) {
+                let until = now_secs() + QUOTA_BACKOFF_SECS;
+                let _ = queue.defer(&id, until, &format!("deferred (provider quota): {e}"));
+                tracing::warn!(
+                    "job {id}: provider quota/session limit — deferred ~{}min until the window \
+                     resets: {e}",
+                    QUOTA_BACKOFF_SECS / 60
+                );
+            } else {
+                let _ = queue.mark_failed(&id, &e.to_string());
+                tracing::warn!("job {id} failed: {e}");
+            }
         }
     }
 }
@@ -602,6 +623,7 @@ mod tests {
             finished_at: None,
             error: None,
             attempts: 0,
+            not_before: None,
         }
     }
 

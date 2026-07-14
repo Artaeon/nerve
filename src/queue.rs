@@ -87,6 +87,12 @@ pub struct Job {
     /// for backward compat with jobs written before auto-requeue existed.
     #[serde(default)]
     pub attempts: u32,
+    /// Unix seconds before which the worker must NOT run this job. Set when a job
+    /// is deferred (e.g. the provider reported a session/quota limit with a reset
+    /// time) so it resumes automatically after the wait instead of failing and
+    /// being lost. Defaulted for backward compat.
+    #[serde(default)]
+    pub not_before: Option<u64>,
 }
 
 impl Job {
@@ -159,6 +165,7 @@ impl Queue {
             finished_at: None,
             error: None,
             attempts: 0,
+            not_before: None,
         };
         self.save(&job)?;
         Ok(job)
@@ -237,13 +244,30 @@ impl Queue {
     // that drains the queue and runs the agent). Marked allow(dead_code) until
     // that lands so the -D warnings gate stays green.
 
-    /// The oldest job still `Queued` — the next one the worker should run.
+    /// The oldest job still `Queued` and due to run now — the next one the worker
+    /// should pick up. Jobs deferred into the future (`not_before` past `now`,
+    /// e.g. waiting out a provider quota reset) are skipped until their time.
     #[allow(dead_code)]
     pub fn next_queued(&self) -> anyhow::Result<Option<Job>> {
+        let now = now_secs();
         Ok(self
             .list()?
             .into_iter()
-            .find(|j| j.status == JobStatus::Queued))
+            .find(|j| j.status == JobStatus::Queued && j.not_before.is_none_or(|t| t <= now)))
+    }
+
+    /// Defer a job to run no earlier than `until` (Unix seconds), keeping it
+    /// `Queued` rather than failing it. Used when the provider reports a
+    /// session/quota limit with a reset time: the job waits out the window and a
+    /// later poll runs it automatically — nothing lost, no manual resubmit.
+    pub fn defer(&self, id: &str, until: u64, reason: &str) -> anyhow::Result<Option<Job>> {
+        let reason = reason.to_string();
+        self.update(id, move |job| {
+            job.status = JobStatus::Queued;
+            job.started_at = None;
+            job.not_before = Some(until);
+            job.error = Some(reason);
+        })
     }
 
     /// Mark a job `Running` and stamp `started_at`. Returns the updated job.
@@ -345,7 +369,7 @@ impl Queue {
     }
 }
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

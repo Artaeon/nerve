@@ -105,6 +105,23 @@ where
     Err(last_err.expect("retry loop should have run at least once"))
 }
 
+/// Whether an error is a provider *quota / session limit* exhaustion (as opposed
+/// to a transient blip). These do NOT clear on immediate retry — they clear when
+/// the provider's usage window resets — so the worker DEFERS the job to run later
+/// rather than retrying it now or failing it outright. Kept narrow to avoid
+/// deferring a genuine failure forever.
+///
+/// Matches the Claude CLI shape ("You've hit your session limit · resets …") and
+/// common "usage limit"/"quota exceeded" wordings.
+pub fn is_quota_error(err: &anyhow::Error) -> bool {
+    let msg = format!("{err:#}").to_lowercase();
+    msg.contains("session limit")
+        || msg.contains("usage limit")
+        || msg.contains("quota exceeded")
+        || msg.contains("quota exhausted")
+        || (msg.contains("hit your") && msg.contains("limit"))
+}
+
 /// Check whether an `anyhow::Error` represents a transient failure that is
 /// worth retrying.
 ///
@@ -453,6 +470,20 @@ mod tests {
     #[test]
     fn not_retryable_unknown_error() {
         assert!(!is_retryable_message("failed to parse JSON response"));
+    }
+
+    #[test]
+    fn quota_error_matches_session_limit_but_not_transient() {
+        let quota = anyhow::anyhow!(
+            "Claude: You've hit your session limit · resets 11:20pm (Europe/Berlin)"
+        );
+        assert!(is_quota_error(&quota));
+        assert!(is_quota_error(&anyhow::anyhow!("usage limit reached")));
+        // A transient/server error is NOT a quota error (it should retry, not defer).
+        assert!(!is_quota_error(&anyhow::anyhow!(
+            "API error (503): unavailable"
+        )));
+        assert!(!is_quota_error(&anyhow::anyhow!("connection reset")));
     }
 
     #[test]

@@ -14,6 +14,7 @@ fn job(id: &str, status: JobStatus) -> Job {
         finished_at: None,
         error: None,
         attempts: 0,
+        not_before: None,
     }
 }
 
