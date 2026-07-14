@@ -159,17 +159,47 @@ impl ContextManager {
             return result;
         }
 
-        // Summarize older messages
+        // Summarize older messages, but ALWAYS preserve the original request
+        // (the first user turn) verbatim. The interactive loop must never
+        // summarize the task away — this mirrors the headless loop's HEAD_KEEP,
+        // which pins the task message so a long conversation cannot forget what
+        // it was asked to do.
         let keep_count = 4;
-        let to_summarize = &rest[..rest.len() - keep_count];
+        let summarize_region = &rest[..rest.len() - keep_count];
         let to_keep = &rest[rest.len() - keep_count..];
 
-        // Create summary
-        let summary = Self::summarize_messages(to_summarize);
-        result.push((
-            "system".into(),
-            format!("Previous conversation summary:\n{summary}"),
-        ));
+        // Locate the first user turn in the region we are about to summarize —
+        // that is the original request.
+        let pinned = summarize_region.iter().position(|(r, _)| r == "user");
+
+        if let Some(p) = pinned {
+            // Original request, kept verbatim and first (it is the earliest
+            // user turn, so this preserves chronological order).
+            result.push((rest[p].0.clone(), rest[p].1.clone()));
+
+            // Summarize everything else in the region (excluding the pinned
+            // request) so no other detail is silently dropped.
+            let others: Vec<&(String, String)> = summarize_region
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != p)
+                .map(|(_, m)| *m)
+                .collect();
+            if !others.is_empty() {
+                let summary = Self::summarize_messages(&others);
+                result.push((
+                    "system".into(),
+                    format!("Previous conversation summary:\n{summary}"),
+                ));
+            }
+        } else {
+            // No user turn in the region (unusual) — summarize it all.
+            let summary = Self::summarize_messages(summarize_region);
+            result.push((
+                "system".into(),
+                format!("Previous conversation summary:\n{summary}"),
+            ));
+        }
 
         // Add recent messages
         for (role, content) in to_keep {
@@ -272,8 +302,8 @@ mod tests {
         }
         let compacted = cm.compact_messages(&messages);
         assert!(compacted.len() < messages.len());
-        // Should have system summary + last 4 messages
-        assert!(compacted.len() <= 5);
+        // Should have the pinned original request + system summary + last 4.
+        assert!(compacted.len() <= 6);
     }
 
     #[test]
@@ -287,6 +317,28 @@ mod tests {
         let compacted = cm.compact_messages(&messages);
         let system_count = compacted.iter().filter(|(r, _)| r == "system").count();
         assert!(system_count >= 1); // Original system + summary
+    }
+
+    #[test]
+    fn compact_pins_original_request_verbatim() {
+        // The interactive loop must never summarize the task away: the first
+        // user turn (the original request) must survive compaction byte-for-byte
+        // no matter how long the conversation grows.
+        let cm = ContextManager::new(50); // low limit forces summarization
+        let original = "Refactor the auth module to use the new SessionStore and \
+             keep the /login redirect behavior exactly as it is today.";
+        let mut messages = vec![("system".into(), "BASE PROMPT".into())];
+        messages.push(("user".into(), original.into()));
+        for i in 0..12 {
+            messages.push(("assistant".into(), format!("working on step {i} now")));
+            messages.push(("user".into(), format!("follow-up question {i} here")));
+        }
+        let compacted = cm.compact_messages(&messages);
+        assert!(compacted.len() < messages.len(), "should have compacted");
+        assert!(
+            compacted.iter().any(|(r, c)| r == "user" && c == original),
+            "original request was summarized away: {compacted:?}"
+        );
     }
 
     #[test]
