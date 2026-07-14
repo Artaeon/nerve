@@ -74,6 +74,11 @@ pub struct Job {
     /// reviewer) instead of a single agent. Defaulted for backward compat.
     #[serde(default)]
     pub workflow: bool,
+    /// Run this job by DECOMPOSING it into small sub-tasks executed in turn (the
+    /// self-decompose loop) instead of one agent run. Best for cross-cutting
+    /// edit-existing work. Defaulted for backward compat.
+    #[serde(default)]
+    pub decompose: bool,
     /// Unix seconds when the job was created.
     pub created_at: u64,
     /// Unix seconds when the worker started it.
@@ -139,15 +144,26 @@ impl Queue {
 
     /// Add a new single-agent job in the `Queued` state and persist it.
     pub fn enqueue(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
-        self.enqueue_inner(repo, prompt, false)
+        self.enqueue_inner(repo, prompt, false, false)
     }
 
     /// Add a new job that runs through the multi-agent workflow.
     pub fn enqueue_workflow(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
-        self.enqueue_inner(repo, prompt, true)
+        self.enqueue_inner(repo, prompt, true, false)
     }
 
-    fn enqueue_inner(&self, repo: &str, prompt: &str, workflow: bool) -> anyhow::Result<Job> {
+    /// Add a new job that runs through the self-decompose loop.
+    pub fn enqueue_decompose(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
+        self.enqueue_inner(repo, prompt, false, true)
+    }
+
+    fn enqueue_inner(
+        &self,
+        repo: &str,
+        prompt: &str,
+        workflow: bool,
+        decompose: bool,
+    ) -> anyhow::Result<Job> {
         std::fs::create_dir_all(&self.root)?;
         // uuid v4 is collision-free; 8 hex chars is plenty to disambiguate and
         // stays readable in listings and branch names.
@@ -160,6 +176,7 @@ impl Queue {
             status: JobStatus::Queued,
             has_context: false,
             workflow,
+            decompose,
             created_at: now_secs(),
             started_at: None,
             finished_at: None,

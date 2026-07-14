@@ -333,6 +333,12 @@ async fn run_in_repo(
             hit_max_iterations: wf.hit_max_iterations,
             all_tools_failed: false,
         }
+    } else if job.decompose {
+        // Self-decompose: a planner splits the task into small sub-tasks, each
+        // executed in turn — the systematic form of the "decompose cross-cutting
+        // work" rule that makes edit-existing tasks succeed.
+        crate::agent::headless::run_decomposed_agent(provider, model, task, MAX_ITER, timeout)
+            .await?
     } else {
         crate::agent::headless::run_headless_agent(provider, model, task, MAX_ITER, timeout).await?
     };
@@ -627,6 +633,7 @@ mod tests {
             branch: None,
             has_context,
             workflow: false,
+            decompose: false,
             created_at: 0,
             started_at: None,
             finished_at: None,

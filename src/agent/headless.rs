@@ -555,6 +555,162 @@ pub async fn run_workflow(
     })
 }
 
+// ── Self-decomposing agent (plan → split → execute each step) ────────────────
+
+/// Hard cap on how many sub-tasks a decomposition may produce, so a runaway
+/// planner can't spawn an unbounded number of agent runs.
+const MAX_SUBTASKS: usize = 12;
+
+const DECOMPOSER_SYSTEM: &str = "You are the PLANNER in a decompose → execute pipeline. Your job is to \
+break ONE coding task into the SMALLEST sequence of self-contained sub-tasks that another agent will \
+implement one at a time. This matters because a single agent reliably completes small, focused, \
+prescriptive changes but THRASHES on a big cross-cutting change done all at once. \
+Explore first with READ-ONLY tools (read_file, read_lines, search_code, list_files, find_files) — \
+write_file/edit_file/run_command are DISABLED for you and will be rejected. \
+Rules for a GOOD decomposition: (1) Each sub-task should touch AT MOST ~2 files and be independently \
+implementable and verifiable. (2) Order them so earlier steps don't depend on later ones — put \
+NEW-FILE and PURE-LOGIC steps first, then the WIRING steps that call them. (3) CHECK whether the \
+types/plumbing a step needs ALREADY EXIST (they often do) — if so, that step collapses to a single \
+file; say so. (4) Make each instruction PRESCRIPTIVE: name the exact file(s), the exact function \
+signature or JSX to add, and a concrete acceptance criterion. (5) Prefer 2-5 steps; never exceed \
+about 8. Do NOT write any code yourself. \
+End your reply with ONLY a fenced JSON array (```json ... ```), each element an object with two \
+string fields: \"title\" (a few words) and \"instruction\" (the full prescriptive sub-task, written \
+as if handed directly to the implementing agent). Output nothing after the closing fence.";
+
+/// Extract a JSON array from planner text: prefer a ```json fenced block, else
+/// the widest `[ … ]` slice. Char-boundary safe (uses byte indices from `find`,
+/// which land on valid boundaries for the ASCII delimiters we search for).
+fn extract_json_array(text: &str) -> Option<String> {
+    if let Some(start) = text.find("```json") {
+        let after = &text[start + "```json".len()..];
+        if let Some(end) = after.find("```") {
+            return Some(after[..end].trim().to_string());
+        }
+    }
+    let lb = text.find('[')?;
+    let rb = text.rfind(']')?;
+    (rb > lb).then(|| text[lb..=rb].to_string())
+}
+
+/// Parse the decomposer's output into ordered `(title, instruction)` sub-tasks.
+/// Returns empty on any parse failure so the caller can fall back safely.
+fn parse_subtasks(text: &str) -> Vec<(String, String)> {
+    let Some(json) = extract_json_array(text) else {
+        return Vec::new();
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&json) else {
+        return Vec::new();
+    };
+    let Some(arr) = val.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|item| {
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())?
+                .trim()
+                .to_string();
+            let instruction = item
+                .get("instruction")
+                .and_then(|v| v.as_str())?
+                .trim()
+                .to_string();
+            (!instruction.is_empty()).then_some((title, instruction))
+        })
+        .take(MAX_SUBTASKS)
+        .collect()
+}
+
+/// Run a task by DECOMPOSING it into small sub-tasks and executing each in turn.
+///
+/// This is the systematic form of the "decompose cross-cutting work" rule that
+/// makes edit-existing tasks succeed: a read-only planner splits the task into
+/// the smallest ordered, prescriptive steps, then each step runs through the
+/// normal full-tool agent against the accumulating repo state. If the planner
+/// produces no usable steps, it falls back to a single ordinary agent run — so
+/// decomposition can never do WORSE than running the task whole.
+pub async fn run_decomposed_agent(
+    provider: &Arc<dyn AiProvider>,
+    model: &str,
+    task: &str,
+    max_iterations: usize,
+    command_timeout_secs: u64,
+) -> anyhow::Result<HeadlessOutcome> {
+    let planner = run_role(
+        provider,
+        model,
+        DECOMPOSER_SYSTEM,
+        ToolPolicy::ReadOnly,
+        task,
+        max_iterations,
+        command_timeout_secs,
+    )
+    .await?;
+    let subtasks = parse_subtasks(&planner.final_response);
+
+    if subtasks.is_empty() {
+        tracing::warn!("decompose: no sub-tasks parsed — falling back to a single agent run");
+        return run_headless_agent(provider, model, task, max_iterations, command_timeout_secs)
+            .await;
+    }
+    let n = subtasks.len();
+    tracing::info!("decompose: {n} sub-task(s) planned");
+
+    let mut edited = false;
+    let mut total_iters = planner.iterations;
+    let mut hit_cap = false;
+    let mut wedged = false;
+    let mut summary = String::new();
+
+    for (i, (title, instruction)) in subtasks.iter().enumerate() {
+        let step_task = format!(
+            "This is step {step}/{n} of a larger goal — implement ONLY this step.\n\n\
+             OVERALL GOAL: {task}\n\nSTEP {step}: {title}\n\n{instruction}",
+            step = i + 1,
+        );
+        tracing::info!("decompose: step {}/{n}: {title}", i + 1);
+        let out = run_role(
+            provider,
+            model,
+            AGENT_SYSTEM,
+            ToolPolicy::Full,
+            &step_task,
+            max_iterations,
+            command_timeout_secs,
+        )
+        .await?;
+        total_iters += out.iterations;
+        edited = edited || out.edited;
+        hit_cap = hit_cap || out.hit_max_iterations;
+
+        // A wedged environment (every tool failing) won't recover within this
+        // process — stop and let the worker self-heal via a restart.
+        if out.all_tools_failed {
+            wedged = true;
+            summary.push_str(&format!("- Step {}/{n} [WEDGED]: {title}\n", i + 1));
+            break;
+        }
+        let status = if out.hit_max_iterations {
+            "INCOMPLETE (hit cap)"
+        } else if out.edited {
+            "done"
+        } else {
+            "no changes"
+        };
+        summary.push_str(&format!("- Step {}/{n} [{status}]: {title}\n", i + 1));
+    }
+
+    Ok(HeadlessOutcome {
+        iterations: total_iters,
+        edited,
+        final_response: format!("Decomposed the task into {n} step(s):\n{summary}"),
+        hit_max_iterations: hit_cap,
+        all_tools_failed: wedged,
+    })
+}
+
 /// The uncommitted diff in the current directory (the coder's changes, which
 /// the worker commits *after* the workflow), truncated for the reviewer's
 /// context. Best-effort: `None` if git isn't available or there's no diff.

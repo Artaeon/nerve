@@ -102,22 +102,21 @@ pub(crate) fn process_command(request: &str, queue: &crate::queue::Queue) -> Str
 
     match cmd {
         "PING" => "PONG".to_string(),
-        "SUBMIT" | "SUBMITWF" => {
+        "SUBMIT" | "SUBMITWF" | "SUBMITDC" => {
             let repo = parts.next().unwrap_or("").trim();
             let prompt = parts.next().unwrap_or("").trim();
             if repo.is_empty() || prompt.is_empty() {
                 return format!("ERR usage: {cmd} <repo>\\t<prompt>");
             }
-            let is_workflow = cmd == "SUBMITWF";
-            let queued = if is_workflow {
-                queue.enqueue_workflow(repo, prompt)
-            } else {
-                queue.enqueue(repo, prompt)
+            let (queued, kind) = match cmd {
+                "SUBMITWF" => (queue.enqueue_workflow(repo, prompt), " workflow"),
+                "SUBMITDC" => (queue.enqueue_decompose(repo, prompt), " decompose"),
+                _ => (queue.enqueue(repo, prompt), ""),
             };
             match queued {
                 Ok(job) => format!(
                     "OK queued{} job {} on branch {}",
-                    if is_workflow { " workflow" } else { "" },
+                    kind,
                     job.id,
                     job.branch.as_deref().unwrap_or("-")
                 ),
@@ -277,6 +276,17 @@ mod tests {
             .find(|j| j.prompt == "plain")
             .unwrap();
         assert!(!plain.workflow);
+    }
+
+    #[test]
+    fn process_submitdc_queues_a_decompose_job() {
+        let (_d, q) = temp_queue();
+        let reply = process_command("SUBMITDC\t/srv/repo\tbuild a cross-cutting feature", &q);
+        assert!(reply.contains("decompose"), "got: {reply}");
+        let jobs = q.list().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].decompose, "job should be flagged as decompose");
+        assert!(!jobs[0].workflow);
     }
 
     #[test]

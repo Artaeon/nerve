@@ -249,6 +249,41 @@ async fn no_explore_nudge_when_work_is_quick() {
     assert!(!*nudged.lock().unwrap(), "should not nudge a quick run");
 }
 
+#[test]
+fn parse_subtasks_from_json_fence() {
+    let text = "Here is my plan.\n\n```json\n[\n  {\"title\": \"Pure matcher\", \"instruction\": \"Create lib/x.ts ...\"},\n  {\"title\": \"Wire it\", \"instruction\": \"Call it from y.ts ...\"}\n]\n```";
+    let subs = parse_subtasks(text);
+    assert_eq!(subs.len(), 2);
+    assert_eq!(subs[0].0, "Pure matcher");
+    assert!(subs[0].1.contains("lib/x.ts"));
+    assert_eq!(subs[1].0, "Wire it");
+}
+
+#[test]
+fn parse_subtasks_from_bare_array() {
+    let text = "prose [ {\"title\":\"a\",\"instruction\":\"do a\"} ] trailing";
+    let subs = parse_subtasks(text);
+    assert_eq!(subs.len(), 1);
+    assert_eq!(subs[0].0, "a");
+}
+
+#[test]
+fn parse_subtasks_empty_on_garbage() {
+    assert!(parse_subtasks("no json here at all").is_empty());
+    assert!(parse_subtasks("```json\nnot valid json\n```").is_empty());
+    // Items missing an instruction are dropped.
+    assert!(parse_subtasks("[{\"title\":\"x\"}]").is_empty());
+}
+
+#[test]
+fn parse_subtasks_caps_at_max() {
+    let items: Vec<String> = (0..30)
+        .map(|i| format!("{{\"title\":\"t{i}\",\"instruction\":\"do {i}\"}}"))
+        .collect();
+    let text = format!("[{}]", items.join(","));
+    assert_eq!(parse_subtasks(&text).len(), MAX_SUBTASKS);
+}
+
 #[tokio::test]
 async fn propagates_provider_error() {
     let provider = MockProvider::failing();

@@ -139,6 +139,12 @@ struct Cli {
     #[arg(long)]
     workflow: bool,
 
+    /// With --submit: run the job through the self-decompose loop — a planner
+    /// splits it into small sub-tasks executed one at a time. Best for
+    /// cross-cutting edit-existing changes that a single agent would thrash on.
+    #[arg(long)]
+    decompose: bool,
+
     /// List jobs on the running server (Unix only)
     #[arg(long)]
     jobs: bool,
@@ -228,7 +234,13 @@ async fn main() -> anyhow::Result<()> {
                     .to_string_lossy()
                     .to_string(),
             };
-            let verb = if cli.workflow { "SUBMITWF" } else { "SUBMIT" };
+            let verb = if cli.workflow {
+                "SUBMITWF"
+            } else if cli.decompose {
+                "SUBMITDC"
+            } else {
+                "SUBMIT"
+            };
             let response = send_to_server(&format!("{verb}\t{repo}\t{prompt}")).await?;
             println!("{response}");
             // Optionally carry the full conversation context so the server

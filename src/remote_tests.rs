@@ -9,6 +9,7 @@ fn job(id: &str, status: JobStatus) -> Job {
         branch: Some(format!("nerve/job-{id}")),
         has_context: false,
         workflow: false,
+        decompose: false,
         created_at: 0,
         started_at: None,
         finished_at: None,
