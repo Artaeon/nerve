@@ -333,6 +333,42 @@ pub fn list_all_plugins() -> Vec<(PluginManifest, bool)> {
 mod tests {
     use super::*;
 
+    /// The shipped example plugin (`examples/plugins/todos/`) is the reference
+    /// users copy and that docs/PLUGINS.md documents. Guard it against drift:
+    /// its manifest must parse with the REAL PluginManifest, and the script it
+    /// names must actually exist and be executable.
+    #[test]
+    fn shipped_example_plugin_is_valid() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("plugins")
+            .join("todos");
+        let manifest_path = dir.join("plugin.toml");
+        let raw = fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|e| panic!("example manifest unreadable at {manifest_path:?}: {e}"));
+        let manifest: PluginManifest =
+            toml::from_str(&raw).expect("example plugin.toml must parse as a PluginManifest");
+        assert_eq!(manifest.command, "todos");
+        assert!(manifest.enabled);
+        assert!(
+            !manifest.description.is_empty(),
+            "description shows in /plugin list"
+        );
+
+        // The `run` path is resolved relative to the plugin dir (see execute()).
+        let script = dir.join(&manifest.run);
+        assert!(
+            script.is_file(),
+            "manifest `run` must point at a real script"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&script).unwrap().permissions().mode();
+            assert!(mode & 0o111 != 0, "example script should be executable");
+        }
+    }
+
     #[test]
     fn parse_manifest() {
         let toml = r#"

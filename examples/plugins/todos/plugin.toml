@@ -1,0 +1,7 @@
+name = "TODO scanner"
+description = "List TODO/FIXME/HACK/XXX markers in the repo, grouped by file. Usage: /todos [path]"
+version = "1.0.0"
+author = "Nerve"
+command = "todos"
+run = "run.sh"
+enabled = true
