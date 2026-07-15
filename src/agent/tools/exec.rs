@@ -472,18 +472,42 @@ mod tests {
         assert!(!result.success);
     }
 
+    /// This test used to be a lie AND a live hazard: it was named
+    /// `..._sudo_blocked`, asserted NOTHING (`let _ = result;`), and its comment
+    /// admitted "sudo apt-get install isn't in the blocklist". Because it wasn't
+    /// blocked, `execute_tool` REALLY RAN `sudo apt-get install malware` on every
+    /// machine that ran `cargo test` — observed executing as root on the server.
+    /// A privileged system-wide install is now denied, so the command is rejected
+    /// before it can run, and the assertion is real.
     #[test]
-    fn run_command_sudo_blocked() {
+    fn run_command_sudo_package_install_blocked() {
         reset_tool_counter();
         let call = ToolCall {
             tool: "run_command".into(),
             args: [("command".into(), "sudo apt-get install malware".into())].into(),
         };
         let result = execute_tool(&call, crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS);
-        // sudo should be blocked if it's a destructive operation
-        // Note: "sudo apt-get install" isn't in the blocklist — check if it should be
-        // This test documents the current behavior
-        let _ = result;
+        assert!(
+            !result.success,
+            "a privileged package install must be refused, not executed"
+        );
+        assert!(
+            result.output.to_lowercase().contains("dangerous")
+                || result.output.to_lowercase().contains("blocked"),
+            "the refusal should say why, got: {}",
+            result.output
+        );
+    }
+
+    /// A project-local install is ordinary work and must STAY allowed — the
+    /// denylist targets privileged, system-wide installs only.
+    #[test]
+    fn plain_package_install_is_not_blocked_by_the_sudo_rule() {
+        assert!(!crate::shell::is_dangerous_command("npm install remotion"));
+        assert!(!crate::shell::is_dangerous_command("pip install requests"));
+        assert!(crate::shell::is_dangerous_command(
+            "sudo apt-get install curl"
+        ));
     }
 
     // ── remember tool ─────────────────────────────────────────────────

@@ -284,6 +284,19 @@ const BLOCKED_PATTERNS: &[&str] = &[
     "sudo rm",
     "sudo dd",
     "sudo mkfs",
+    // Installing system packages as root is not something an autonomous agent
+    // should ever do on its own: it mutates the host outside the repo and can
+    // pull arbitrary code. (A project-local `npm install` is untouched — this is
+    // specifically privileged, system-wide installation.) Previously unguarded:
+    // nerve's own test suite ran `sudo apt-get install malware` FOR REAL on
+    // whatever machine ran `cargo test`, and it executed as root on the server.
+    "sudo apt-get install",
+    "sudo apt install",
+    "sudo yum install",
+    "sudo dnf install",
+    "sudo pacman -s",
+    "sudo snap install",
+    "sudo pip install",
     "tee /etc/",
     "passwd",
     "chpasswd",

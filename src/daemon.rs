@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -20,7 +20,13 @@ pub fn socket_path() -> PathBuf {
 
 #[allow(dead_code)]
 pub fn is_daemon_running() -> bool {
-    socket_path().exists() && std::os::unix::net::UnixStream::connect(socket_path()).is_ok()
+    is_daemon_running_at(&socket_path())
+}
+
+/// Testable core of [`is_daemon_running`], parameterized by socket path so tests
+/// never touch the REAL `~/.nerve/nerve.sock` of a live daemon.
+fn is_daemon_running_at(path: &Path) -> bool {
+    path.exists() && std::os::unix::net::UnixStream::connect(path).is_ok()
 }
 
 pub async fn start_daemon() -> anyhow::Result<()> {
@@ -217,16 +223,28 @@ pub async fn send_to_daemon(message: &str) -> anyhow::Result<String> {
 }
 
 pub fn stop_daemon() -> anyhow::Result<()> {
-    let path = socket_path();
+    stop_daemon_at(&socket_path())
+}
+
+/// Testable core of [`stop_daemon`], parameterized by socket path.
+///
+/// This MUST stay parameterized: the tests used to call `stop_daemon()` directly
+/// and `remove_file(socket_path())`, which operate on the real
+/// `~/.nerve/nerve.sock`. Running `cargo test` on a machine hosting a live nerve
+/// daemon therefore SHUT THE DAEMON DOWN and deleted its socket — the process
+/// stayed up but became unreachable, stranding the whole job queue. Found the
+/// hard way: a job whose verify gate ran this suite on the server decapitated the
+/// very daemon running it.
+fn stop_daemon_at(path: &Path) -> anyhow::Result<()> {
     if path.exists() {
         // Send shutdown command
-        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(&path) {
+        if let Ok(mut stream) = std::os::unix::net::UnixStream::connect(path) {
             use std::io::Write;
             let _ = stream.write_all(b"__SHUTDOWN__");
         }
         // Give the daemon a moment, then clean up the socket file if it remains
         if path.exists() {
-            std::fs::remove_file(&path)?;
+            std::fs::remove_file(path)?;
         }
     }
     Ok(())
@@ -371,20 +389,37 @@ mod tests {
         assert!(path.to_string_lossy().contains("nerve"));
     }
 
+    // NOTE: these MUST use a temp socket path, never `socket_path()`. They used
+    // to `remove_file(socket_path())` and call `stop_daemon()` — which act on the
+    // REAL `~/.nerve/nerve.sock`. Running `cargo test` on a machine hosting a live
+    // nerve daemon therefore deleted its socket and sent it __SHUTDOWN__: the
+    // process stayed up but was unreachable and the whole job queue was stranded.
+    // Found the hard way when a job's verify gate ran this suite on the server.
+
     #[test]
     fn is_daemon_running_false_when_no_socket() {
-        // Clean up any existing socket first
-        let path = socket_path();
-        let _ = std::fs::remove_file(&path);
-        assert!(!is_daemon_running());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nerve.sock");
+        assert!(!is_daemon_running_at(&path));
     }
 
     #[test]
     fn stop_daemon_no_panic_when_not_running() {
-        let _ = std::fs::remove_file(socket_path());
-        // Should not panic even if daemon isn't running
-        let result = stop_daemon();
-        assert!(result.is_ok());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nerve.sock");
+        // Should not panic (or touch a real daemon) when no socket exists.
+        assert!(stop_daemon_at(&path).is_ok());
+    }
+
+    #[test]
+    fn stop_daemon_removes_a_stale_socket_file() {
+        // A leftover socket FILE with nothing listening: stop should clean it up.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nerve.sock");
+        std::fs::write(&path, b"").unwrap();
+        assert!(path.exists());
+        assert!(stop_daemon_at(&path).is_ok());
+        assert!(!path.exists(), "a stale socket file should be removed");
     }
 
     #[test]
