@@ -61,18 +61,32 @@ pub fn detect_test_command(root: &Path) -> Option<String> {
         let pkg = std::fs::read_to_string(root.join("package.json")).ok()?;
         let json: serde_json::Value = serde_json::from_str(&pkg).ok()?;
         let test = json.get("scripts")?.get("test")?.as_str()?;
-        // Skip watchers and placeholder scripts.
-        let lowered = test.to_lowercase();
-        if lowered.contains("watch")
-            || lowered.contains("--watch")
-            || lowered.contains("no test specified")
-            || test.trim().is_empty()
-        {
+        if is_watch_script(test) || test.trim().is_empty() {
             return None;
         }
         return Some("npm test --silent 2>&1".into());
     }
     None
+}
+
+/// Whether an npm test script runs a WATCHER (never exits) rather than a
+/// one-shot run. `run_verify` has no timeout, so running a watcher would hang the
+/// job forever — but skipping a suite that would have run is just as bad: the gate
+/// silently degrades to type-check-only, which is the exact hole the test gate was
+/// added to close.
+///
+/// So decide on TOKENS, not substrings. A naive `contains("watch")` also matched
+/// perfectly good one-shot commands like `vitest run src/watcher.test.ts` or
+/// `node --test test/watchdog.test.js` — a project with a file named "watcher"
+/// silently lost its whole suite.
+fn is_watch_script(script: &str) -> bool {
+    script.split_whitespace().any(|tok| {
+        let t = tok.to_lowercase();
+        // `--watch`, `--watchAll`, `--watch=true`, and the `-w` short flag.
+        t == "-w" || t == "--watch" || t.starts_with("--watch=") || t.starts_with("--watchall")
+            // A dedicated file-watcher runner.
+            || t == "nodemon"
+    }) || script.to_lowercase().contains("no test specified")
 }
 
 /// Whether to run the verify step now: it's enabled, we have a command, the
@@ -146,6 +160,53 @@ mod tests {
             None,
             "placeholder must be skipped"
         );
+    }
+
+    #[test]
+    fn a_test_file_named_watcher_does_not_disable_the_suite() {
+        // THE REGRESSION: `contains("watch")` matched the PATH, not a flag, so a
+        // project with a watcher test silently ran no tests at all and the gate
+        // quietly degraded to type-check-only.
+        let dir = tempfile::tempdir().unwrap();
+        for script in [
+            "vitest run src/watcher.test.ts",
+            "node --test test/watchdog.test.js",
+            "jest src/watchlist",
+        ] {
+            std::fs::write(
+                dir.path().join("package.json"),
+                format!(r#"{{"scripts": {{"test": "{script}"}}}}"#),
+            )
+            .unwrap();
+            assert_eq!(
+                detect_test_command(dir.path()).as_deref(),
+                Some("npm test --silent 2>&1"),
+                "one-shot run must NOT be treated as a watcher: {script}"
+            );
+        }
+    }
+
+    #[test]
+    fn real_watchers_are_still_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        for script in [
+            "vitest --watch",
+            "jest --watchAll",
+            "vitest -w",
+            "nodemon --exec vitest",
+            "jest --watch=true",
+        ] {
+            std::fs::write(
+                dir.path().join("package.json"),
+                format!(r#"{{"scripts": {{"test": "{script}"}}}}"#),
+            )
+            .unwrap();
+            assert_eq!(
+                detect_test_command(dir.path()),
+                None,
+                "a real watcher would hang the job forever: {script}"
+            );
+        }
     }
 
     #[test]
