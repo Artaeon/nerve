@@ -20,7 +20,7 @@ and merges or rejects. Nothing below is "it looked right".
 | | |
 |---|---|
 | Features merged into vollgebucht | **15** |
-| Bugs nerve fixed in its OWN source | **2** (both HIGH, both correct) |
+| Bugs nerve fixed in its OWN source | **4** (2 HIGH, 2 MEDIUM — all correct) |
 | Rejected / failed jobs | **4** (all caught before merge) |
 | vollgebucht test suite | 191 → **222 passing** |
 | Typical clean job | **3–24 iterations** |
@@ -119,6 +119,22 @@ It also matches the surrounding style — idiom, comment density, naming. It rea
 like the codebase, not like generated code.
 
 ---
+
+## The most consistent failure — and it's cheap to plan around
+
+Across **four** prescriptive single-file bug-fix jobs on nerve's own source, the
+pattern was identical every time:
+
+> **The code was correct. The tests were missing.** Each job burned its 40
+> iterations getting the fix right, then stopped before writing the unit tests it
+> was explicitly asked for.
+
+The INCOMPLETE flag caught all four. The fix is not more prompting — it's
+**budgeting**: give the code and the tests **separate jobs**, or accept that a
+human writes the tests. (Which is arguably the right split anyway: a test written
+by the same agent that wrote the code shares its blind spots. Every regression
+test in this session was verified by *reverting the fix and watching it go red* —
+a discipline the agent never performed on itself.)
 
 ## Where it fails — honestly
 
