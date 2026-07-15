@@ -76,28 +76,53 @@ const EXPLORE_NUDGE_AFTER: usize = 8;
 /// `assistant` turn is untouched) and can cheaply re-read a file if it truly
 /// needs it again — so we shed the expensive raw bytes without losing the plot.
 /// Idempotent: re-stubbing an already-stubbed message is a no-op.
-fn compact_context(messages: &mut [ChatMessage], budget_tokens: usize) {
+/// Returns true when it actually stubbed something away — the caller uses that to
+/// drop its re-read cache, because content that is no longer in the conversation
+/// must be sent in full if the model asks for it again.
+fn compact_context(messages: &mut [ChatMessage], budget_tokens: usize) -> bool {
     if messages.len() <= HEAD_KEEP + TAIL_KEEP {
-        return;
+        return false;
     }
     let total: usize = messages
         .iter()
         .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
         .sum();
     if total <= budget_tokens {
-        return;
+        return false;
     }
 
     const STUB: &str =
         "[earlier tool output compacted to save context — re-read the file if you need it again]";
     let cut_end = messages.len() - TAIL_KEEP;
+    let mut stubbed = false;
     for msg in &mut messages[HEAD_KEEP..cut_end] {
         // Only shrink big tool-result messages (role "user"); leave the model's
         // own assistant turns intact so its reasoning trail is preserved.
         if msg.role == "user" && msg.content.len() > STUB.len() + 100 {
             msg.content = STUB.to_string();
+            stubbed = true;
         }
     }
+    stubbed
+}
+
+/// Tools whose output is a verbatim slice of a file — the only ones worth
+/// de-duplicating, since an identical repeat is provably redundant.
+const CACHEABLE_READS: &[&str] = &["read_file", "read_lines"];
+
+/// Fingerprint of a tool call (tool + its args), so an identical repeat of the
+/// SAME read can be recognised.
+fn call_fingerprint(call: &crate::agent::tools::ToolCall) -> String {
+    let mut args: Vec<(&String, &String)> = call.args.iter().collect();
+    args.sort();
+    format!("{}|{args:?}", call.tool)
+}
+
+fn content_hash(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
 }
 
 /// Assemble the repo's persisted `.nerve/` knowledge into a compact block so a
@@ -429,6 +454,11 @@ async fn run_role(
     // Whether we have already delivered the one-time "stop exploring, implement
     // now" nudge, so it fires at most once per run.
     let mut explore_nudged = false;
+    // Fingerprint → content hash of reads already sent verbatim in THIS run, so
+    // an identical re-read can be collapsed to a pointer instead of re-sending
+    // the file. Dropped whenever compaction stubs old output away.
+    let mut read_cache: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut deduped_reads = 0usize;
     // Assigned on every loop iteration before any break, so it is always set by
     // the time we read it after the loop.
     let mut final_response;
@@ -437,7 +467,12 @@ async fn run_role(
     loop {
         // Keep the history within budget before each model call, so a long job
         // stays efficient and never overflows the context window.
-        compact_context(&mut messages, CONTEXT_BUDGET_TOKENS);
+        // If compaction just stubbed earlier tool output away, a cached read is
+        // no longer visible to the model — forget it, so asking again returns the
+        // real content rather than a pointer to something that is gone.
+        if compact_context(&mut messages, CONTEXT_BUDGET_TOKENS) {
+            read_cache.clear();
+        }
 
         let response = provider.chat(&messages, model).await?;
         messages.push(ChatMessage::assistant(&response));
@@ -511,8 +546,12 @@ async fn run_role(
                     ),
                 }
             } else {
+                // Capture what the dedupe below needs BEFORE the clone is moved
+                // into the blocking task.
+                let fingerprint = call_fingerprint(call);
+                let tool_name = call.tool.clone();
                 let call = call.clone();
-                let result =
+                let mut result =
                     tokio::task::spawn_blocking(move || execute_tool(&call, command_timeout_secs))
                         .await
                         .unwrap_or_else(|e| ToolResult {
@@ -528,6 +567,29 @@ async fn run_role(
                 // the worker skips the commit when nothing truly changed anyway).
                 if result.success && is_write {
                     edited = true;
+                }
+
+                // TOKEN EFFICIENCY: models re-read the same file repeatedly, and
+                // every repeat re-sent the whole thing (up to MAX_TOOL_OUTPUT_CHARS)
+                // — and since each iteration re-sends the accumulated history, one
+                // wasteful re-read keeps costing on every later turn. If this exact
+                // read returns byte-identical content to one already in this
+                // conversation, replace it with a one-line pointer. Safe because the
+                // real content is still verbatim above; the moment compaction stubs
+                // that away, the cache is dropped (see the loop head) so a re-read
+                // returns the file in full again.
+                if result.success && CACHEABLE_READS.contains(&tool_name.as_str()) {
+                    let hash = content_hash(&result.output);
+                    if read_cache.get(&fingerprint) == Some(&hash) {
+                        deduped_reads += 1;
+                        result.output = format!(
+                            "[identical to your earlier {tool_name} of this exact path in this run \
+                             — the content is unchanged and already shown above; omitted to save \
+                             context]"
+                        );
+                    } else {
+                        read_cache.insert(fingerprint, hash);
+                    }
                 }
                 // Separately, track whether the TOOL LAYER worked at all -- this is
                 // deliberately NOT the same condition as `edited` above. A
@@ -573,6 +635,13 @@ async fn run_role(
             hit_max_iterations = true;
             break;
         }
+    }
+
+    if deduped_reads > 0 {
+        tracing::info!(
+            "headless: collapsed {deduped_reads} redundant re-read(s) to a pointer — the model \
+             re-read files it already had"
+        );
     }
 
     Ok(HeadlessOutcome {

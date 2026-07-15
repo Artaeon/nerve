@@ -17,6 +17,9 @@ struct MockProvider {
     /// containing the explore-nudge phrase — letting a test assert the nudge
     /// fired without exposing the whole message history.
     nudge_seen: Option<Arc<Mutex<bool>>>,
+    /// When set, records the content of every message the loop sends, so a test
+    /// can assert what the model was actually charged for.
+    transcript: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl MockProvider {
@@ -26,6 +29,7 @@ impl MockProvider {
             idx: Mutex::new(0),
             fail: false,
             nudge_seen: None,
+            transcript: None,
         })
     }
     fn failing() -> Arc<dyn AiProvider> {
@@ -34,6 +38,7 @@ impl MockProvider {
             idx: Mutex::new(0),
             fail: true,
             nudge_seen: None,
+            transcript: None,
         })
     }
     /// Like `scripted`, but also returns a flag set true once the loop delivers
@@ -45,8 +50,23 @@ impl MockProvider {
             idx: Mutex::new(0),
             fail: false,
             nudge_seen: Some(flag.clone()),
+            transcript: None,
         });
         (provider, flag)
+    }
+
+    /// Like `scripted`, but records every message the loop actually SENDS, so a
+    /// test can assert on what the model would really have paid tokens for.
+    fn scripted_recording(responses: &[&str]) -> (Arc<dyn AiProvider>, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(Self {
+            responses: responses.iter().map(|s| s.to_string()).collect(),
+            idx: Mutex::new(0),
+            fail: false,
+            nudge_seen: None,
+            transcript: Some(log.clone()),
+        });
+        (provider, log)
     }
 }
 
@@ -67,6 +87,12 @@ impl AiProvider for MockProvider {
     ) -> Pin<Box<dyn Future<Output = anyhow::Result<String>> + Send + '_>> {
         if self.fail {
             return Box::pin(async { Err(anyhow::anyhow!("mock provider failure")) });
+        }
+        if let Some(log) = &self.transcript {
+            let mut l = log.lock().unwrap();
+            for m in messages {
+                l.push(m.content.clone());
+            }
         }
         if let Some(flag) = &self.nudge_seen
             && messages
@@ -194,6 +220,70 @@ async fn a_failing_build_is_not_mistaken_for_a_wedged_worker() {
     assert!(
         !out.all_tools_failed,
         "a command that ran and merely exited non-zero must NOT look like a wedge"
+    );
+}
+
+#[tokio::test]
+async fn an_identical_re_read_is_collapsed_to_a_pointer() {
+    // TOKEN EFFICIENCY: models re-read files they already have. The first read
+    // must arrive in full; an identical repeat must collapse to a pointer, since
+    // the real content is still verbatim earlier in the same conversation.
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("sample.txt");
+    let body = "unique-marker-content ".repeat(40);
+    std::fs::write(&file, &body).unwrap();
+    let path = file.to_string_lossy().to_string();
+
+    // Read the same path three times, then finish.
+    let call = format!("<tool_call>tool: read_file\npath: {path}</tool_call>");
+    let (provider, transcript) = MockProvider::scripted_recording(&[&call, &call, &call, "Done."]);
+    let _ = run_headless_agent(&provider, "m", "read it", 25, 5)
+        .await
+        .unwrap();
+
+    // The loop feeds each tool result back as its own user message, and every
+    // later turn re-sends the whole history — so count DISTINCT messages, which
+    // is exactly "how many copies of this file entered the conversation".
+    let sent = transcript.lock().unwrap().clone();
+    let distinct: std::collections::HashSet<&String> = sent.iter().collect();
+    let bodies = distinct
+        .iter()
+        .filter(|m| m.contains("unique-marker-content"))
+        .count();
+    let pointers = distinct
+        .iter()
+        .filter(|m| m.contains("identical to your earlier read_file"))
+        .count();
+
+    // THE PROPERTY: three reads of an unchanged file put the body in context
+    // ONCE. Without the dedupe this is 3 — and each copy is then re-sent on
+    // every subsequent turn, which is what made re-reads so expensive.
+    assert_eq!(
+        bodies, 1,
+        "the file body must enter the conversation exactly once, got {bodies}"
+    );
+    assert_eq!(
+        pointers, 1,
+        "the repeats must collapse to the (identical) pointer message, got {pointers}"
+    );
+}
+
+#[test]
+fn compact_context_reports_whether_it_stubbed() {
+    // The re-read cache is dropped whenever compaction fires, so compaction MUST
+    // report honestly — otherwise a model could be pointed at content that is no
+    // longer in its context.
+    let mut small = vec![ChatMessage::user("hi")];
+    assert!(
+        !compact_context(&mut small, 10),
+        "nothing to compact in a tiny history"
+    );
+
+    let big = "x".repeat(80_000);
+    let mut msgs: Vec<ChatMessage> = (0..12).map(|_| ChatMessage::user(&big)).collect();
+    assert!(
+        compact_context(&mut msgs, 100),
+        "must report true when it stubs output away"
     );
 }
 
