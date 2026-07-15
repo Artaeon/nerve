@@ -25,11 +25,19 @@ pub fn detect_verify_command(root: &Path) -> Option<String> {
         return Some("cargo check --quiet 2>&1".into());
     }
     if root.join("package.json").exists() {
-        let pkg = std::fs::read_to_string(root.join("package.json")).unwrap_or_default();
         // Prefer an explicit type-check/lint script; these are the cheap,
-        // high-signal checks a project already defines.
+        // high-signal checks a project already defines. We must look ONLY at
+        // the `scripts` object: a naive substring search over the whole file
+        // used to match a *dependency* named e.g. "check" (or the word
+        // appearing anywhere else, such as in a "description"), so we'd hand
+        // back `npm run -s check` for a script that doesn't exist — npm exits
+        // non-zero with "Missing script", and the gate then blamed the agent
+        // for a build error it could never fix, burning every fix round.
+        let pkg = std::fs::read_to_string(root.join("package.json")).ok()?;
+        let json: serde_json::Value = serde_json::from_str(&pkg).ok()?;
+        let scripts = json.get("scripts")?;
         for script in ["typecheck", "type-check", "lint", "check"] {
-            if pkg.contains(&format!("\"{script}\"")) {
+            if scripts.get(script).is_some() {
                 return Some(format!("npm run -s {script} 2>&1"));
             }
         }
@@ -173,6 +181,50 @@ mod tests {
             detect_verify_command(dir.path()).as_deref(),
             Some("npm run -s lint 2>&1")
         );
+    }
+
+    #[test]
+    fn a_dependency_named_check_does_not_become_the_verify_command() {
+        // THE REGRESSION. Detection used to substring-search the WHOLE file, so a
+        // *dependency* called "check" matched and we returned `npm run -s check`
+        // for a script that doesn't exist. npm then failed with "Missing script",
+        // the gate blamed the agent, and both fix rounds burned on every job.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"description": "we lint and check things",
+                "devDependencies": {"check": "^1.0.0", "typecheck": "^2.0.0"},
+                "scripts": {"dev": "next dev"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_verify_command(dir.path()),
+            None,
+            "only the scripts object may select the verify command"
+        );
+    }
+
+    #[test]
+    fn verify_command_respects_script_priority() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"typecheck": "tsc --noEmit", "lint": "eslint ."}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_verify_command(dir.path()).as_deref(),
+            Some("npm run -s typecheck 2>&1"),
+            "typecheck outranks lint"
+        );
+    }
+
+    #[test]
+    fn malformed_package_json_is_none_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{not valid json").unwrap();
+        assert_eq!(detect_verify_command(dir.path()), None);
+        assert_eq!(detect_test_command(dir.path()), None);
     }
 
     #[test]
