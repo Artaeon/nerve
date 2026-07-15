@@ -19,10 +19,11 @@ and merges or rejects. Nothing below is "it looked right".
 
 | | |
 |---|---|
-| Features merged into vollgebucht | **15** |
+| Features merged into vollgebucht | **17** |
 | Bugs nerve fixed in its OWN source | **4** (2 HIGH, 2 MEDIUM — all correct) |
+| Production blockers nerve found/fixed | **2** (schema drift; a test suite that killed the daemon) |
 | Rejected / failed jobs | **4** (all caught before merge) |
-| vollgebucht test suite | 191 → **222 passing** |
+| vollgebucht test suite | 191 → **231 passing** |
 | Typical clean job | **3–24 iterations** |
 | Human interventions on merged code | **1** (a nav line re-added by hand) |
 
