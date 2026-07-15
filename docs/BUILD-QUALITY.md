@@ -19,11 +19,11 @@ and merges or rejects. Nothing below is "it looked right".
 
 | | |
 |---|---|
-| Features merged into vollgebucht | **17** |
+| Features merged into vollgebucht | **19** |
 | Bugs nerve fixed in its OWN source | **4** (2 HIGH, 2 MEDIUM — all correct) |
 | Production blockers nerve found/fixed | **2** (schema drift; a test suite that killed the daemon) |
 | Rejected / failed jobs | **4** (all caught before merge) |
-| vollgebucht test suite | 191 → **231 passing** |
+| vollgebucht test suite | 191 → **238 passing** |
 | Typical clean job | **3–24 iterations** |
 | Human interventions on merged code | **1** (a nav line re-added by hand) |
 
@@ -171,13 +171,27 @@ a discipline the agent never performed on itself.)
 
 ---
 
-## The efficiency footnote
+## Token efficiency — what actually moved the needle
 
 Early jobs burned **29–40 iterations** on work needing ~5 — and because every
-iteration re-sends the growing context, cost is roughly quadratic. It was enough
-to **exhaust a claude.ai session quota mid-batch**. After the explore-nudge (act
-after 8 tool-iterations with no edit) plus prescriptive specs: **3–24
-iterations**. The context *system* was always lean; the *loop* was the waste.
+iteration re-sends the growing context, cost is roughly **quadratic**. It was
+enough to **exhaust a claude.ai session quota mid-batch**. The context *system*
+was always lean; the *loop* was the waste.
+
+Three fixes, in order of impact:
+
+1. **Prescriptive specs** — the biggest lever, and it costs nothing. Naming the
+   exact file and signature stops the exploration that dominates the bill.
+2. **The explore-nudge** — one act-now nudge after 8 tool-iterations with no
+   edit. Comparable jobs went **29–40 → 3–24 iterations**.
+3. **Re-read dedupe** — the model re-reads files it already has, and every repeat
+   re-sent up to 50k chars *which then rides along on every later turn*. Now an
+   identical re-read collapses to a pointer. **Observed firing on its first real
+   job**: "collapsed 2 redundant re-read(s)". The prompt had asked the model not
+   to re-read since day one; it does anyway. Enforce in the harness, don't ask.
+
+The honest remainder: token accounting is still a `chars/3` estimate rather than
+a real tokenizer, so every budget decision is approximate.
 
 ---
 
