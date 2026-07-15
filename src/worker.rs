@@ -217,7 +217,18 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         let _ = git(repo, &["checkout", "-f", &base]);
         let _ = git(repo, &["reset", "--hard", &base]);
         let _ = git(repo, &["clean", "-fd"]);
-        if git(repo, &["checkout", "-b", &branch]).is_err() {
+
+        // Decide create-vs-resume EXPLICITLY rather than inferring it from a
+        // failed `checkout -b`: that failure can mean many things (invalid
+        // branch name, a stale ref lock, a D/F path conflict, a read-only
+        // .git), not just "branch already exists". Treating every failure as
+        // "already exists" meant that when the fallback checkout ALSO failed,
+        // HEAD silently stayed on `base` (main) and the job's changes would
+        // get committed straight there. `rev-parse --verify` is an
+        // unambiguous existence check, so the two cases are no longer
+        // conflated.
+        let branch_exists = git(repo, &["rev-parse", "--verify", "--quiet", &branch]).is_ok();
+        if branch_exists {
             // The branch already exists — this is a REQUEUED attempt. Its branch
             // may carry committed progress from a prior attempt (a decompose job
             // commits each finished sub-task, so a mid-run wedge doesn't discard
@@ -227,6 +238,25 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
             // the old reset for it.
             let _ = git(repo, &["checkout", "-f", &branch]);
             let _ = git(repo, &["clean", "-fd"]);
+        } else {
+            let _ = git(repo, &["checkout", "-b", &branch]);
+        }
+
+        // Never assume the checkout above landed us on the job branch — every
+        // call above is best-effort (`let _ =`), so a failure there would
+        // otherwise leave HEAD on `base`/main and the job's work would get
+        // committed straight to it, defeating the whole point of this
+        // isolation. Verify HEAD explicitly before doing any work and fail
+        // the job loudly rather than silently commit to the wrong branch.
+        let current_branch = git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .map(|out| out.trim().to_string())
+            .unwrap_or_default();
+        if current_branch != branch {
+            anyhow::bail!(
+                "refusing to run job: expected HEAD on branch '{branch}' but found \
+                 '{current_branch}' — branch checkout failed and running here could \
+                 commit the job's changes to the wrong branch"
+            );
         }
     }
 
