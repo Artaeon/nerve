@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-15 · **Unit tests:** 2,024 passing (`cargo test`),
+**Last updated:** 2026-07-15 · **Unit tests:** 2,026 passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -267,7 +267,42 @@ real cross-cutting task well) and the fallback makes it safe, but it stresses th
 long-standing worker wedge harder than any single job — the wedge is now the
 top reliability bottleneck to eliminate.
 
-### 2026-07-15 — THE WEDGE IS FIXED: subprocess isolation ✅
+### 2026-07-15 (later) — THE WEDGE, ROOT-CAUSED AT LAST 🎯
+
+**The wedge was never mysterious "accumulated in-process state". It was a
+one-line bug: a process-global tool counter that the headless path never reset.**
+
+- `src/agent/tools/mod.rs`: `static TOOL_EXEC_COUNT` + `MAX_TOOL_EXECUTIONS`
+  (was 100). Past the cap, `execute_tool` returns
+  `success: false, "Tool execution limit reached (100). Start a new session."`
+  for **every** tool — `read_file` included.
+- `reset_tool_counter()` existed, but its ONLY non-test caller was the TUI's
+  `/agent off` (`commands/ai.rs`). `run_role` never called it, so a long-lived
+  worker accumulated tool calls **across jobs** until everything failed.
+
+This retroactively explains the entire reliability saga:
+- "After ~a dozen jobs every tool fails" — that's ~100 tool calls.
+- Why **every** mitigation worked: `RESTART_AFTER_JOBS`, the `all_tools_failed`
+  self-heal, the wedge requeue, and subprocess isolation all just handed the run
+  a **fresh process → fresh counter**. They treated the symptom.
+- Why the marketing decompose died after step 7 but the SEO decompose (subprocess
+  per step) sailed through 7 — each child got its own budget.
+- **The agent was never confabulating.** `AGENT_SYSTEM` insisted "there is NO
+  tool-execution limit … never claim you have hit one" while the code enforced
+  exactly that limit and returned exactly that string. The model was accurately
+  reporting our own error message and we told it its observation was false. The
+  prompt + nudge are now honest.
+
+**Fix:** `reset_tool_counter()` at the top of `run_role` (every run gets its own
+budget) and the runaway backstop raised 100 → 500 (100 was below what a single
+legitimate 40-iteration job needs). +1 regression test, **verified to fail
+without the reset**. ✅
+
+*Lesson for this record: "never root-caused" in the notes below was a standing
+invitation to keep building scaffolding. A deep read of the actual tool path
+found it in one pass. Read the code before architecting around a ghost.*
+
+### 2026-07-15 — subprocess isolation (still valuable) ✅
 
 The worker wedge (accumulated in-process state that, after ~a dozen tool-heavy
 runs, makes *every* tool fail — never root-caused) is eliminated for the path
