@@ -184,19 +184,50 @@ pub struct ExecAgentRequest {
     pub cwd: String,
 }
 
+/// Result of trying to run a decompose step in an isolated child process.
+///
+/// Distinguishing "never started" from "started then failed" matters: if the
+/// child already ran, it may have half-applied edits to the repo, and running
+/// the SAME step again in-process on top of that half-finished state would
+/// double-run it — duplicate imports/functions, or an agent thrashing against
+/// its own unfinished work. Only a step that truly never started is safe to
+/// retry in-process.
+enum StepExec {
+    /// The child ran and returned its outcome.
+    Ran(HeadlessOutcome),
+    /// The child STARTED (and may have already edited the repo) but failed.
+    /// The step must NOT be retried in-process — that would run it twice.
+    Failed,
+    /// The child never started; nothing ran, so it is safe to run in-process.
+    NotSpawned,
+}
+
 /// Run one agent step in a FRESH child process (`nerve --exec-agent`), so the
 /// long-running worker's "wedge" (accumulated in-process state that eventually
 /// makes every tool fail) cannot build up across a decompose job's many steps —
-/// each step gets a pristine process. Returns `None` on ANY spawn/IO/parse
-/// failure so the caller can fall back to running the step in-process.
+/// each step gets a pristine process.
+///
+/// Returns [`StepExec::NotSpawned`] only for failures BEFORE the child process
+/// actually started (nothing ran yet, so the caller can safely fall back to
+/// running the step in-process). Once `spawn()` has succeeded, any later
+/// failure returns [`StepExec::Failed`] instead — the child may already have
+/// edited the repo, so re-running the step would risk running it twice on top
+/// of its own half-applied changes.
 async fn exec_step_subprocess(
     task: &str,
     model: &str,
     max_iterations: usize,
     timeout: u64,
-) -> Option<HeadlessOutcome> {
+) -> StepExec {
     use tokio::io::AsyncWriteExt;
-    let cwd = std::env::current_dir().ok()?.to_string_lossy().to_string();
+
+    // Nothing has started yet — these can all fall back to in-process safely.
+    let Some(cwd) = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+    else {
+        return StepExec::NotSpawned;
+    };
     let req = ExecAgentRequest {
         task: task.to_string(),
         model: model.to_string(),
@@ -204,29 +235,69 @@ async fn exec_step_subprocess(
         timeout,
         cwd,
     };
-    let req_json = serde_json::to_string(&req).ok()?;
-    let exe = std::env::current_exe().ok()?;
+    let Ok(req_json) = serde_json::to_string(&req) else {
+        return StepExec::NotSpawned;
+    };
+    let Ok(exe) = std::env::current_exe() else {
+        return StepExec::NotSpawned;
+    };
 
-    let mut child = tokio::process::Command::new(exe)
+    let Ok(mut child) = tokio::process::Command::new(exe)
         .arg("--exec-agent")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit()) // logs still flow to journald
+        // If we bail out below, don't leave the child running unsupervised
+        // against the repo — kill it rather than let it keep editing behind
+        // our back once we've decided not to use its result.
+        .kill_on_drop(true)
         .spawn()
-        .ok()?;
+    else {
+        return StepExec::NotSpawned;
+    };
+
+    // From here on, the child HAS started and may already be touching the
+    // repo — any failure below must map to `Failed`, not `NotSpawned`, so the
+    // caller never re-runs this step in-process on top of a half-edited tree.
 
     // The request is small (fits the pipe buffer), so write-then-wait can't
     // deadlock. Drop stdin to signal EOF before collecting output.
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(req_json.as_bytes()).await.ok()?;
-        stdin.shutdown().await.ok()?;
+        if stdin.write_all(req_json.as_bytes()).await.is_err() || stdin.shutdown().await.is_err() {
+            tracing::warn!(
+                "exec-agent child failed to receive its request after starting; NOT retrying \
+                 in-process — the child may already have modified the repo"
+            );
+            return StepExec::Failed;
+        }
     }
-    let output = child.wait_with_output().await.ok()?;
+    let output = match child.wait_with_output().await {
+        Ok(output) => output,
+        Err(e) => {
+            tracing::warn!(
+                "exec-agent child failed while awaiting output ({e}); NOT retrying in-process — \
+                 the child may already have modified the repo"
+            );
+            return StepExec::Failed;
+        }
+    };
     if !output.status.success() {
-        tracing::warn!("exec-agent child exited unsuccessfully; falling back to in-process");
-        return None;
+        tracing::warn!(
+            "exec-agent child exited unsuccessfully; NOT retrying in-process — the child may \
+             already have modified the repo"
+        );
+        return StepExec::Failed;
     }
-    serde_json::from_slice::<HeadlessOutcome>(&output.stdout).ok()
+    match serde_json::from_slice::<HeadlessOutcome>(&output.stdout) {
+        Ok(outcome) => StepExec::Ran(outcome),
+        Err(e) => {
+            tracing::warn!(
+                "exec-agent child's output failed to parse ({e}); NOT retrying in-process — the \
+                 child may already have modified the repo"
+            );
+            StepExec::Failed
+        }
+    }
 }
 
 /// Char-safe truncation of tool output, matching the interactive runner's cap.
@@ -771,15 +842,19 @@ pub async fn run_decomposed_agent(
         );
         tracing::info!("decompose: step {}/{n}: {title}", i + 1);
         // Run each step in a FRESH process so the wedge can't accumulate across
-        // the job's many steps. Fall back to in-process if spawning fails, so
-        // decomposition still works in environments where a self-exec isn't
-        // possible (e.g. tests).
+        // the job's many steps. `NotSpawned` means the child never ran at all,
+        // so it is safe to fall back to running the step in-process. `Failed`
+        // means the child STARTED and may already have half-applied edits to
+        // the repo — re-running the SAME step in-process on top of that would
+        // run it TWICE (duplicate imports/functions, or the agent thrashing
+        // against its own unfinished work), so that case must NOT retry; it is
+        // handled below as a genuine step failure instead.
         let out =
             match exec_step_subprocess(&step_task, model, max_iterations, command_timeout_secs)
                 .await
             {
-                Some(out) => out,
-                None => {
+                StepExec::Ran(out) => out,
+                StepExec::NotSpawned => {
                     run_role(
                         provider,
                         model,
@@ -790,6 +865,16 @@ pub async fn run_decomposed_agent(
                         command_timeout_secs,
                     )
                     .await?
+                }
+                StepExec::Failed => {
+                    // The child may have already modified the repo — do NOT re-run
+                    // this step (that would be the double-run hazard this fix
+                    // exists to avoid). Record it as failed and stop: later steps
+                    // likely depend on this one having actually completed. Leave
+                    // `edited` as-is; the worker commits whatever is actually in
+                    // the tree.
+                    summary.push_str(&format!("- Step {}/{n} [FAILED]: {title}\n", i + 1));
+                    break;
                 }
             };
         total_iters += out.iterations;
