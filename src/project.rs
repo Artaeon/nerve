@@ -123,7 +123,35 @@ impl ProjectStore {
 
     fn ensure_dir(&self) -> anyhow::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
+        self.ensure_log_gitignore();
         Ok(())
+    }
+
+    /// Keep the append-only LOGS out of git, while the curated knowledge
+    /// (brief/memory/design/decisions) stays committed and travels with the repo.
+    ///
+    /// This is a correctness fix, not tidiness. The server worker starts every job
+    /// from a pristine tree (`reset --hard` + `clean -fd`). While these logs were
+    /// tracked, that reset threw away every entry written since the last commit —
+    /// so the agent's own "what did I just do" memory was destroyed before each
+    /// job and never accumulated (observed: ~20 jobs, 4 surviving entries). Git
+    /// leaves IGNORED files alone on both reset and `clean -fd`, so ignoring them
+    /// is exactly what makes them persist. They are per-machine operational logs;
+    /// committing them only ever produced merge noise anyway.
+    ///
+    /// Best-effort and idempotent: never fail a write because of this.
+    fn ensure_log_gitignore(&self) {
+        let path = self.dir.join(".gitignore");
+        if path.exists() {
+            return;
+        }
+        let _ = std::fs::write(
+            &path,
+            "# Append-only operational logs: per-machine, and they must survive the\n\
+             # worker's pristine-tree reset (git leaves ignored files alone).\n\
+             activity.jsonl\n\
+             journal.jsonl\n",
+        );
     }
 
     // ── memory.md ────────────────────────────────────────────────────────
@@ -523,6 +551,37 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = ProjectStore::for_workspace(dir.path());
         (dir, store)
+    }
+
+    #[test]
+    fn append_only_logs_are_gitignored_so_a_reset_cannot_wipe_them() {
+        // The worker starts every job with `reset --hard` + `clean -fd`. While the
+        // logs were TRACKED, that destroyed every entry since the last commit —
+        // the agent's own recent-activity memory never accumulated. Git leaves
+        // ignored files alone on both, so ignoring them is what makes them persist.
+        let (_d, s) = store();
+        s.remember("something").unwrap(); // triggers ensure_dir
+        let ignore = std::fs::read_to_string(s.dir.join(".gitignore"))
+            .expect(".nerve/.gitignore must be created");
+        assert!(ignore.contains("activity.jsonl"));
+        assert!(ignore.contains("journal.jsonl"));
+        // The curated knowledge must NOT be ignored — it travels with the repo.
+        for keep in ["memory.md", "brief.md", "design.md", "decisions.jsonl"] {
+            assert!(
+                !ignore.contains(keep),
+                "{keep} is shared knowledge and must stay committed"
+            );
+        }
+    }
+
+    #[test]
+    fn log_gitignore_is_idempotent_and_never_clobbers() {
+        let (_d, s) = store();
+        s.remember("a").unwrap();
+        std::fs::write(s.dir.join(".gitignore"), "custom-user-content\n").unwrap();
+        s.remember("b").unwrap(); // must not overwrite what the user put there
+        let ignore = std::fs::read_to_string(s.dir.join(".gitignore")).unwrap();
+        assert_eq!(ignore, "custom-user-content\n");
     }
 
     #[test]
