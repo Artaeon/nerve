@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-14 · **Unit tests:** 2,023 passing (`cargo test`),
+**Last updated:** 2026-07-15 · **Unit tests:** 2,024 passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -266,6 +266,28 @@ Wired end-to-end (`--decompose` → `SUBMITDC` → `Job.decompose` → worker di
 real cross-cutting task well) and the fallback makes it safe, but it stresses the
 long-standing worker wedge harder than any single job — the wedge is now the
 top reliability bottleneck to eliminate.
+
+### 2026-07-15 — THE WEDGE IS FIXED: subprocess isolation ✅
+
+The worker wedge (accumulated in-process state that, after ~a dozen tool-heavy
+runs, makes *every* tool fail — never root-caused) is eliminated for the path
+that hit it hardest. Each decompose STEP now runs in a fresh `nerve --exec-agent`
+child process (stdin: `ExecAgentRequest` JSON → runs one full-tool agent → stdout:
+`HeadlessOutcome` JSON → exits). No state carries between steps. Falls back to
+in-process if spawning fails. Plus decompose now commits each step, and a requeued
+job keeps its branch commits, so any interruption resumes instead of restarting.
+
+**Proven live, back-to-back — the cleanest A/B this project has produced:**
+| Run | Isolation | Result |
+|---|---|---|
+| Marketing overhaul (`--decompose`, 8 steps) | none (in-process) | 🐞 **wedged after step 7**, progress discarded, fell back to a single agent |
+| SEO overhaul (`--decompose`, 7 steps) | **subprocess per step** | ✅ **all 7 steps completed, no wedge**, `lint && npm test` passed, merged |
+
+`ps` confirmed the `nerve --exec-agent` child running under the daemon during the
+run, and the branch carried one commit per step (`decompose step 7/7: …`). The
+decompose parent now only runs the read-only planner + spawns children, so it
+stays light. **Remaining lever:** extend `--exec-agent` to every job (not just
+decompose steps), which would retire `RESTART_AFTER_JOBS` entirely.
 
 ## How to extend this record
 When a feature is genuinely exercised, move it up (❔ → 💨 → ✅) with a one-line
