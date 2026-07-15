@@ -210,6 +210,26 @@ async fn all_tools_failed_is_false_when_a_tool_succeeds() {
 }
 
 #[tokio::test]
+async fn a_fresh_run_resets_an_exhausted_tool_counter() {
+    // THE WEDGE REGRESSION. The tool-execution counter is process-global and was
+    // never reset on the headless path, so a long-lived worker eventually crossed
+    // MAX_TOOL_EXECUTIONS and then failed EVERY tool call — read_file included —
+    // making jobs churn to their cap writing nothing. Simulate an exhausted
+    // counter and assert a fresh run still works.
+    crate::agent::tools::set_tool_count_for_test(usize::MAX / 2);
+    // Always emits a tool call, so the run reaches the >=3 iterations that
+    // `all_tools_failed` needs to be meaningful.
+    let provider = MockProvider::scripted(&["<tool_call>tool: list_files\npath: .</tool_call>"]);
+    let out = run_headless_agent(&provider, "m", "list", 4, 5)
+        .await
+        .unwrap();
+    assert!(
+        !out.all_tools_failed,
+        "a fresh run must reset the global tool counter — otherwise every tool fails (the wedge)"
+    );
+}
+
+#[tokio::test]
 async fn stops_at_iteration_cap() {
     // Always emits a tool call → the loop must stop at max_iterations.
     let provider = MockProvider::scripted(&["<tool_call>tool: list_files\npath: .</tool_call>"]);

@@ -19,13 +19,12 @@ Be DECISIVE and EFFICIENT: read only the few files you genuinely need to match t
 conventions, then START WRITING code. Do NOT re-read files you have already read, and do NOT explore \
 indefinitely — once you understand the pattern, implement it. Prefer making the change over gathering \
 more context. Verify your work where you can (build/tests). \
-IMPORTANT: there is NO limit on the number of tool calls or 'tool executions' you may make in this \
-session — no such per-session cap exists. Never stop, and never claim you have 'hit a tool execution \
-limit' or 'cannot continue this session': keep going until the task is actually complete. The ONLY \
-valid reasons to stop are (a) the task is genuinely done, or (b) you are truly blocked by missing \
-information or a broken environment that no further tool call could resolve — and in case (b) you \
-must first have actually attempted the change. When the task is complete, reply with a short \
-plain-text summary of what you changed and STOP (emit no further tool calls).";
+You have a generous tool budget for this task — do not ration it, and do not stop early to save \
+calls: keep going until the task is actually complete. The ONLY valid reasons to stop are (a) the \
+task is genuinely done, or (b) you are truly blocked by missing information or a broken environment \
+that no further tool call could resolve — and in case (b) you must first have actually attempted the \
+change. When the task is complete, reply with a short plain-text summary of what you changed and \
+STOP (emit no further tool calls).";
 
 /// Tools that mutate the workspace — used to flag whether a run edited files.
 const WRITE_TOOLS: &[&str] = &[
@@ -309,6 +308,16 @@ async fn run_role(
     max_iterations: usize,
     command_timeout_secs: u64,
 ) -> anyhow::Result<HeadlessOutcome> {
+    // THE WEDGE FIX. The tool-execution counter is process-global and monotonic,
+    // and nothing on this path ever reset it (only the TUI's `/agent off` did) —
+    // so a long-running worker accumulated tool calls across jobs until it
+    // crossed MAX_TOOL_EXECUTIONS and then failed EVERY tool call, read_file
+    // included. That is exactly the "wedge" that RESTART_AFTER_JOBS, the
+    // all_tools_failed self-heal, the requeue, and subprocess isolation were all
+    // built to work around (a fresh process happened to get a fresh counter).
+    // Each agent run gets its own budget.
+    crate::agent::tools::reset_tool_counter();
+
     // Fold the project's persisted `.nerve/` knowledge (brief, conventions,
     // design principles, recent decisions) into the tools system message so a
     // headless job follows the project's conventions and design system instead
@@ -360,10 +369,13 @@ async fn run_role(
                 tracing::info!(
                     "headless: replied without acting — nudging ({nudges}/{MAX_NUDGES})"
                 );
-                // Models sometimes give up mid-loop by confabulating a "tool
-                // execution limit" / "cannot continue this session". There is no
-                // such limit — rebut it directly so the agent resumes instead of
-                // abandoning a task it never actually started.
+                // A model that quits citing a "tool execution limit" was, for a
+                // long time, telling the TRUTH: the global tool counter was never
+                // reset on this path, so it really did hit one (see the wedge fix
+                // in `reset_tool_counter` above). Now each run gets its own
+                // generous budget, so a bail this early is genuinely premature —
+                // say so WITHOUT claiming the limit doesn't exist (it does; the
+                // agent should never be told its own observations are false).
                 let bailed = {
                     let r = response.to_lowercase();
                     (r.contains("limit") || r.contains("cannot") || r.contains("can't"))
@@ -373,10 +385,10 @@ async fn run_role(
                             || r.contains("progress"))
                 };
                 let msg = if bailed {
-                    "There is NO tool-execution or per-session limit — that constraint does not \
-                     exist. You have made no changes yet. Stop explaining and IMPLEMENT the task \
-                     NOW with write_file/edit_file/run_command. Only stop once the change is \
-                     actually written."
+                    "You have plenty of tool budget left for this task — this run has barely \
+                     started, so that is not a reason to stop. You have made no changes yet. Stop \
+                     explaining and IMPLEMENT the task NOW with write_file/edit_file/run_command. \
+                     Only stop once the change is actually written."
                 } else {
                     "You have not used any tools or changed anything yet. If this task needs code \
                      changes, implement them NOW with write_file/edit_file/run_command — do not \
@@ -705,7 +717,37 @@ pub async fn run_decomposed_agent(
         command_timeout_secs,
     )
     .await?;
-    let subtasks = parse_subtasks(&planner.final_response);
+    let mut subtasks = parse_subtasks(&planner.final_response);
+
+    // Seen live: the planner explores fine, then answers with prose (or a plan
+    // in the wrong shape) and no parseable JSON — and we'd silently fall back to
+    // running the whole task in one agent, which is exactly what decomposition
+    // exists to avoid. Before giving up, ask ONCE for just the JSON, handing the
+    // model its own analysis back so it only has to reformat. A tiny iteration
+    // budget keeps it from exploring again.
+    if subtasks.is_empty() {
+        tracing::info!("decompose: planner returned no parseable plan — asking once for the JSON");
+        let retry_task = format!(
+            "The task was:\n{task}\n\nYour analysis so far:\n{}\n\nOutput ONLY the decomposition \
+             now, as a fenced JSON array (```json ... ```) where each element is an object with \
+             exactly two string fields: \"title\" and \"instruction\". No prose, no tool calls — \
+             just the JSON array.",
+            crate::agent::context::smart_truncate(&planner.final_response, 4000)
+        );
+        if let Ok(retry) = run_role(
+            provider,
+            model,
+            DECOMPOSER_SYSTEM,
+            ToolPolicy::ReadOnly,
+            &retry_task,
+            2,
+            command_timeout_secs,
+        )
+        .await
+        {
+            subtasks = parse_subtasks(&retry.final_response);
+        }
+    }
 
     if subtasks.is_empty() {
         tracing::warn!("decompose: no sub-tasks parsed — falling back to a single agent run");

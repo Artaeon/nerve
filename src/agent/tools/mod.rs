@@ -7,8 +7,23 @@ pub mod parse;
 
 pub use parse::parse_tool_calls;
 
+/// Runaway backstop: how many tools ONE agent run may execute.
+///
+/// This counter is process-global and monotonic, so it MUST be reset at the
+/// start of every agent run (`reset_tool_counter`) — otherwise it accumulates
+/// across runs until every tool call fails. That exact bug was the long-hunted
+/// worker "wedge": the headless/worker path never reset it (only the TUI's
+/// `/agent off` did), so after ~100 tool calls the worker returned
+/// "Tool execution limit reached" for EVERY tool — read_file included — and jobs
+/// churned to their iteration cap writing nothing. It also made the agent look
+/// like it was confabulating a "tool execution limit": it was accurately
+/// reporting this real message.
+///
+/// The bound is a safety net against a runaway loop, NOT a working limit: a
+/// legitimate 40-iteration job can batch several tools per iteration, so 100 was
+/// far too low even for a single run.
 static TOOL_EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
-const MAX_TOOL_EXECUTIONS: usize = 100;
+const MAX_TOOL_EXECUTIONS: usize = 500;
 
 /// A tool the AI agent can invoke
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +187,13 @@ IMPORTANT: When you are done with all changes and verification, respond with you
 /// Reset the per-session tool execution counter.
 pub fn reset_tool_counter() {
     TOOL_EXEC_COUNT.store(0, Ordering::Relaxed);
+}
+
+/// Test-only: force the global counter to `n`, so a test can prove that starting
+/// a fresh agent run resets it (the wedge regression).
+#[cfg(test)]
+pub(crate) fn set_tool_count_for_test(n: usize) {
+    TOOL_EXEC_COUNT.store(n, Ordering::Relaxed);
 }
 
 /// Extract a required argument from a tool call, returning an error result
