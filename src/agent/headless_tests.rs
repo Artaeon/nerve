@@ -269,6 +269,43 @@ async fn an_identical_re_read_is_collapsed_to_a_pointer() {
 }
 
 #[test]
+fn compaction_reaches_its_budget_even_when_the_tail_is_huge() {
+    // A tool result may be up to MAX_TOOL_OUTPUT_CHARS (50k). Six of those in the
+    // protected tail blow the budget on their own, and the old pass only shrank
+    // messages BETWEEN head and tail — so it could return having freed nothing
+    // and the very next provider call would overflow the context window and kill
+    // the job. Compaction must always converge under its budget.
+    let budget = 2_000;
+    let huge = "y".repeat(50_000);
+    let mut msgs: Vec<ChatMessage> = vec![
+        ChatMessage::system("base prompt"),
+        ChatMessage::system("tools prompt"),
+        ChatMessage::user("THE ORIGINAL TASK"),
+    ];
+    // A tail of six enormous tool results, with assistant turns interleaved.
+    for _ in 0..6 {
+        msgs.push(ChatMessage::assistant("thinking"));
+        msgs.push(ChatMessage::user(&huge));
+    }
+
+    compact_context(&mut msgs, budget);
+
+    let total: usize = msgs
+        .iter()
+        .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
+        .sum();
+    assert!(
+        total <= budget,
+        "compaction must get under budget, still at {total} tokens (budget {budget})"
+    );
+    // The task must survive regardless — never trade the goal for space.
+    assert!(
+        msgs.iter().any(|m| m.content == "THE ORIGINAL TASK"),
+        "the original task must never be compacted away"
+    );
+}
+
+#[test]
 fn compact_context_reports_whether_it_stubbed() {
     // The re-read cache is dropped whenever compaction fires, so compaction MUST
     // report honestly — otherwise a model could be pointed at content that is no

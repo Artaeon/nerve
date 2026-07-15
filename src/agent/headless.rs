@@ -80,29 +80,74 @@ const EXPLORE_NUDGE_AFTER: usize = 8;
 /// drop its re-read cache, because content that is no longer in the conversation
 /// must be sent in full if the model asks for it again.
 fn compact_context(messages: &mut [ChatMessage], budget_tokens: usize) -> bool {
-    if messages.len() <= HEAD_KEEP + TAIL_KEEP {
-        return false;
-    }
-    let total: usize = messages
-        .iter()
-        .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
-        .sum();
-    if total <= budget_tokens {
+    const STUB: &str =
+        "[earlier tool output compacted to save context — re-read the file if you need it again]";
+
+    let total = |msgs: &[ChatMessage]| -> usize {
+        msgs.iter()
+            .map(|m| crate::agent::context::ContextManager::estimate_tokens(&m.content))
+            .sum()
+    };
+    if total(messages) <= budget_tokens {
         return false;
     }
 
-    const STUB: &str =
-        "[earlier tool output compacted to save context — re-read the file if you need it again]";
-    let cut_end = messages.len() - TAIL_KEEP;
     let mut stubbed = false;
-    for msg in &mut messages[HEAD_KEEP..cut_end] {
-        // Only shrink big tool-result messages (role "user"); leave the model's
-        // own assistant turns intact so its reasoning trail is preserved.
-        if msg.role == "user" && msg.content.len() > STUB.len() + 100 {
-            msg.content = STUB.to_string();
+    let shrinkable = |m: &ChatMessage| m.role == "user" && m.content.len() > STUB.len() + 100;
+
+    // Pass 1 — the cheap win: stub OLD tool output (between the head and the
+    // recent tail). The model keeps its own reasoning (assistant turns are never
+    // touched) and can re-read a file if it truly needs it again.
+    if messages.len() > HEAD_KEEP + TAIL_KEEP {
+        let cut_end = messages.len() - TAIL_KEEP;
+        for msg in &mut messages[HEAD_KEEP..cut_end] {
+            if shrinkable(msg) {
+                msg.content = STUB.to_string();
+                stubbed = true;
+            }
+        }
+        if total(messages) <= budget_tokens {
+            return stubbed;
+        }
+    }
+
+    // Pass 2 — the tail alone can blow the budget: a single tool result may be
+    // MAX_TOOL_OUTPUT_CHARS (50k), so six of them in the "protected" tail is ~100k
+    // tokens by itself. Passing 1 only was enough to return having freed nothing,
+    // and the very next provider call would overflow the window and kill the job.
+    // Shrink tail tool output oldest-first, keeping the MOST RECENT result intact
+    // (that's the one the model is actually reasoning about right now), and stop
+    // as soon as we're under budget.
+    let last = messages.len().saturating_sub(1);
+    for i in HEAD_KEEP..last {
+        if total(messages) <= budget_tokens {
+            return stubbed;
+        }
+        if shrinkable(&messages[i]) {
+            messages[i].content = STUB.to_string();
             stubbed = true;
         }
     }
+
+    // Pass 3 — still over: even the newest result is too big on its own. Truncate
+    // it rather than let the request overflow; a clipped result the model can act
+    // on beats a hard provider error that fails the whole job.
+    if total(messages) > budget_tokens && shrinkable(&messages[last]) {
+        const NOTE: &str = "\n[truncated to fit the context budget — re-read if you need more]";
+        let est = crate::agent::context::ContextManager::estimate_tokens;
+        // Budget the NOTE itself, or we'd land just over and still overflow.
+        let allowance = budget_tokens.saturating_sub(total(&messages[..last]) + est(NOTE));
+        // `estimate_tokens` is chars/3 + 1 — invert it conservatively.
+        let keep_chars = allowance.saturating_sub(1).saturating_mul(3);
+        if messages[last].content.chars().count() > keep_chars {
+            let head: String = messages[last].content.chars().take(keep_chars).collect();
+            messages[last].content = format!("{head}{NOTE}");
+            stubbed = true;
+        }
+    }
+
+    // The HEAD (system prompts + the original task) is never touched: losing the
+    // goal to save space would defeat the whole run.
     stubbed
 }
 
