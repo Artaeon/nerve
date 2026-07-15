@@ -156,10 +156,16 @@ async fn a_failed_write_tool_does_not_flag_edited() {
 
 #[tokio::test]
 async fn all_tools_failed_flags_a_wedged_environment() {
-    // Every tool round fails (a non-zero run_command each time) → the run must
-    // flag all_tools_failed so the worker can self-heal with a fresh restart.
+    // Every tool round is BLOCKED before it ever runs (never proves the tool
+    // layer works) → the run must flag all_tools_failed so the worker can
+    // self-heal with a fresh restart. Deliberately NOT a `run_command` that
+    // merely exits non-zero (e.g. `exit 1`) — a command that actually
+    // executed and reported a failing build/test is proof the tool layer is
+    // fine (see `tool_layer_worked`), so it must not false-fire this
+    // detector. A genuinely dangerous command that gets blocked pre-exec is
+    // the real signature of "no tool ever truly ran".
     let provider =
-        MockProvider::scripted(&["<tool_call>tool: run_command\ncommand: exit 1</tool_call>"]);
+        MockProvider::scripted(&["<tool_call>tool: run_command\ncommand: rm -rf /</tool_call>"]);
     let out = run_headless_agent(&provider, "m", "everything fails", 5, 5)
         .await
         .unwrap();
@@ -169,6 +175,61 @@ async fn all_tools_failed_flags_a_wedged_environment() {
         out.all_tools_failed,
         "a run where no tool ever succeeds must flag all_tools_failed"
     );
+}
+
+#[tokio::test]
+async fn a_failing_build_is_not_mistaken_for_a_wedged_worker() {
+    // THE REGRESSION. `run_command`'s ToolResult.success is the COMMAND's exit
+    // status, so an agent whose opening move is "run the tests, watch them fail,
+    // fix them" produced only `success: false` results — and the detector
+    // concluded the worker was wedged, requeuing the job and restarting a
+    // perfectly healthy worker. A command that RAN and reported failure proves
+    // the tool layer works.
+    let provider =
+        MockProvider::scripted(&["<tool_call>tool: run_command\ncommand: exit 1</tool_call>"]);
+    let out = run_headless_agent(&provider, "m", "run failing tests", 5, 5)
+        .await
+        .unwrap();
+    assert!(out.iterations >= 3, "needs >=3 rounds to be meaningful");
+    assert!(
+        !out.all_tools_failed,
+        "a command that ran and merely exited non-zero must NOT look like a wedge"
+    );
+}
+
+#[test]
+fn tool_layer_worked_distinguishes_ran_from_never_ran() {
+    let mk = |tool: &str, success: bool, output: &str| ToolResult {
+        tool: tool.into(),
+        success,
+        output: output.into(),
+    };
+    // Ran, but the command failed (a red test suite) → the layer works.
+    assert!(tool_layer_worked(&mk(
+        "run_command",
+        false,
+        "FAILED\n[completed in 0.2s]"
+    )));
+    // Any tool that outright succeeded → the layer works.
+    assert!(tool_layer_worked(&mk("read_file", true, "contents")));
+    // Never ran: refused before execution.
+    assert!(!tool_layer_worked(&mk(
+        "run_command",
+        false,
+        "Blocked: this command is potentially destructive"
+    )));
+    // Never completed: killed at the timeout.
+    assert!(!tool_layer_worked(&mk(
+        "run_command",
+        false,
+        "Command timed out after 30.0s (limit: 30s)"
+    )));
+    // A genuinely broken tool layer (what a real wedge looked like).
+    assert!(!tool_layer_worked(&mk(
+        "read_file",
+        false,
+        "Tool execution limit reached (500). Start a new session."
+    )));
 }
 
 #[test]

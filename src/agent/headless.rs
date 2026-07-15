@@ -165,10 +165,15 @@ pub struct HeadlessOutcome {
     pub final_response: String,
     /// Whether the run stopped because it hit the iteration cap (vs. finished).
     pub hit_max_iterations: bool,
-    /// True when the run executed several tool rounds but *not a single* tool
-    /// call succeeded — the signature of a wedged worker process (every tool,
-    /// even `read_file`, failing). A healthy run always has at least one
-    /// successful read. The worker uses this to self-heal via a fresh restart.
+    /// True when the run executed several tool rounds but the TOOL LAYER
+    /// never once proved itself working — the signature of a wedged worker
+    /// process (every tool, even `read_file`, failing to run at all). A
+    /// `run_command` whose command merely exited non-zero (a failing
+    /// build/test — a completely normal opening move) does NOT count against
+    /// this: the tool ran and reported a real result, which proves the layer
+    /// is fine (see `tool_layer_worked`). Only a tool that never truly ran is
+    /// evidence of a wedge. The worker uses this to self-heal via a fresh
+    /// restart.
     pub all_tools_failed: bool,
 }
 
@@ -362,6 +367,18 @@ pub async fn run_headless_agent(
     .await
 }
 
+/// Whether a tool result proves the TOOL LAYER worked, regardless of what
+/// the underlying command reported. A `run_command` that ran and exited
+/// non-zero (a failing build/test) is a normal, healthy result -- only a tool
+/// that never ran at all is evidence of a broken tool layer.
+/// `execute_run_command` stamps the "[completed in " marker only on the path
+/// where the command actually executed (not on the blocked/timeout/spawn-error
+/// paths), so that marker is what distinguishes "the shell ran and reported
+/// the truth" from "the tool layer itself never ran".
+fn tool_layer_worked(result: &ToolResult) -> bool {
+    result.success || (result.tool == "run_command" && result.output.contains("[completed in "))
+}
+
 /// Core agent loop, parameterized by the role's `system_prompt` and its
 /// `policy`. Under [`ToolPolicy::ReadOnly`] any write/command tool is blocked
 /// (returned as a failed result) so planner/reviewer roles can inspect but not
@@ -509,11 +526,19 @@ async fn run_role(
                 // verify gate ran against an unchanged tree, "passed", and the
                 // job was logged/journaled as a success that wrote nothing (and
                 // the worker skips the commit when nothing truly changed anyway).
-                if result.success {
+                if result.success && is_write {
+                    edited = true;
+                }
+                // Separately, track whether the TOOL LAYER worked at all -- this is
+                // deliberately NOT the same condition as `edited` above. A
+                // `run_command` that ran and merely exited non-zero (a failing
+                // build or test suite -- the normal opening move of "run the
+                // tests, see them fail, fix them") is proof the tool layer is
+                // fine, even though `result.success` is false. Counting it as
+                // evidence of a wedge made the detector false-fire on ordinary
+                // failing tests and restart a perfectly healthy worker.
+                if tool_layer_worked(&result) {
                     any_tool_succeeded = true;
-                    if is_write {
-                        edited = true;
-                    }
                 }
                 result
             };
@@ -555,8 +580,13 @@ async fn run_role(
         edited,
         final_response,
         hit_max_iterations,
-        // Several tool rounds ran but nothing ever succeeded → the environment
-        // is wedged (a healthy run always lands at least one successful read).
+        // Several tool rounds ran but the tool LAYER never once proved itself
+        // working -- the signature of a wedged process (every tool, even
+        // read_file, failing to run at all). A `run_command` whose command
+        // merely exited non-zero (a failing build/test, a completely normal
+        // opening move) still counts as the layer working -- see
+        // `tool_layer_worked` -- so this must not false-fire on ordinary
+        // failing tests and gratuitously restart a healthy worker.
         all_tools_failed: iterations >= 3 && !any_tool_succeeded,
     })
 }
