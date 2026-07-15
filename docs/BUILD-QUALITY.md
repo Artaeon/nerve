@@ -19,7 +19,8 @@ and merges or rejects. Nothing below is "it looked right".
 
 | | |
 |---|---|
-| Features merged into vollgebucht | **13** |
+| Features merged into vollgebucht | **15** |
+| Bugs nerve fixed in its OWN source | **2** (both HIGH, both correct) |
 | Rejected / failed jobs | **4** (all caught before merge) |
 | vollgebucht test suite | 191 → **222 passing** |
 | Typical clean job | **3–24 iterations** |
@@ -50,6 +51,51 @@ first whether the types/plumbing already exist — they often do, and the job
 collapses to a single file.
 
 ---
+
+## The hardest test: nerve fixing nerve
+
+We pointed nerve at **its own source** — a Rust codebase — and asked it to fix two
+**HIGH-severity** bugs found by an independent deep review. Its verify gate ran
+`cargo check` **and nerve's own 2,028-test suite**.
+
+| Bug | Result | Iterations |
+|---|---|---|
+| A failed `checkout -b` silently committed jobs to `main` | ✅ **Fixed correctly** | 16 |
+| The decompose fallback re-ran a step the child had already executed | ✅ **Fixed correctly** | 16 |
+
+Both merged after human review; both compile clean, pass 2,028 tests and clippy.
+
+This is the strongest evidence in this document, because the work is unforgiving:
+- For the branch bug it did exactly the right thing — replaced the inference
+  ("`checkout -b` failed ⇒ branch exists") with an explicit
+  `rev-parse --verify`, **preserved** the subtle requeue-keeps-commits behaviour,
+  and added a hard `bail!` if HEAD isn't on the job branch.
+- For the double-run bug it drew the correct boundary — a `StepExec` enum
+  separating *never started* (safe to retry in-process) from *started and may
+  have already edited the repo* (must **not** retry) — and added `kill_on_drop`
+  so an abandoned child can't keep writing.
+
+Its comments explain **why**, referencing the real failure mode, in the file's
+existing voice. This is senior-level work on a codebase it had never "seen".
+
+**But the same experiment exposed two real bugs in nerve that only this could
+find** — because the gate ran nerve's tests on the machine hosting a live daemon
+and a root shell:
+
+1. **The test suite decapitated the running daemon.** `daemon.rs` tests called
+   `remove_file(socket_path())` and `stop_daemon()` — on the **real**
+   `~/.nerve/nerve.sock`. Every self-job's verify gate killed the very daemon
+   running it; the process stayed up but was unreachable and the queue stranded.
+   *Fixed (hermetic `*_at(path)` cores + tempdir sockets) and **proven**: the
+   suite now runs on the server and the daemon survives.*
+2. **A "security" test really ran `sudo apt-get install malware`** — as root, on
+   every `cargo test`. It was named `..._sudo_blocked`, asserted **nothing**
+   (`let _ = result;`), and its own comment admitted the command wasn't in the
+   denylist. *Fixed: privileged system-wide installs are now denied (project-local
+   `npm install` still allowed), and the test asserts the refusal.*
+
+Neither is code nerve wrote — they're **latent bugs in nerve that dogfooding
+surfaced**. That is the strongest argument for this practice.
 
 ## Is the code actually good? — yes, and specifically so
 
