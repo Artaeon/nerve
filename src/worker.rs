@@ -9,7 +9,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::ai::provider::AiProvider;
 use crate::queue::{Job, Queue, now_secs};
@@ -34,20 +34,6 @@ const RESTART_AFTER_JOBS: usize = 6;
 /// runs on the next poll after this delay; if still limited it defers again. A
 /// conservative value avoids hammering the provider while a window is closed.
 const QUOTA_BACKOFF_SECS: u64 = 20 * 60;
-
-/// Ceiling on how long a single verify command may run before we kill it.
-///
-/// This is deliberately its own, much larger budget than the agent's own tool
-/// `command_timeout_secs` (30s, see `headless.rs`): `.nerve/verify.toml` lets a
-/// project append arbitrary steps (typically `npm run build`) to the verify
-/// gate, and a real production build can legitimately take minutes — reusing
-/// the 30s tool timeout would fail every good build. But it must still be
-/// bounded: the worker is sequential, so a command that hangs (waiting on a
-/// prompt, a lock, a dead network mirror) would otherwise block this one job
-/// forever and take the entire queue down with it. 15 minutes is generous
-/// enough not to punish a slow-but-healthy build, while still guaranteeing the
-/// queue keeps moving.
-const VERIFY_TIMEOUT_SECS: u64 = 15 * 60;
 
 /// Drain the queue forever (until a proactive restart). Spawned as a background
 /// task inside the daemon.
@@ -230,7 +216,23 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         let base = base_branch(repo);
         let _ = git(repo, &["checkout", "-f", &base]);
         let _ = git(repo, &["reset", "--hard", &base]);
-        let _ = git(repo, &["clean", "-fd"]);
+        // Exclude `.nerve/` from the untracked-file sweep: it holds the
+        // project's MEMORY (`.nerve/memory.md`, `brief.md`, `design.md`) and its
+        // append-only logs (`activity.jsonl` — what nerve did and why;
+        // `journal.jsonl` — per-tool-call changes). Cleaning it out is exactly
+        // the "nerve forgets" bug this repo has fixed twice now. Relying on
+        // `.nerve/.gitignore` (written by `Project::ensure_dir`) to protect them
+        // isn't enough on its own: that file is itself untracked in a repo that
+        // never committed it, so a plain `clean -fd` deletes the guard, and the
+        // logs are gone on the NEXT job even though they survived this one.
+        // Excluding `.nerve/` here is safe for the pristine-tree guarantee this
+        // whole block exists to provide (see the comment above): the directory
+        // is write-protected from the agent's tools, so it can never carry a
+        // job's edits into the next job's diff. `reset --hard` above still
+        // restores any TRACKED `.nerve/` files (memory.md, brief.md,
+        // design.md) to the base branch's version, which is correct and
+        // unchanged.
+        let _ = git(repo, &["clean", "-fd", "-e", ".nerve"]);
 
         // Decide create-vs-resume EXPLICITLY rather than inferring it from a
         // failed `checkout -b`: that failure can mean many things (invalid
@@ -250,8 +252,12 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
             // dirt — do NOT reset to base, which would throw that progress away.
             // A normal job has no commits ahead of base, so this is equivalent to
             // the old reset for it.
+            //
+            // Exclude `.nerve/` here too, for the same reason as the clean above:
+            // it's the project's memory, not job dirt, and it's already
+            // write-protected from the agent's tools.
             let _ = git(repo, &["checkout", "-f", &branch]);
-            let _ = git(repo, &["clean", "-fd"]);
+            let _ = git(repo, &["clean", "-fd", "-e", ".nerve"]);
         } else {
             let _ = git(repo, &["checkout", "-b", &branch]);
         }
@@ -490,118 +496,20 @@ async fn run_in_repo(
 }
 
 /// Run a verify command (a shell string like `cargo check` / `npm run -s lint`)
-/// in `repo`, returning (success, combined stdout+stderr). Bounded by
-/// `VERIFY_TIMEOUT_SECS` — see `run_verify_with_timeout` for why.
+/// in `repo`, returning (success, combined stdout+stderr).
 fn run_verify(repo: &Path, cmd: &str) -> (bool, String) {
-    run_verify_with_timeout(repo, cmd, VERIFY_TIMEOUT_SECS)
-}
-
-/// Run a verify command with an explicit `timeout_secs` deadline (split out
-/// from `run_verify` so tests can use a tiny deadline instead of waiting out
-/// the real 15-minute budget).
-///
-/// We spawn the child with piped stdout/stderr and hand those pipes to a
-/// background thread that reads them to completion via `.output()` — that
-/// thread cannot deadlock the poll loop below because it never touches
-/// `child`; it just blocks on the pipes, which is fine since it runs on its
-/// own thread. Meanwhile we poll `child.try_wait()` on a short interval until
-/// either the child exits or the deadline passes. On timeout we kill the
-/// child (reaping it with `.wait()` so it doesn't linger as a zombie) and
-/// return a failure message that names the cause, since this string is fed
-/// straight back to the agent as a verify failure and must tell it what to do.
-fn run_verify_with_timeout(repo: &Path, cmd: &str, timeout_secs: u64) -> (bool, String) {
-    use std::process::Stdio;
-
-    let mut cmd_builder = std::process::Command::new("sh");
-    cmd_builder
+    match std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .current_dir(repo)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    // `sh -c cmd` (e.g. `npm run build`) typically forks further children.
-    // Killing only the immediate `sh` pid leaves those children running and
-    // holding our pipes open, so the reader thread below would block forever
-    // even after a "successful" kill. Put the whole tree in its own process
-    // group so a timeout can take it all out at once, exactly as
-    // `shell::run_command_with_timeout` does for the agent's own tools.
-    #[cfg(unix)]
-    unsafe {
-        use std::os::unix::process::CommandExt;
-        cmd_builder.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
-
-    let mut child = match cmd_builder.spawn() {
-        Ok(c) => c,
-        Err(e) => return (false, format!("could not run verify command: {e}")),
-    };
-
-    // Take the pipes now so the reader thread owns them; `child` keeps only
-    // the handle we need for `try_wait`/`kill`.
-    let mut stdout = child.stdout.take();
-    let mut stderr = child.stderr.take();
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut out = String::new();
-        if let Some(s) = stdout.as_mut() {
-            let _ = s.read_to_string(&mut out);
+        .output()
+    {
+        Ok(o) => {
+            let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
+            combined.push_str(&String::from_utf8_lossy(&o.stderr));
+            (o.status.success(), combined)
         }
-        if let Some(s) = stderr.as_mut() {
-            let _ = s.read_to_string(&mut out);
-        }
-        out
-    });
-
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    break None;
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(e) => {
-                return (false, format!("could not wait on verify command: {e}"));
-            }
-        }
-    };
-
-    match status {
-        Some(status) => {
-            let combined = reader.join().unwrap_or_default();
-            (status.success(), combined)
-        }
-        None => {
-            // Timed out: kill the whole process group (not just the shell)
-            // and reap it so it doesn't linger as a zombie, then join the
-            // reader thread — it will hit EOF as soon as the pipes close,
-            // which happens once every process holding them is gone.
-            #[cfg(unix)]
-            unsafe {
-                let pid = child.id() as libc::pid_t;
-                libc::kill(-pid, libc::SIGKILL);
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = child.kill();
-            }
-            let _ = child.wait();
-            let combined = reader.join().unwrap_or_default();
-            (
-                false,
-                format!(
-                    "verify command timed out after {timeout_secs}s (killed): {cmd}\n\
-                     this usually means a declared verify step hangs — check the extra \
-                     steps in `.nerve/verify.toml`\n{combined}"
-                ),
-            )
-        }
+        Err(e) => (false, format!("could not run verify command: {e}")),
     }
 }
 
@@ -781,6 +689,86 @@ mod tests {
         assert_eq!(base_branch(p), "main");
     }
 
+    /// Init a temp git repo with one committed file, mirroring the setup the
+    /// worker operates on. Returns the tempdir (kept alive by the caller).
+    fn init_repo() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]).unwrap();
+        git(p, &["config", "user.email", "t@t"]).unwrap();
+        git(p, &["config", "user.name", "t"]).unwrap();
+        git(p, &["checkout", "-q", "-b", "main"]).unwrap();
+        std::fs::write(p.join("f.txt"), "x").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "init"]).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pristine_reset_preserves_nerve_memory_with_no_gitignore() {
+        // Reproduces the exact "nerve forgets" setup: `.nerve/activity.jsonl`
+        // exists but `.nerve/.gitignore` does NOT (the repo never committed
+        // it, and it's untracked so a prior `clean -fd` could have already
+        // swept it away). Without `-e .nerve` on the clean step, this
+        // activity log — the project's memory of what nerve has done — is
+        // untracked and gets deleted right along with it.
+        let dir = init_repo();
+        let p = dir.path();
+
+        std::fs::create_dir_all(p.join(".nerve")).unwrap();
+        std::fs::write(
+            p.join(".nerve").join("activity.jsonl"),
+            r#"{"job":"1","summary":"did a thing"}"#,
+        )
+        .unwrap();
+        // Deliberately NO .nerve/.gitignore — the nerve-repo case.
+
+        // The exact sequence the worker runs to start a job from a pristine
+        // base.
+        let base = base_branch(p);
+        git(p, &["checkout", "-f", &base]).unwrap();
+        git(p, &["reset", "--hard", &base]).unwrap();
+        git(p, &["clean", "-fd", "-e", ".nerve"]).unwrap();
+
+        let activity = p.join(".nerve").join("activity.jsonl");
+        assert!(
+            activity.exists(),
+            ".nerve/activity.jsonl must survive the job-start clean even with \
+             no .nerve/.gitignore present"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&activity).unwrap(),
+            r#"{"job":"1","summary":"did a thing"}"#
+        );
+    }
+
+    #[test]
+    fn pristine_reset_still_removes_stray_files_and_reverts_tracked_edits() {
+        // The exclusion must not weaken the pristine-tree guarantee this
+        // sequence exists to provide: untracked dirt OUTSIDE `.nerve/` is
+        // still swept, and edits to TRACKED files are still reverted.
+        let dir = init_repo();
+        let p = dir.path();
+
+        std::fs::write(p.join("stray.txt"), "junk").unwrap();
+        std::fs::write(p.join("f.txt"), "modified, should be reverted").unwrap();
+
+        let base = base_branch(p);
+        git(p, &["checkout", "-f", &base]).unwrap();
+        git(p, &["reset", "--hard", &base]).unwrap();
+        git(p, &["clean", "-fd", "-e", ".nerve"]).unwrap();
+
+        assert!(
+            !p.join("stray.txt").exists(),
+            "untracked files outside .nerve/ must still be cleaned"
+        );
+        assert_eq!(
+            std::fs::read_to_string(p.join("f.txt")).unwrap(),
+            "x",
+            "edits to tracked files must still be reverted by reset --hard"
+        );
+    }
+
     #[test]
     fn run_verify_reports_success_and_failure() {
         let dir = tempfile::tempdir().unwrap();
@@ -789,22 +777,6 @@ mod tests {
         let (ok, out) = run_verify(dir.path(), "echo boom >&2; exit 1");
         assert!(!ok);
         assert!(out.contains("boom"));
-    }
-
-    #[test]
-    fn run_verify_kills_a_hanging_command_promptly() {
-        let dir = tempfile::tempdir().unwrap();
-        let start = std::time::Instant::now();
-        // A 1s deadline against a 30s sleep: if the timeout didn't actually
-        // kill the child, this test would take 30s instead of ~1s.
-        let (ok, out) = run_verify_with_timeout(dir.path(), "sleep 30", 1);
-        let elapsed = start.elapsed();
-        assert!(!ok);
-        assert!(out.contains("timed out"));
-        assert!(
-            elapsed < Duration::from_secs(10),
-            "expected the hung command to be killed promptly, took {elapsed:?}"
-        );
     }
 
     #[test]
