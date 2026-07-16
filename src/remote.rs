@@ -14,6 +14,8 @@ pub struct RemoteStatus {
     pub queued: usize,
     pub running: usize,
     pub done: usize,
+    /// Finished cleanly but changed no files — see the match in `summarize`.
+    pub no_changes: usize,
     pub failed: usize,
     pub total: usize,
 }
@@ -48,6 +50,11 @@ pub fn summarize(jobs: &[Job]) -> RemoteStatus {
             JobStatus::Queued => s.queued += 1,
             JobStatus::Running => s.running += 1,
             JobStatus::Done => s.done += 1,
+            // Ran clean but touched nothing. Counted apart from `done` on
+            // purpose: a job that changed no files is the signature of an
+            // agent that believed it acted and didn't, so folding it into
+            // `done` would hide exactly what this status exists to surface.
+            JobStatus::NoChanges => s.no_changes += 1,
             JobStatus::Failed => s.failed += 1,
             JobStatus::Cancelled => {}
         }

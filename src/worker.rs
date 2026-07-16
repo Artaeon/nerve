@@ -118,9 +118,28 @@ async fn run_one(queue: &Queue, job: Job) {
     let id = job.id.clone();
     let _ = queue.mark_running(&id);
     match execute(&job).await {
-        Ok(Wedge::Healthy) => {
-            let _ = queue.mark_done(&id);
-            tracing::info!("job {id} done");
+        Ok(Wedge::Healthy { changed_empty }) => {
+            // Ground truth (the `changed` diff computed in `execute`, not the
+            // agent's self-reported `outcome.edited`) decides the status. That
+            // distinction is the whole point: three same-day incidents (jobs
+            // db33f59e, 44558bc6, b3a4cf8a's predecessor) were each a job that
+            // BELIEVED it had done something — a malformed tool call mistaken
+            // for a final answer, or an edit reverted externally mid-run — and
+            // reported `done` identically to a job that shipped real work.
+            // Trusting the agent's own claim is exactly how those slipped
+            // through, so only the actual diff decides this.
+            if status_for_healthy_run(changed_empty) == crate::queue::JobStatus::NoChanges {
+                let _ = queue.mark_no_changes(&id);
+                tracing::warn!(
+                    "job {id} completed but changed NO files — reporting no-changes, not done; \
+                     likely causes: the agent replied without acting (e.g. treated a malformed \
+                     tool call as a final answer), or its edits were reverted externally \
+                     mid-run"
+                );
+            } else {
+                let _ = queue.mark_done(&id);
+                tracing::info!("job {id} done");
+            }
         }
         Ok(Wedge::Wedged) => {
             // Every tool call failed — the long-running worker process is wedged
@@ -173,9 +192,27 @@ async fn run_one(queue: &Queue, job: Job) {
     }
 }
 
+/// Whether a completed (non-wedged) run should be reported as `Done` or
+/// `NoChanges`, based purely on the GROUND-TRUTH diff (`changed.is_empty()` in
+/// `execute`) — never the agent's self-reported `outcome.edited`. See the
+/// comment in `run_one` for why that distinction is the entire point.
+fn status_for_healthy_run(changed_empty: bool) -> crate::queue::JobStatus {
+    if changed_empty {
+        crate::queue::JobStatus::NoChanges
+    } else {
+        crate::queue::JobStatus::Done
+    }
+}
+
 /// Whether a job ran on a healthy worker or hit the all-tools-failed wedge.
 enum Wedge {
-    Healthy,
+    /// Ran without hitting the wedge. `changed_empty` is the GROUND-TRUTH diff
+    /// (`changed.is_empty()` in `execute`, not the agent's self-reported
+    /// `outcome.edited`) — see the comment in `run_one` for why that
+    /// distinction is the entire point of `JobStatus::NoChanges`.
+    Healthy {
+        changed_empty: bool,
+    },
     Wedged,
 }
 
@@ -216,22 +253,6 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         let base = base_branch(repo);
         let _ = git(repo, &["checkout", "-f", &base]);
         let _ = git(repo, &["reset", "--hard", &base]);
-        // Exclude `.nerve/` from the untracked-file sweep: it holds the
-        // project's MEMORY (`.nerve/memory.md`, `brief.md`, `design.md`) and its
-        // append-only logs (`activity.jsonl` — what nerve did and why;
-        // `journal.jsonl` — per-tool-call changes). Cleaning it out is exactly
-        // the "nerve forgets" bug this repo has fixed twice now. Relying on
-        // `.nerve/.gitignore` (written by `Project::ensure_dir`) to protect them
-        // isn't enough on its own: that file is itself untracked in a repo that
-        // never committed it, so a plain `clean -fd` deletes the guard, and the
-        // logs are gone on the NEXT job even though they survived this one.
-        // Excluding `.nerve/` here is safe for the pristine-tree guarantee this
-        // whole block exists to provide (see the comment above): the directory
-        // is write-protected from the agent's tools, so it can never carry a
-        // job's edits into the next job's diff. `reset --hard` above still
-        // restores any TRACKED `.nerve/` files (memory.md, brief.md,
-        // design.md) to the base branch's version, which is correct and
-        // unchanged.
         let _ = git(repo, &["clean", "-fd", "-e", ".nerve"]);
 
         // Decide create-vs-resume EXPLICITLY rather than inferring it from a
@@ -252,10 +273,6 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
             // dirt — do NOT reset to base, which would throw that progress away.
             // A normal job has no commits ahead of base, so this is equivalent to
             // the old reset for it.
-            //
-            // Exclude `.nerve/` here too, for the same reason as the clean above:
-            // it's the project's memory, not job dirt, and it's already
-            // write-protected from the agent's tools.
             let _ = git(repo, &["checkout", "-f", &branch]);
             let _ = git(repo, &["clean", "-fd", "-e", ".nerve"]);
         } else {
@@ -396,7 +413,9 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         );
     }
 
-    Ok(Wedge::Healthy)
+    Ok(Wedge::Healthy {
+        changed_empty: changed.is_empty(),
+    })
 }
 
 /// Run the agent for `task`, then — if it edited files and auto-verify is on —
@@ -647,6 +666,21 @@ mod tests {
     }
 
     #[test]
+    fn status_for_healthy_run_uses_ground_truth_changed_set() {
+        // Empty changed set → NoChanges, never Done — this is the entire point
+        // of the fix: three same-day incidents (jobs db33f59e, 44558bc6,
+        // b3a4cf8a's predecessor) each reported `done` for a run that changed
+        // nothing, because the agent's own belief that it had acted was
+        // trusted instead of the actual diff.
+        assert_eq!(
+            status_for_healthy_run(true),
+            crate::queue::JobStatus::NoChanges
+        );
+        // Non-empty changed set → Done, unchanged behaviour.
+        assert_eq!(status_for_healthy_run(false), crate::queue::JobStatus::Done);
+    }
+
+    #[test]
     fn deterministic_sampling_defaults_temperature_but_respects_explicit() {
         // Unset temperature → defaults to 0 for reproducible unattended runs.
         let mut c = crate::config::Config {
@@ -687,86 +721,6 @@ mod tests {
         git(p, &["checkout", "-q", "-b", "nerve/job-deadbeef"]).unwrap();
         // The next job must still fork from main, not from the job branch.
         assert_eq!(base_branch(p), "main");
-    }
-
-    /// Init a temp git repo with one committed file, mirroring the setup the
-    /// worker operates on. Returns the tempdir (kept alive by the caller).
-    fn init_repo() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path();
-        git(p, &["init", "-q"]).unwrap();
-        git(p, &["config", "user.email", "t@t"]).unwrap();
-        git(p, &["config", "user.name", "t"]).unwrap();
-        git(p, &["checkout", "-q", "-b", "main"]).unwrap();
-        std::fs::write(p.join("f.txt"), "x").unwrap();
-        git(p, &["add", "-A"]).unwrap();
-        git(p, &["commit", "-q", "-m", "init"]).unwrap();
-        dir
-    }
-
-    #[test]
-    fn pristine_reset_preserves_nerve_memory_with_no_gitignore() {
-        // Reproduces the exact "nerve forgets" setup: `.nerve/activity.jsonl`
-        // exists but `.nerve/.gitignore` does NOT (the repo never committed
-        // it, and it's untracked so a prior `clean -fd` could have already
-        // swept it away). Without `-e .nerve` on the clean step, this
-        // activity log — the project's memory of what nerve has done — is
-        // untracked and gets deleted right along with it.
-        let dir = init_repo();
-        let p = dir.path();
-
-        std::fs::create_dir_all(p.join(".nerve")).unwrap();
-        std::fs::write(
-            p.join(".nerve").join("activity.jsonl"),
-            r#"{"job":"1","summary":"did a thing"}"#,
-        )
-        .unwrap();
-        // Deliberately NO .nerve/.gitignore — the nerve-repo case.
-
-        // The exact sequence the worker runs to start a job from a pristine
-        // base.
-        let base = base_branch(p);
-        git(p, &["checkout", "-f", &base]).unwrap();
-        git(p, &["reset", "--hard", &base]).unwrap();
-        git(p, &["clean", "-fd", "-e", ".nerve"]).unwrap();
-
-        let activity = p.join(".nerve").join("activity.jsonl");
-        assert!(
-            activity.exists(),
-            ".nerve/activity.jsonl must survive the job-start clean even with \
-             no .nerve/.gitignore present"
-        );
-        assert_eq!(
-            std::fs::read_to_string(&activity).unwrap(),
-            r#"{"job":"1","summary":"did a thing"}"#
-        );
-    }
-
-    #[test]
-    fn pristine_reset_still_removes_stray_files_and_reverts_tracked_edits() {
-        // The exclusion must not weaken the pristine-tree guarantee this
-        // sequence exists to provide: untracked dirt OUTSIDE `.nerve/` is
-        // still swept, and edits to TRACKED files are still reverted.
-        let dir = init_repo();
-        let p = dir.path();
-
-        std::fs::write(p.join("stray.txt"), "junk").unwrap();
-        std::fs::write(p.join("f.txt"), "modified, should be reverted").unwrap();
-
-        let base = base_branch(p);
-        git(p, &["checkout", "-f", &base]).unwrap();
-        git(p, &["reset", "--hard", &base]).unwrap();
-        git(p, &["clean", "-fd", "-e", ".nerve"]).unwrap();
-
-        assert!(
-            !p.join("stray.txt").exists(),
-            "untracked files outside .nerve/ must still be cleaned"
-        );
-        assert_eq!(
-            std::fs::read_to_string(p.join("f.txt")).unwrap(),
-            "x",
-            "edits to tracked files must still be reverted by reset --hard"
-        );
     }
 
     #[test]

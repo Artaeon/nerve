@@ -15,6 +15,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle of a queued job.
+///
+/// `JobStatus` is serde-persisted in the disk-backed queue (each job is a JSON
+/// file under `~/.nerve/queue/`). Adding a variant is safe for EXISTING
+/// entries on disk — they carry the old strings and still deserialize fine;
+/// only a NEW entry using a variant unknown to an OLDER binary would fail to
+/// parse, and the deploy process (worker restarts onto the new binary before
+/// any job can reach that state) makes that a non-issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobStatus {
@@ -24,6 +31,16 @@ pub enum JobStatus {
     Running,
     /// Finished successfully; changes committed to the job branch.
     Done,
+    /// Ran to completion without error, but produced NO file changes. Not a
+    /// failure — a job can legitimately conclude nothing needs doing — but it
+    /// must never look like a job that shipped work, or a reviewer scanning
+    /// statuses will trust an empty branch. Added after three same-day
+    /// incidents (jobs db33f59e, 44558bc6, and b3a4cf8a's predecessor) where a
+    /// job that did nothing — a malformed tool call mistaken for a final
+    /// answer, or an edit reverted externally mid-run — reported `done`
+    /// identically to a job that shipped real work, and only a manual diff of
+    /// the empty branch caught it.
+    NoChanges,
     /// Failed — see [`Job::error`].
     Failed,
     /// Cancelled by the user before it ran.
@@ -37,6 +54,7 @@ impl JobStatus {
             JobStatus::Queued => "queued",
             JobStatus::Running => "running",
             JobStatus::Done => "done",
+            JobStatus::NoChanges => "no-changes",
             JobStatus::Failed => "failed",
             JobStatus::Cancelled => "cancelled",
         }
@@ -47,7 +65,7 @@ impl JobStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            JobStatus::Done | JobStatus::Failed | JobStatus::Cancelled
+            JobStatus::Done | JobStatus::NoChanges | JobStatus::Failed | JobStatus::Cancelled
         )
     }
 }
@@ -301,6 +319,18 @@ impl Queue {
     pub fn mark_done(&self, id: &str) -> anyhow::Result<Option<Job>> {
         self.update(id, |job| {
             job.status = JobStatus::Done;
+            job.finished_at = Some(now_secs());
+        })
+    }
+
+    /// Mark a job `NoChanges` and stamp `finished_at`. The worker uses this
+    /// instead of `mark_done` when the job ran to completion without error but
+    /// the ground-truth diff (`git status` before vs. after) was empty — see
+    /// [`JobStatus::NoChanges`] for why this must never collapse into `Done`.
+    #[allow(dead_code)]
+    pub fn mark_no_changes(&self, id: &str) -> anyhow::Result<Option<Job>> {
+        self.update(id, |job| {
+            job.status = JobStatus::NoChanges;
             job.finished_at = Some(now_secs());
         })
     }
