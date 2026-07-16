@@ -372,7 +372,8 @@ fn project_memory_context_assembles_brief_conventions_and_design() {
     store
         .save_design("No gradients. Warm paper background.")
         .unwrap();
-    let ctx = project_memory_context_from(&store).expect("should assemble a context");
+    let ctx =
+        project_memory_context_from(&store, "some task text").expect("should assemble a context");
     assert!(ctx.contains("PROJECT KNOWLEDGE"));
     assert!(ctx.contains("booking assistant"));
     assert!(ctx.contains("terracotta"));
@@ -383,7 +384,7 @@ fn project_memory_context_assembles_brief_conventions_and_design() {
 fn project_memory_context_is_none_without_nerve_memory() {
     let dir = tempfile::tempdir().unwrap();
     let store = crate::project::ProjectStore::for_workspace(dir.path());
-    assert!(project_memory_context_from(&store).is_none());
+    assert!(project_memory_context_from(&store, "some task text").is_none());
 }
 
 #[tokio::test]

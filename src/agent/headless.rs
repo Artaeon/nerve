@@ -172,71 +172,37 @@ fn content_hash(s: &str) -> u64 {
 
 /// Assemble the repo's persisted `.nerve/` knowledge into a compact block so a
 /// headless job honors the project's conventions, design system, and prior
-/// decisions. Reads the store rooted at the current working directory (the
-/// worker sets CWD to the repo before the run). Returns `None` when there is no
-/// `.nerve/` memory. Bounded so it stays token-efficient.
-fn project_memory_context() -> Option<String> {
+/// decisions — AND, unlike before, actually recalls memory relevant to this
+/// specific task. Reads the store rooted at the current working directory
+/// (the worker sets CWD to the repo before the run). Returns `None` when there
+/// is no `.nerve/` memory.
+///
+/// This used to build its own context block by hand and never called
+/// `memory_recall::recall` at all (`grep -c recall src/agent/headless.rs` →
+/// 0 — the `recall` tool this worker exposed was called 0 times in 2,362 real
+/// tool calls). It now goes through `project_context::build`, the single
+/// shared implementation also used by the interactive TUI, so the two can
+/// never silently diverge again.
+fn project_memory_context(task: &str) -> Option<String> {
     let root = std::env::current_dir().ok()?;
-    project_memory_context_from(&crate::project::ProjectStore::for_workspace(&root))
+    project_memory_context_from(&crate::project::ProjectStore::for_workspace(&root), task)
 }
 
-/// Bounds on the curated `.nerve/` sections folded into every headless job's
-/// context. These exist ONLY to cap a pathological file (someone pasting a
-/// novel into `memory.md`) — NOT to ration a normal, curated, human-maintained
-/// one, which is small by nature. Measured on a real project (vollgebucht):
-/// `brief.md` was 3086 bytes, `memory.md` was 8080 bytes, `design.md` was 3714
-/// bytes — and the *old* bounds (1200/1500/1500) cut memory.md down to 19% of
-/// itself, silently dropping most of the project's "law" (invariants, migration
-/// discipline, design system, what already exists) from EVERY job. Worst case
-/// here is ~21k chars ≈ 6k tokens ≈ 6% of `CONTEXT_BUDGET_TOKENS` (100k) — paid
-/// ONCE per job to avoid the agent re-deriving project context from the
-/// codebase, which is far more expensive: over 3 days of real jobs, agents
-/// made 797 `read_file` and 352 `search_code` calls rediscovering facts that
-/// were already written down. This block is injected into the context HEAD
-/// (see `HEAD_KEEP`), which `compact_context` never stubs away — so it is
-/// truly paid once and persists verbatim for the whole job, which is exactly
-/// why it must be worth its space instead of being trimmed to near-uselessness.
-const BRIEF_CONTEXT_CHARS: usize = 4_000;
-/// See [`BRIEF_CONTEXT_CHARS`]. This is the important one: `memory.md` is the
-/// project's law, and 1500 chars was cutting a real project's memory to 19%.
-const MEMORY_CONTEXT_CHARS: usize = 12_000;
-/// See [`BRIEF_CONTEXT_CHARS`].
-const DESIGN_CONTEXT_CHARS: usize = 5_000;
-
-/// Testable core of [`project_memory_context`]: assemble from an explicit store.
-pub(crate) fn project_memory_context_from(store: &crate::project::ProjectStore) -> Option<String> {
-    use crate::agent::context::smart_truncate;
-    let mut sections = Vec::new();
-    if let Some(brief) = store.load_brief() {
-        sections.push(format!(
-            "### What this project is\n{}",
-            smart_truncate(&brief, BRIEF_CONTEXT_CHARS)
-        ));
-    }
-    if let Some(mem) = store.load_memory() {
-        sections.push(format!(
-            "### Facts & conventions to follow\n{}",
-            smart_truncate(&mem, MEMORY_CONTEXT_CHARS)
-        ));
-    }
-    if let Some(design) = store.load_design() {
-        sections.push(format!(
-            "### Design principles — follow these for ANY UI/CSS work\n{}",
-            smart_truncate(&design, DESIGN_CONTEXT_CHARS)
-        ));
-    }
-    let decisions = store.recent_decisions(6);
-    if !decisions.is_empty() {
-        let list = decisions
-            .iter()
-            .map(|d| format!("- {}", d.text))
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!(
-            "### Recent project decisions\n{}",
-            smart_truncate(&list, 800)
-        ));
-    }
+/// Testable core of [`project_memory_context`]: assemble from an explicit
+/// store. Thin wrapper around `project_context::build` — always recalls
+/// memory relevant to `task` and always includes design principles (a
+/// headless job has no single "current message" to gate design guidance on,
+/// and design work is common enough in autonomous jobs that omitting it
+/// silently is the wrong default).
+pub(crate) fn project_memory_context_from(
+    store: &crate::project::ProjectStore,
+    task: &str,
+) -> Option<String> {
+    let opts = crate::project_context::ContextOptions {
+        recall_query: Some(task),
+        include_design: true,
+    };
+    let sections = crate::project_context::build(store, &opts);
     if sections.is_empty() {
         return None;
     }
@@ -505,7 +471,7 @@ async fn run_role(
     // of starting amnesiac — the same "don't forget what this project is" the
     // interactive loop gets. Riding in an existing HEAD-kept system message
     // keeps it verbatim through compaction without changing HEAD_KEEP.
-    let tools_prompt = match project_memory_context() {
+    let tools_prompt = match project_memory_context(task) {
         Some(ctx) => format!("{}\n\n{ctx}", tools_system_prompt()),
         None => tools_system_prompt(),
     };

@@ -393,40 +393,40 @@ pub(crate) fn build_context_messages(app: &mut App, search_query: &str) -> Vec<C
         })
         .collect();
 
-    // Per-project memory (.nerve/): retrieved, not force-fed. A tiny always-on
-    // header (project headline + open tasks + a pointer) grounds every turn,
-    // and a relevance-gated BM25 recall over the stored facts/decisions injects
-    // ONLY the entries that match this turn. Token cost then scales with
-    // relevance, not with how much memory has accumulated. The agent can also
-    // pull more explicitly via the `recall` tool.
+    // Per-project memory (.nerve/): the TUI now builds this through the SAME
+    // shared `project_context::build` the headless worker uses — see that
+    // module's docs for the measured evidence (`grep -c recall
+    // src/agent/headless.rs` == 0 across 2,362 real tool calls) that drove
+    // this unification. GENUINE BEHAVIOUR CHANGE, called out explicitly: the
+    // old code here only ever PULLED memory — a tiny always-on header plus
+    // query-gated recall — so a fact stored via `store.remember()` stayed out
+    // of an unrelated turn's context entirely. `project_context::build`
+    // intentionally mirrors the worker's unconditional PUSH model (brief +
+    // memory + design + decisions, every turn, regardless of relevance)
+    // because the whole point of the anti-drift refactor is that both
+    // callers go through ONE implementation instead of each maintaining its
+    // own policy — so a remembered fact now appears on every turn, not just
+    // turns whose query happens to match it. `always_on_context` is kept
+    // exactly as before (not duplicated inside `project_context::build`) and
+    // still goes in ahead of everything else.
     if let Some(ws) = &app.cached_workspace {
         let store = crate::project::ProjectStore::for_workspace(&ws.root);
-        // Auto-recall goes in first so the stable header ends up ahead of it.
-        let hits = crate::memory_recall::recall(
-            &store,
-            search_query,
-            3,
-            crate::memory_recall::AUTO_RECALL_MIN_SCORE,
-        );
-        if let Some(recalled) = crate::memory_recall::format_recalled(&hits) {
-            messages.insert(0, ChatMessage::system(recalled));
-        }
-        if let Some(header) = crate::memory_recall::always_on_context(&store, 1200) {
-            messages.insert(0, ChatMessage::system(header));
+
+        let opts = crate::project_context::ContextOptions {
+            recall_query: Some(search_query),
+            include_design: crate::memory_recall::is_design_request(search_query),
+        };
+        let sections = crate::project_context::build(&store, &opts);
+        // Insert in REVERSE so the first section in `sections` (brief) ends
+        // up closest to the front, giving the final relative order: brief →
+        // memory → design → decisions → recall-last, matching
+        // `project_context::build`'s documented order.
+        for section in sections.into_iter().rev() {
+            messages.insert(0, ChatMessage::system(section));
         }
 
-        // Design principles are injected ONLY on UI/design turns, so backend
-        // work doesn't pay for them. Gated on both the stored principles
-        // existing and the request looking design-related.
-        if crate::memory_recall::is_design_request(search_query)
-            && let Some(design) = store.load_design()
-        {
-            messages.insert(
-                0,
-                ChatMessage::system(format!(
-                    "Project design principles (follow these for any UI/design work):\n{design}"
-                )),
-            );
+        if let Some(header) = crate::memory_recall::always_on_context(&store, 1200) {
+            messages.insert(0, ChatMessage::system(header));
         }
     }
 
@@ -1154,8 +1154,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app_with_seeded_memory(dir.path());
 
-        // A turn about the connection pool should surface ONLY the matching
-        // fact, plus the always-on header — not every unrelated fact.
+        // A turn about the connection pool surfaces the matching fact via
+        // recall (LAST section per project_context::build's documented
+        // order), plus the always-on header.
         let messages =
             build_context_messages(&mut app, "what is the database connection pool size");
         let systems: String = messages
@@ -1170,8 +1171,11 @@ mod tests {
         assert!(systems.contains("recall"));
         // Auto-recall surfaced the relevant fact...
         assert!(systems.contains("capped at 17"));
-        // ...but the unrelated fact was NOT force-fed.
-        assert!(!systems.contains("svelte and vite"));
+        // `project_context::build` now pushes the FULL memory.md unconditionally
+        // (matching the worker's model — the point of this unification), so the
+        // unrelated fact is ALSO present, not just the recalled one. This is the
+        // intentional, spec-called-out behaviour change from pull-only to push.
+        assert!(systems.contains("svelte and vite"));
     }
 
     #[test]
@@ -1187,11 +1191,17 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Header still present, but no fact/decision is injected for an
-        // unrelated turn — token cost stays flat.
+        // Header still present.
         assert!(systems.contains("recall"));
-        assert!(!systems.contains("capped at 17"));
-        assert!(!systems.contains("postgres over mysql"));
+        // `project_context::build` pushes memory.md unconditionally (see
+        // module docs — this is the deliberate convergence with the worker's
+        // behaviour), so BOTH stored facts are present even for a completely
+        // unrelated query. Recall no longer gates whether a fact is injected
+        // at all, only whether it additionally surfaces in the "Relevant
+        // project memory" section.
+        assert!(systems.contains("capped at 17"));
+        assert!(systems.contains("svelte and vite"));
+        assert!(systems.contains("postgres over mysql"));
     }
 
     #[test]
@@ -1211,7 +1221,9 @@ mod tests {
             .map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(systems.contains("Project design principles"));
+        // Heading text comes from `project_context::build`, not the old
+        // hand-written "Project design principles" string.
+        assert!(systems.contains("Design principles"));
         assert!(systems.contains("strict 8px spacing scale"));
 
         // A backend request does NOT — no wasted tokens.
@@ -1222,8 +1234,56 @@ mod tests {
             .map(|m| m.content.clone())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!systems.contains("Project design principles"));
+        assert!(!systems.contains("Design principles"));
         assert!(!systems.contains("8px spacing scale"));
+    }
+
+    /// THE ANTI-DRIFT TEST (TUI side) -- the counterpart to
+    /// `project_context::tests::both_callers_use_the_shared_builder`. Proves
+    /// the TUI path also routes through `project_context::build` rather than
+    /// assembling its own copy of these sections (which is exactly how the
+    /// worker and the TUI silently diverged before -- see
+    /// `project_context`'s module docs). There is no independent code path
+    /// left in `build_context_messages` that assembles brief/memory/design/
+    /// decisions/recall itself; it only formats whatever
+    /// `project_context::build` returns (see the block right above the KB
+    /// search in this function) -- so asserting its output contains every
+    /// heading/fragment `build` itself produces for the same store+opts is
+    /// the practical stand-in for a structural "same function" check.
+    #[test]
+    fn tui_path_uses_the_shared_builder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_seeded_memory(dir.path());
+
+        let store = crate::project::ProjectStore::for_workspace(dir.path());
+        let opts = crate::project_context::ContextOptions {
+            recall_query: Some("task text"),
+            include_design: crate::memory_recall::is_design_request("task text"),
+        };
+        let expected_sections = crate::project_context::build(&store, &opts);
+        assert!(
+            !expected_sections.is_empty(),
+            "seeded store should produce sections"
+        );
+
+        let messages = build_context_messages(&mut app, "task text");
+        let systems: String = messages
+            .iter()
+            .filter(|m| m.role == "system")
+            .map(|m| m.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for section in &expected_sections {
+            let heading = section.lines().next().unwrap_or(section);
+            assert!(
+                systems.contains(heading),
+                "TUI system messages missing heading {heading:?} from shared builder output"
+            );
+        }
+        assert!(systems.contains("billing microservice"));
+        assert!(systems.contains("capped at 17"));
+        assert!(systems.contains("postgres over mysql"));
     }
 
     #[test]

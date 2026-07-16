@@ -21,6 +21,7 @@ mod memory_recall;
 mod model_router;
 mod plugins;
 mod project;
+mod project_context;
 mod prompts;
 mod provider_health;
 mod provider_setup;
