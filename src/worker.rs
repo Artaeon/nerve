@@ -434,6 +434,14 @@ async fn run_in_repo(
         Some(test) => format!("{typecheck} && {test}"),
         None => typecheck,
     };
+    // Append any project-declared extra verify steps (e.g. `npm run build`)
+    // from `.nerve/verify.toml`. A project that hasn't opted in has no
+    // `extra` entries, so `compose_gate` hands `cmd` back unchanged — this
+    // is byte-identical to today's behaviour until a project opts in.
+    let cmd = crate::verify_project::compose_gate(
+        &cmd,
+        &crate::verify_project::load_project_verify(repo).extra,
+    );
 
     let mut rounds: u8 = 0;
     loop {
@@ -669,6 +677,32 @@ mod tests {
         let (ok, out) = run_verify(dir.path(), "echo boom >&2; exit 1");
         assert!(!ok);
         assert!(out.contains("boom"));
+    }
+
+    #[test]
+    fn verify_gate_composes_project_extra_steps_when_opted_in() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".nerve")).unwrap();
+        std::fs::write(
+            dir.path().join(".nerve").join("verify.toml"),
+            r#"extra = ["echo hi"]"#,
+        )
+        .unwrap();
+        let pv = crate::verify_project::load_project_verify(dir.path());
+        assert_eq!(
+            crate::verify_project::compose_gate("base", &pv.extra),
+            "base && echo hi"
+        );
+    }
+
+    #[test]
+    fn verify_gate_is_unchanged_when_project_has_not_opted_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let pv = crate::verify_project::load_project_verify(dir.path());
+        assert_eq!(
+            crate::verify_project::compose_gate("base", &pv.extra),
+            "base"
+        );
     }
 
     #[test]

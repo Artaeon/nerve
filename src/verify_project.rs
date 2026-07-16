@@ -48,7 +48,6 @@
 use std::path::Path;
 
 /// The parsed, validated contents of a project's `.nerve/verify.toml`.
-#[allow(dead_code)] // wired into the worker gate in a follow-up job (see module doc)
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectVerify {
     /// Extra commands to run after typecheck+tests, in the order declared.
@@ -69,7 +68,6 @@ pub struct ProjectVerify {
 /// almost certainly meant to declare a real check and typo'd it, and letting
 /// that become a no-op command in the gate is exactly the "safeguard that
 /// quietly does nothing" bug class this whole feature exists to prevent.
-#[allow(dead_code)] // wired into the worker gate in a follow-up job (see module doc)
 pub fn parse_project_verify(toml_str: &str) -> Result<ProjectVerify, String> {
     let value: toml::Value = toml_str
         .parse()
@@ -117,7 +115,6 @@ pub fn parse_project_verify(toml_str: &str) -> Result<ProjectVerify, String> {
 ///   no extra gate at all — that's precisely the failure mode this module
 ///   exists to close (see module doc). So: degrade gracefully, but say so
 ///   loudly enough that it shows up in logs.
-#[allow(dead_code)] // wired into the worker gate in a follow-up job (see module doc)
 pub fn load_project_verify(root: &Path) -> ProjectVerify {
     let path = root.join(".nerve").join("verify.toml");
 
@@ -153,7 +150,6 @@ pub fn load_project_verify(root: &Path) -> ProjectVerify {
 /// one back — belt and suspenders, since a silently-dropped `&&` segment
 /// here would turn into a no-op step exactly like the bug this feature
 /// exists to prevent.
-#[allow(dead_code)] // wired into the worker gate in a follow-up job (see module doc)
 pub fn compose_gate(base: &str, extra: &[String]) -> String {
     let mut parts: Vec<&str> = vec![base];
     for e in extra {
