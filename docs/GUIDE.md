@@ -12,6 +12,7 @@ A comprehensive guide to using Nerve as your terminal AI assistant and coding ag
    - [Provider Setup](#provider-setup)
    - [Non-Interactive and Pipe Modes](#non-interactive-and-pipe-modes)
    - [Daemon Mode](#daemon-mode)
+   - [Project-Declared Verify Steps](#project-declared-verify-steps)
 2. [Providers](#providers)
    - [Claude Code (Default)](#claude-code-default)
    - [OpenAI](#openai)
@@ -219,6 +220,39 @@ nerve --stop-daemon
 The daemon maintains conversation state between queries, so follow-up questions
 retain context from previous interactions. This is useful for scripting workflows
 where you want to ask multiple related questions without re-launching Nerve each time.
+
+### Project-Declared Verify Steps
+
+When the server runs a job (`--submit`), it gates the result on the project's own
+type-check and test suite before committing. That gate never runs a full build —
+a build is slow and often needs environment the job sandbox lacks, so building
+unconditionally would turn the gate into a source of false failures on every job.
+
+But a type-check and a test suite can both pass while a production build still
+fails (e.g. a dev-only dependency required at build time, or an env var that's
+only needed once a route gets prerendered). If your project has a build step that
+can break independently of types and tests, declare it once and nerve will run it
+every time, right after the type-check and test suite:
+
+```toml
+# .nerve/verify.toml
+# every command here is appended to the gate, in order, after typecheck+tests
+extra = ["npm run build"]
+```
+
+- No `.nerve/verify.toml` (or no `extra` key, or `extra = []`) — no change; this
+  is opt-in, and the overwhelming default is to run nothing extra.
+- `extra` must be a non-empty array of non-empty command strings. A malformed
+  file (bad TOML, a non-array `extra`, a non-string or blank entry) is not fatal
+  to the job — it logs a warning and the gate falls back to no extra steps,
+  rather than quietly wedging every job in the repo.
+- Each command runs in the repo root, in the order listed, and its failure feeds
+  back into the same self-correct loop as a type-check or test failure.
+
+**Before adding a slow or environment-dependent command, confirm it actually
+succeeds in the environment the worker runs jobs in.** If `npm run build` (or
+whatever you declare) can't succeed there, every job will fail the gate and the
+safety net becomes an outage instead of a safeguard.
 
 ---
 

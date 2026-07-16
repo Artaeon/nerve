@@ -13,6 +13,22 @@ verified) and [DETERMINISM.md](DETERMINISM.md) (how reproducible it is).
 suite**. A human then reviews the branch, runs `tsc` + the tests independently,
 and merges or rejects. Nothing below is "it looked right".
 
+**Update:** that gate historically could **not** catch build-time breakage — a
+type-check and a test suite can both pass while `next build` (or equivalent)
+still fails, because a real build exercises constraints (the real dependency
+graph, the real environment, real bundling) neither one re-creates. Two real
+jobs shipped exactly that: a `require("tsx/cjs")` in `next.config.mjs` that
+works in dev but throws once `npm ci --omit=dev` removes `tsx`, and a
+module-scope read of a required env var in a prerendered route, which silently
+promotes that var to a build-time requirement. Both were correct code with a
+green gate, caught only by a human running the build afterward. The gate now
+supports a project-declared **extra** verify step (`.nerve/verify.toml`,
+`extra = ["npm run build"]`) appended after the type-check and test suite — see
+[GUIDE.md](GUIDE.md#project-declared-verify-steps). It is **opt-in per
+project**: nerve does not build unconditionally, since a build is slow and
+often needs environment the job sandbox lacks, so forcing it on every job would
+trade one failure mode for a noisier one.
+
 ---
 
 ## The headline numbers (2026-07-14 → 15)
