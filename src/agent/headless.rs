@@ -180,26 +180,49 @@ fn project_memory_context() -> Option<String> {
     project_memory_context_from(&crate::project::ProjectStore::for_workspace(&root))
 }
 
+/// Bounds on the curated `.nerve/` sections folded into every headless job's
+/// context. These exist ONLY to cap a pathological file (someone pasting a
+/// novel into `memory.md`) — NOT to ration a normal, curated, human-maintained
+/// one, which is small by nature. Measured on a real project (vollgebucht):
+/// `brief.md` was 3086 bytes, `memory.md` was 8080 bytes, `design.md` was 3714
+/// bytes — and the *old* bounds (1200/1500/1500) cut memory.md down to 19% of
+/// itself, silently dropping most of the project's "law" (invariants, migration
+/// discipline, design system, what already exists) from EVERY job. Worst case
+/// here is ~21k chars ≈ 6k tokens ≈ 6% of `CONTEXT_BUDGET_TOKENS` (100k) — paid
+/// ONCE per job to avoid the agent re-deriving project context from the
+/// codebase, which is far more expensive: over 3 days of real jobs, agents
+/// made 797 `read_file` and 352 `search_code` calls rediscovering facts that
+/// were already written down. This block is injected into the context HEAD
+/// (see `HEAD_KEEP`), which `compact_context` never stubs away — so it is
+/// truly paid once and persists verbatim for the whole job, which is exactly
+/// why it must be worth its space instead of being trimmed to near-uselessness.
+const BRIEF_CONTEXT_CHARS: usize = 4_000;
+/// See [`BRIEF_CONTEXT_CHARS`]. This is the important one: `memory.md` is the
+/// project's law, and 1500 chars was cutting a real project's memory to 19%.
+const MEMORY_CONTEXT_CHARS: usize = 12_000;
+/// See [`BRIEF_CONTEXT_CHARS`].
+const DESIGN_CONTEXT_CHARS: usize = 5_000;
+
 /// Testable core of [`project_memory_context`]: assemble from an explicit store.
-fn project_memory_context_from(store: &crate::project::ProjectStore) -> Option<String> {
+pub(crate) fn project_memory_context_from(store: &crate::project::ProjectStore) -> Option<String> {
     use crate::agent::context::smart_truncate;
     let mut sections = Vec::new();
     if let Some(brief) = store.load_brief() {
         sections.push(format!(
             "### What this project is\n{}",
-            smart_truncate(&brief, 1200)
+            smart_truncate(&brief, BRIEF_CONTEXT_CHARS)
         ));
     }
     if let Some(mem) = store.load_memory() {
         sections.push(format!(
             "### Facts & conventions to follow\n{}",
-            smart_truncate(&mem, 1500)
+            smart_truncate(&mem, MEMORY_CONTEXT_CHARS)
         ));
     }
     if let Some(design) = store.load_design() {
         sections.push(format!(
             "### Design principles — follow these for ANY UI/CSS work\n{}",
-            smart_truncate(&design, 1500)
+            smart_truncate(&design, DESIGN_CONTEXT_CHARS)
         ));
     }
     let decisions = store.recent_decisions(6);
