@@ -146,17 +146,53 @@ fn parse_single_tool_call(block: &str) -> Option<ToolCall> {
             } else if is_multiline_arg(key) {
                 let mut full_value = value.to_string();
                 i += 1;
+                // SILENT-CORRUPTION BUG (job e8279faa): the old version of this
+                // loop stopped accumulating as soon as it saw ANY line whose
+                // `key:` prefix matched a known arg name (tool, path, content,
+                // old_text, new_text, command, pattern, start, end). That is
+                // satisfiable by completely ordinary file content, e.g. this
+                // Zod error object:
+                //     throw new ZodError([{
+                //       code: 'custom',
+                //       path: ['serviceId'],
+                //       message: 'x',
+                //     }]);
+                // The indented `  path: ['serviceId'],` line was mistaken for a
+                // new tool argument: `content` got silently truncated right
+                // before `}]);`, and `path` got hijacked to the literal string
+                // `['serviceId'],`. Nerve then wrote the truncated content to a
+                // file with that garbage name and reported success — no error,
+                // no warning. The same shape produced a junk file named
+                // `text('path').notNull(),` on 2026-07-04. This is not exotic:
+                // `content:` alone breaks every CSS file with a pseudo-element
+                // rule (`content: "";`), `path:` breaks JS/TS object literals
+                // and YAML, `command:` breaks docker-compose/CI files, and
+                // `start:`/`end:` break ordinary JS date-range objects.
+                //
+                // THE FIX: per `tools_system_prompt` (see `tools/mod.rs`), a
+                // tool call is taught as flush-left `key: value` lines, with
+                // at most one multiline arg (`content` or `new_text`) emitted
+                // LAST. So a multiline arg's value is "everything from here to
+                // the end of the block" — it must be read LITERALLY and never
+                // re-scanned for keys. The ONE exception the protocol actually
+                // requires is `edit_file`, whose `old_text` is immediately
+                // followed by a `new_text:` line — that is the only case where
+                // a multiline arg is not last. We special-case ONLY that exact
+                // transition, and only when the candidate line is flush-left
+                // (zero leading whitespace) AND its key is exactly `new_text`.
+                // Ordinary code/CSS/YAML/JSON embedded as arg content is
+                // nested inside braces/blocks and is therefore indented in
+                // virtually all real-world formatting, so it cannot satisfy
+                // this check; a real protocol arg line, per the system prompt,
+                // is never indented. `content` (and `new_text` itself) get NO
+                // lookahead at all — they run to the end of the block.
                 while i < lines.len() {
-                    let next_line = lines[i].trim();
-                    if next_line
-                        .split_once(':')
-                        .map(|(k, _)| is_known_arg(k.trim()))
-                        .unwrap_or(false)
-                    {
+                    let raw_line = lines[i];
+                    if key == "old_text" && is_unindented_new_text_key(raw_line) {
                         break;
                     }
                     full_value.push('\n');
-                    full_value.push_str(lines[i]);
+                    full_value.push_str(raw_line);
                     i += 1;
                 }
                 args.insert(key.to_string(), full_value);
@@ -176,19 +212,25 @@ fn is_multiline_arg(key: &str) -> bool {
     matches!(key, "content" | "old_text" | "new_text")
 }
 
-fn is_known_arg(key: &str) -> bool {
-    matches!(
-        key,
-        "tool"
-            | "path"
-            | "content"
-            | "old_text"
-            | "new_text"
-            | "command"
-            | "pattern"
-            | "start"
-            | "end"
-    )
+/// True only if `raw_line` is flush-left (no leading space/tab) AND its
+/// `key:` prefix is exactly `new_text`. This is the ONLY lookahead the
+/// multiline-arg accumulator performs, and it is only ever consulted while
+/// reading `old_text` (see the comment in `parse_single_tool_call` above,
+/// and job e8279faa / the 2026-07-04 incident for why a broader "any known
+/// key" check corrupts ordinary files). Requiring zero indentation is what
+/// makes this safe: real protocol arg lines, as taught by
+/// `tools_system_prompt`, are always emitted flush-left, while a `new_text:`
+/// (or `path:`, `content:`, ...) -shaped line occurring inside ordinary file
+/// content is virtually always nested inside braces/blocks and therefore
+/// indented.
+fn is_unindented_new_text_key(raw_line: &str) -> bool {
+    if raw_line.starts_with(' ') || raw_line.starts_with('\t') {
+        return false;
+    }
+    raw_line
+        .split_once(':')
+        .map(|(k, _)| k == "new_text")
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
