@@ -468,6 +468,32 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     })
 }
 
+/// Decide the final gate command from the auto-detected `base` (typecheck,
+/// optionally chained with the test command — `None` if the project has
+/// neither a recognized `Cargo.toml`/`package.json` shape) and the project's
+/// declared `.nerve/verify.toml` `extra` steps.
+///
+/// Before this function existed, a project with no auto-detected base (e.g.
+/// Python, Go — anything `detect_verify_command` doesn't recognize) got NO
+/// gate at all, even if it had declared `extra` steps: the caller returned
+/// early with "no verify command" before ever looking at `extra`. That made
+/// a project's own declared gate — the entire point of which is to let a
+/// project define verification `nerve` can't infer on its own — dead for
+/// exactly the projects that most need it. Now:
+///   - base + extra   → compose (unchanged behaviour)
+///   - base, no extra → base alone (unchanged behaviour)
+///   - no base, extra → the extras run ALONE as the gate
+///   - no base, no extra → `None`, the only case with no gate at all
+fn resolve_gate(base: Option<String>, extra: &[String]) -> Option<String> {
+    if base.is_none() && extra.is_empty() {
+        return None;
+    }
+    Some(crate::verify_project::compose_gate(
+        &base.unwrap_or_default(),
+        extra,
+    ))
+}
+
 /// Run the agent for `task`, then — if it edited files and auto-verify is on —
 /// run the project's verify command and feed any failure back to the agent to
 /// self-correct (up to `MAX_VERIFY_ROUNDS`), exactly like the interactive gate.
@@ -507,30 +533,25 @@ async fn run_in_repo(
     if !outcome.edited || !config.auto_verify {
         return Ok((outcome, "not run".to_string()));
     }
-    let Some(typecheck) = config
+    // The auto-detected base gate: the project's type-check, chained with its
+    // test suite (a lint-only gate once let a job commit a *failing test* that
+    // only human review caught). `None` when the project has no recognized
+    // Cargo.toml/package.json shape at all.
+    let base = config
         .verify_command
         .clone()
         .or_else(|| crate::verify::detect_verify_command(repo))
-    else {
+        .map(|typecheck| match crate::verify::detect_test_command(repo) {
+            Some(test) => format!("{typecheck} && {test}"),
+            None => typecheck,
+        });
+    // Project-declared extra verify steps (e.g. `npm run build`, or — for a
+    // project `detect_verify_command` doesn't recognize at all, like Python
+    // or Go — the ONLY gate it has) from `.nerve/verify.toml`.
+    let extras = crate::verify_project::load_project_verify(repo).extra;
+    let Some(cmd) = resolve_gate(base, &extras) else {
         return Ok((outcome, "no verify command".to_string()));
     };
-    // Run the project's TEST suite too, chained after the type-check (fix types
-    // first, then tests). A lint-only gate this session let a job commit a
-    // *failing test* that only human review caught — the suite closes that gap
-    // and its failures feed back into the same self-correct loop below. Skipped
-    // for watch-mode test scripts (detect_test_command returns None).
-    let cmd = match crate::verify::detect_test_command(repo) {
-        Some(test) => format!("{typecheck} && {test}"),
-        None => typecheck,
-    };
-    // Append any project-declared extra verify steps (e.g. `npm run build`)
-    // from `.nerve/verify.toml`. A project that hasn't opted in has no
-    // `extra` entries, so `compose_gate` hands `cmd` back unchanged — this
-    // is byte-identical to today's behaviour until a project opts in.
-    let cmd = crate::verify_project::compose_gate(
-        &cmd,
-        &crate::verify_project::load_project_verify(repo).extra,
-    );
 
     let mut rounds: u8 = 0;
     loop {

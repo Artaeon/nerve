@@ -150,8 +150,19 @@ pub fn load_project_verify(root: &Path) -> ProjectVerify {
 /// one back — belt and suspenders, since a silently-dropped `&&` segment
 /// here would turn into a no-op step exactly like the bug this feature
 /// exists to prevent.
+///
+/// `base` may be empty — that's how a project with NO auto-detected verify
+/// command (e.g. Python, Go: nothing `detect_verify_command` recognizes) can
+/// still get a gate made ENTIRELY of its own `.nerve/verify.toml` `extra`
+/// steps. An empty base is dropped rather than joined in, so the result has
+/// no leading " && " (which a shell would reject as a syntax error, turning
+/// "no base command" into "every job on that project silently skips
+/// verification" — the opposite of this feature's purpose).
 pub fn compose_gate(base: &str, extra: &[String]) -> String {
-    let mut parts: Vec<&str> = vec![base];
+    let mut parts: Vec<&str> = Vec::with_capacity(1 + extra.len());
+    if !base.trim().is_empty() {
+        parts.push(base);
+    }
     for e in extra {
         if !e.trim().is_empty() {
             parts.push(e);
@@ -364,5 +375,23 @@ mod tests {
             compose_gate("a", &["x".to_string(), "   ".to_string(), "y".to_string()]),
             "a && x && y"
         );
+    }
+
+    #[test]
+    fn compose_gate_empty_base_with_extras_has_no_leading_separator() {
+        // A project with no auto-detected verify command (Python, Go, ...)
+        // must be able to run its `.nerve/verify.toml` extras ALONE as the
+        // gate. A leading " && " here would be a shell syntax error, which
+        // would silently turn into "no gate at all" for exactly the projects
+        // this feature exists to serve.
+        assert_eq!(
+            compose_gate("", &["a".to_string(), "b".to_string()]),
+            "a && b"
+        );
+    }
+
+    #[test]
+    fn compose_gate_empty_base_and_no_extras_is_empty() {
+        assert_eq!(compose_gate("", &[]), "");
     }
 }
