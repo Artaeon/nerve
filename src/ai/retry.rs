@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use chrono::{DateTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for API request retry behavior with exponential backoff.
@@ -120,6 +122,87 @@ pub fn is_quota_error(err: &anyhow::Error) -> bool {
         || msg.contains("quota exceeded")
         || msg.contains("quota exhausted")
         || (msg.contains("hit your") && msg.contains("limit"))
+}
+
+/// Extract the reset wall-clock + IANA timezone from a quota/session-limit
+/// error message (e.g. `"Claude: You've hit your session limit · resets
+/// 12:30am (Europe/Berlin)"`) and resolve it to the next UTC instant that
+/// clock time occurs at or after `now`.
+///
+/// Measured cost of NOT doing this: a limit hit at 00:26 with the provider
+/// reporting `resets 12:30am` actually cleared at 00:30, but the old blind
+/// `QUOTA_BACKOFF_SECS` (20min) deferred the job to ~00:46 — ~16 minutes of
+/// idle worker per quota event. The reset time is right there in the string.
+///
+/// Returns `None` if the message doesn't carry a parseable
+/// `"resets <time> (<tz>)"` clause (missing/garbage time, missing or unknown
+/// timezone) — the caller falls back to a blind backoff in that case, so
+/// it's safe to be strict here rather than guess.
+///
+/// Pure and deterministic (`now` is a parameter, never read from the clock
+/// internally) so callers can test it without timezone-dependent flakiness
+/// or depending on the machine's local timezone.
+pub fn parse_quota_reset(msg: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    const MARKER: &str = "resets ";
+    let after = {
+        let idx = msg.find(MARKER)?;
+        &msg[idx + MARKER.len()..]
+    };
+
+    // The timezone is the parenthesized IANA name right after the time,
+    // e.g. "12:30am (Europe/Berlin)".
+    let tz_open = after.find('(')?;
+    let tz_close = tz_open + after[tz_open..].find(')')?;
+    let time_part = after[..tz_open].trim();
+    let tz_name = after[tz_open + 1..tz_close].trim();
+    let tz: Tz = tz_name.parse().ok()?;
+
+    let (hour, minute) = parse_wall_clock(time_part)?;
+
+    // Resolve "today at <hour>:<minute> in <tz>" first; if that instant is
+    // already behind `now`, the provider must mean tomorrow's occurrence.
+    let now_local = now.with_timezone(&tz);
+    let today = now_local.date_naive();
+    let today_naive = today.and_hms_opt(hour, minute, 0)?;
+    let today_local = tz.from_local_datetime(&today_naive).single()?;
+    let today_utc = today_local.with_timezone(&Utc);
+
+    if today_utc >= now {
+        return Some(today_utc);
+    }
+
+    let tomorrow = today.succ_opt()?;
+    let tomorrow_naive = tomorrow.and_hms_opt(hour, minute, 0)?;
+    let tomorrow_local = tz.from_local_datetime(&tomorrow_naive).single()?;
+    Some(tomorrow_local.with_timezone(&Utc))
+}
+
+/// Parse a 12-hour wall-clock time like `"12:30am"` or `"3pm"` into
+/// `(hour, minute)` in 24-hour form. Minutes default to `0` when omitted
+/// (the provider's message drops them for on-the-hour resets, e.g. `"3pm"`).
+fn parse_wall_clock(s: &str) -> Option<(u32, u32)> {
+    let lower = s.to_lowercase();
+    let (digits, is_pm) = if let Some(d) = lower.strip_suffix("am") {
+        (d, false)
+    } else if let Some(d) = lower.strip_suffix("pm") {
+        (d, true)
+    } else {
+        return None;
+    };
+    let digits = digits.trim();
+    let (hour_str, minute_str) = digits.split_once(':').unwrap_or((digits, "0"));
+    let hour: u32 = hour_str.parse().ok()?;
+    let minute: u32 = minute_str.parse().ok()?;
+    if !(1..=12).contains(&hour) || minute > 59 {
+        return None;
+    }
+    let hour24 = match (hour, is_pm) {
+        (12, false) => 0, // 12am -> midnight
+        (12, true) => 12, // 12pm -> noon
+        (h, false) => h,
+        (h, true) => h + 12,
+    };
+    Some((hour24, minute))
 }
 
 /// Check whether an `anyhow::Error` represents a transient failure that is
@@ -484,6 +567,63 @@ mod tests {
             "API error (503): unavailable"
         )));
         assert!(!is_quota_error(&anyhow::anyhow!("connection reset")));
+    }
+
+    // ── parse_quota_reset ────────────────────────────────────────────────
+    // All expected values are constructed as explicit UTC instants (never
+    // derived from the test machine's local timezone), matching the fixed
+    // historical UTC offset for the chosen date — Europe/Berlin is CET
+    // (UTC+1) and America/New_York is EST (UTC-5) in mid-January, no DST.
+
+    #[test]
+    fn parse_quota_reset_am_case_rolls_to_tomorrow_when_already_passed() {
+        // now = 2026-01-14 22:00 UTC = 23:00 Berlin (CET, UTC+1). Today's
+        // 00:30 local already passed (it was 23 hours ago), so the next
+        // occurrence is tomorrow 2026-01-15 00:30 CET = 2026-01-14 23:30 UTC.
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 22, 0, 0).unwrap();
+        let msg = "Claude: You've hit your session limit · resets 12:30am (Europe/Berlin)";
+        let expected = Utc.with_ymd_and_hms(2026, 1, 14, 23, 30, 0).unwrap();
+        assert_eq!(parse_quota_reset(msg, now), Some(expected));
+    }
+
+    #[test]
+    fn parse_quota_reset_pm_case_same_day() {
+        // now = 2026-01-14 14:00 UTC = 09:00 New York (EST, UTC-5). Today's
+        // 15:00 local hasn't happened yet, so it resolves to today:
+        // 2026-01-14 15:00 EST = 2026-01-14 20:00 UTC.
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 14, 0, 0).unwrap();
+        let msg = "resets 3pm (America/New_York)";
+        let expected = Utc.with_ymd_and_hms(2026, 1, 14, 20, 0, 0).unwrap();
+        assert_eq!(parse_quota_reset(msg, now), Some(expected));
+    }
+
+    #[test]
+    fn parse_quota_reset_falls_back_to_tomorrow_when_today_passed() {
+        // now = 2026-01-14 20:00 UTC = 21:00 Berlin (CET). Today's 15:00
+        // local already passed, so it rolls to tomorrow:
+        // 2026-01-15 15:00 CET = 2026-01-15 14:00 UTC.
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 20, 0, 0).unwrap();
+        let msg = "resets 3pm (Europe/Berlin)";
+        let expected = Utc.with_ymd_and_hms(2026, 1, 15, 14, 0, 0).unwrap();
+        assert_eq!(parse_quota_reset(msg, now), Some(expected));
+    }
+
+    #[test]
+    fn parse_quota_reset_none_when_timezone_missing() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 20, 0, 0).unwrap();
+        assert_eq!(parse_quota_reset("resets 3pm", now), None);
+    }
+
+    #[test]
+    fn parse_quota_reset_none_when_timezone_unknown() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 20, 0, 0).unwrap();
+        assert_eq!(parse_quota_reset("resets 3pm (Mars/Colony)", now), None);
+    }
+
+    #[test]
+    fn parse_quota_reset_none_when_no_resets_clause() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 14, 20, 0, 0).unwrap();
+        assert_eq!(parse_quota_reset("API error (503): unavailable", now), None);
     }
 
     #[test]

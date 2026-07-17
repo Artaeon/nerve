@@ -11,6 +11,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
+
 use crate::ai::provider::AiProvider;
 use crate::queue::{Job, Queue, now_secs};
 
@@ -34,6 +36,18 @@ const RESTART_AFTER_JOBS: usize = 6;
 /// runs on the next poll after this delay; if still limited it defers again. A
 /// conservative value avoids hammering the provider while a window is closed.
 const QUOTA_BACKOFF_SECS: u64 = 20 * 60;
+
+/// Safety margin added on top of a provider-reported quota reset time before
+/// deferring the job. The provider's clock and ours aren't perfectly aligned,
+/// and a job that wakes right AT the reset can still get a stale "still
+/// limited" response — a small cushion avoids an immediate re-defer.
+const QUOTA_RESET_MARGIN_SECS: u64 = 45;
+
+/// Minimum defer when a reset time was parsed. Even a reset that (per our
+/// clock) has already passed still needs a small wait — deferring by ~0s
+/// would have the worker hammer the provider again immediately, no better
+/// than the busy-retry this whole mechanism exists to avoid.
+const QUOTA_MIN_WAIT_SECS: u64 = 60;
 
 /// Drain the queue forever (until a proactive restart). Spawned as a background
 /// task inside the daemon.
@@ -177,18 +191,54 @@ async fn run_one(queue: &Queue, job: Job) {
             // the window reopens, instead of failing and losing the work. Any
             // other error is a real failure.
             if crate::ai::retry::is_quota_error(&e) {
-                let until = now_secs() + QUOTA_BACKOFF_SECS;
+                let msg = e.to_string();
+                let now = Utc::now();
+                // The provider often states the exact reset time (e.g. "resets
+                // 12:30am (Europe/Berlin)") — use it instead of the blind
+                // QUOTA_BACKOFF_SECS ceiling. Measured: a limit hit at 00:26
+                // with an actual reset at 00:30 was, under the old blind
+                // backoff, deferred to ~00:46 — 16 minutes of idle worker for
+                // no reason. Falls back to the blind backoff when unparseable.
+                let parsed_reset_secs = crate::ai::retry::parse_quota_reset(&msg, now)
+                    .map(|dt| dt.timestamp().max(0) as u64);
+                let until = quota_defer_until(now_secs(), parsed_reset_secs);
                 let _ = queue.defer(&id, until, &format!("deferred (provider quota): {e}"));
                 tracing::warn!(
-                    "job {id}: provider quota/session limit — deferred ~{}min until the window \
+                    "job {id}: provider quota/session limit — deferred {}s until the window \
                      resets: {e}",
-                    QUOTA_BACKOFF_SECS / 60
+                    until.saturating_sub(now_secs())
                 );
             } else {
                 let _ = queue.mark_failed(&id, &e.to_string());
                 tracing::warn!("job {id} failed: {e}");
             }
         }
+    }
+}
+
+/// Decide when to wake a job deferred by a provider quota/session-limit hit.
+///
+/// When the provider told us the exact reset instant (`parsed_reset_secs`),
+/// wake `QUOTA_RESET_MARGIN_SECS` after it — a small cushion because the
+/// provider's clock and ours aren't perfectly aligned, and waking right AT
+/// the reset can still race a stale "still limited" response. The result is
+/// CLAMPED to `[now + QUOTA_MIN_WAIT_SECS, now + QUOTA_BACKOFF_SECS]`: the
+/// upper bound guarantees we never wait longer than the old blind backoff
+/// (a parse that's wildly off — e.g. tomorrow instead of tonight — can't
+/// strand the job), and the lower bound guarantees we never busy-retry (a
+/// reset time already in the past, per clock skew, still gets a real wait).
+///
+/// When nothing parsed, falls back to the blind `QUOTA_BACKOFF_SECS` ceiling
+/// exactly as before.
+fn quota_defer_until(now: u64, parsed_reset_secs: Option<u64>) -> u64 {
+    match parsed_reset_secs {
+        Some(reset) => {
+            let with_margin = reset.saturating_add(QUOTA_RESET_MARGIN_SECS);
+            let min = now.saturating_add(QUOTA_MIN_WAIT_SECS);
+            let max = now.saturating_add(QUOTA_BACKOFF_SECS);
+            with_margin.clamp(min, max)
+        }
+        None => now.saturating_add(QUOTA_BACKOFF_SECS),
     }
 }
 
@@ -663,6 +713,44 @@ mod tests {
         assert_eq!(first_line("do a thing\nand then more"), "do a thing");
         let long = "x".repeat(200);
         assert!(first_line(&long).len() < 200);
+    }
+
+    // ── quota_defer_until ───────────────────────────────────────────────
+
+    #[test]
+    fn quota_defer_until_uses_parsed_reset_plus_margin_when_in_range() {
+        let now = 1_000_000u64;
+        // Reset 5 minutes out — well inside [now+min, now+max].
+        let reset = now + 300;
+        let until = quota_defer_until(now, Some(reset));
+        assert_eq!(until, reset + QUOTA_RESET_MARGIN_SECS);
+    }
+
+    #[test]
+    fn quota_defer_until_clamps_past_reset_up_to_min_wait() {
+        let now = 1_000_000u64;
+        // Reset already passed (per our clock) — must not defer by ~0s,
+        // which would just hammer the provider again immediately.
+        let reset = now - 500;
+        let until = quota_defer_until(now, Some(reset));
+        assert_eq!(until, now + QUOTA_MIN_WAIT_SECS);
+    }
+
+    #[test]
+    fn quota_defer_until_clamps_far_future_reset_down_to_blind_backoff() {
+        let now = 1_000_000u64;
+        // A wildly-off parse (e.g. tomorrow instead of tonight) must never
+        // make the job wait longer than the old blind backoff ceiling.
+        let reset = now + 999_999;
+        let until = quota_defer_until(now, Some(reset));
+        assert_eq!(until, now + QUOTA_BACKOFF_SECS);
+    }
+
+    #[test]
+    fn quota_defer_until_falls_back_to_blind_backoff_when_unparsed() {
+        let now = 1_000_000u64;
+        let until = quota_defer_until(now, None);
+        assert_eq!(until, now + QUOTA_BACKOFF_SECS);
     }
 
     #[test]
