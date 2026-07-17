@@ -1,0 +1,6 @@
+# Append-only per-machine operational logs. Gitignored so the worker's
+# pristine-tree reset (git clean -fd -e .nerve) leaves them alone AND so they
+# never appear in a job's diff. The curated files (memory.md, brief.md,
+# design.md) are NOT ignored — they are tracked law that travels with the repo.
+activity.jsonl
+journal.jsonl
