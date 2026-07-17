@@ -704,3 +704,84 @@ fn validate_write_path_blocks_traversal() {
     let result = validate_write_path("/tmp/x/../../etc/shadow", "write_file");
     assert!(result.is_err(), "Should block path traversal to /etc/");
 }
+
+// -- looks_like_code_fragment: defense against mis-parsed tool calls --
+
+#[test]
+fn looks_like_code_fragment_catches_real_incidents() {
+    // Job e8279faa, 2026-07-17: nerve wrote a file literally named this.
+    assert!(looks_like_code_fragment("['serviceId'],"));
+    // 2026-07-04, found 12 days later in vollgebucht's repo.
+    assert!(looks_like_code_fragment("text('path').notNull(),"));
+}
+
+#[test]
+fn looks_like_code_fragment_allows_normal_paths() {
+    for path in [
+        "lib/waitlist/service.ts",
+        "src/agent/tools/fs.rs",
+        "next.config.mjs",
+        "my-file_v2.test.ts",
+        ".nerve/verify.toml",
+        "docs/A GUIDE.md",
+    ] {
+        assert!(
+            !looks_like_code_fragment(path),
+            "should NOT flag normal path: {path}"
+        );
+    }
+}
+
+#[test]
+fn execute_write_file_rejects_code_fragment_path() {
+    reset_tool_counter();
+    let dir = tempfile::tempdir().unwrap();
+    let bogus_path = dir.path().join("['serviceId'],");
+
+    let mut args = std::collections::HashMap::new();
+    args.insert("path".to_string(), bogus_path.to_string_lossy().to_string());
+    args.insert("content".to_string(), "whatever".to_string());
+    let call = ToolCall {
+        tool: "write_file".to_string(),
+        args,
+    };
+
+    let result = execute_tool(&call, crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS);
+    assert!(!result.success);
+    assert!(
+        result.output.contains("['serviceId'],"),
+        "error should name the offending path: {}",
+        result.output
+    );
+    assert!(
+        !bogus_path.exists(),
+        "no file should have been written for a code-fragment path"
+    );
+}
+
+#[test]
+fn execute_write_file_normal_path_still_works() {
+    reset_tool_counter();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("service.ts");
+
+    let mut args = std::collections::HashMap::new();
+    args.insert("path".to_string(), path.to_string_lossy().to_string());
+    args.insert("content".to_string(), "export const x = 1;".to_string());
+    let call = ToolCall {
+        tool: "write_file".to_string(),
+        args,
+    };
+
+    let result = execute_tool(&call, crate::shell::DEFAULT_COMMAND_TIMEOUT_SECS);
+    assert!(
+        result.success,
+        "normal write must still succeed: {}",
+        result.output
+    );
+    assert!(path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "export const x = 1;"
+    );
+}

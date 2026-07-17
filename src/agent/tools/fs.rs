@@ -249,7 +249,51 @@ pub(super) fn normalize_path(path: &Path) -> PathBuf {
     result
 }
 
+/// True when `path` cannot plausibly be a file path a human meant to write,
+/// i.e. it looks like a fragment of source code that a mis-parse handed us.
+///
+/// WHY this exists: nerve has twice silently written a file whose NAME was a
+/// line of source code, because the tool-call parser re-scanned file CONTENT
+/// as arguments -- `['serviceId'],` (job e8279faa, 2026-07-17) and
+/// `text('path').notNull(),` (2026-07-04, found 12 days later in
+/// vollgebucht's repo). Both incidents were invisible: no error, the
+/// intended file simply never got written, and a human found the debris
+/// days later. The root cause is being fixed in the parser separately; this
+/// is the safety net for when that fix is imperfect or a new parser bug
+/// appears -- fail LOUDLY at the moment of damage instead of silently
+/// creating junk.
+///
+/// We reject a path containing a newline, a single quote, a double quote,
+/// `(`, `)`, `[`, `]`, `{`, `}`, `;`, `,`, or `=`. In a real code repository,
+/// filenames containing these are vanishingly rare, whereas every known
+/// mis-parse contained several. This deliberately trades a theoretical
+/// false rejection (some exotic filename with a bracket in it) for catching
+/// a silent corruption that has already happened twice. Dots, dashes,
+/// underscores, nested slashes, and spaces are all fine -- real files use
+/// them constantly (`next.config.mjs`, `my-file_v2.test.ts`,
+/// `docs/A GUIDE.md`, `.nerve/verify.toml`).
+pub(crate) fn looks_like_code_fragment(path: &str) -> bool {
+    const SUSPICIOUS: [char; 11] = ['\n', '\'', '"', '(', ')', '[', ']', '{', '}', ';', ','];
+    path.contains(SUSPICIOUS.as_slice()) || path.contains('=')
+}
+
 pub(super) fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {
+    // Defense in depth against mis-parsed tool calls: reject before any
+    // other check so it can't be forgotten by a future write-path tool.
+    // See `looks_like_code_fragment` for the two real incidents this guards.
+    if looks_like_code_fragment(path) {
+        let msg = format!(
+            "refusing to write \"{path}\": that is not a plausible file path -- \
+             it looks like a line of code. The tool call was probably malformed; \
+             re-send it with the path on its own line and the content last."
+        );
+        return Err(ToolResult {
+            tool: tool.to_string(),
+            success: false,
+            output: msg,
+        });
+    }
+
     // First check the raw path.
     if crate::shell::is_protected_path(path) {
         return Err(ToolResult {
