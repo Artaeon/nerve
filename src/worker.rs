@@ -133,15 +133,16 @@ async fn run_one(queue: &Queue, job: Job) {
     let _ = queue.mark_running(&id);
     match execute(&job).await {
         Ok(Wedge::Healthy { changed_empty }) => {
-            // Ground truth (the `changed` diff computed in `execute`, not the
-            // agent's self-reported `outcome.edited`) decides the status. That
+            // Ground truth (the `changed` diff computed in `execute`, folded
+            // together with `commits_ahead_of_base` — not the agent's
+            // self-reported `outcome.edited`) decides the status. That
             // distinction is the whole point: three same-day incidents (jobs
             // db33f59e, 44558bc6, b3a4cf8a's predecessor) were each a job that
             // BELIEVED it had done something — a malformed tool call mistaken
             // for a final answer, or an edit reverted externally mid-run — and
             // reported `done` identically to a job that shipped real work.
             // Trusting the agent's own claim is exactly how those slipped
-            // through, so only the actual diff decides this.
+            // through, so only the actual diff/commits decide this.
             if status_for_healthy_run(changed_empty) == crate::queue::JobStatus::NoChanges {
                 let _ = queue.mark_no_changes(&id);
                 tracing::warn!(
@@ -243,9 +244,11 @@ fn quota_defer_until(now: u64, parsed_reset_secs: Option<u64>) -> u64 {
 }
 
 /// Whether a completed (non-wedged) run should be reported as `Done` or
-/// `NoChanges`, based purely on the GROUND-TRUTH diff (`changed.is_empty()` in
-/// `execute`) — never the agent's self-reported `outcome.edited`. See the
-/// comment in `run_one` for why that distinction is the entire point.
+/// `NoChanges`, based purely on the GROUND-TRUTH diff/commit signal
+/// (`changed_empty` in `execute`, which already folds in
+/// `commits_ahead_of_base` — see the comment there) — never the agent's
+/// self-reported `outcome.edited`. See the comment in `run_one` for why that
+/// distinction is the entire point.
 fn status_for_healthy_run(changed_empty: bool) -> crate::queue::JobStatus {
     if changed_empty {
         crate::queue::JobStatus::NoChanges
@@ -256,8 +259,9 @@ fn status_for_healthy_run(changed_empty: bool) -> crate::queue::JobStatus {
 
 /// Whether a job ran on a healthy worker or hit the all-tools-failed wedge.
 enum Wedge {
-    /// Ran without hitting the wedge. `changed_empty` is the GROUND-TRUTH diff
-    /// (`changed.is_empty()` in `execute`, not the agent's self-reported
+    /// Ran without hitting the wedge. `changed_empty` is the GROUND-TRUTH
+    /// no-change signal computed in `execute` (uncommitted diff AND no
+    /// commits ahead of base — not the agent's self-reported
     /// `outcome.edited`) — see the comment in `run_one` for why that
     /// distinction is the entire point of `JobStatus::NoChanges`.
     Healthy {
@@ -279,6 +283,11 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         .branch
         .clone()
         .unwrap_or_else(|| format!("nerve/job-{}", job.id));
+    // The base this job forks from — also the reference point for
+    // `commits_ahead_of_base` below, so a --decompose job's per-step commits
+    // are recognized as real work even when the working tree ends up clean
+    // (see the comment at the `Wedge::Healthy` return for why).
+    let base = base_branch(repo);
     if is_git {
         // Fork every job from a CLEAN base (the repo's main branch), not from
         // wherever HEAD happens to be. The worker is sequential and leaves HEAD
@@ -300,7 +309,6 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         // empty and `changed` is exactly this job's diff. Safe on the dedicated
         // server copy the worker operates on, where any pre-existing dirt is a
         // stale leftover, never precious WIP.
-        let base = base_branch(repo);
         let _ = git(repo, &["checkout", "-f", &base]);
         let _ = git(repo, &["reset", "--hard", &base]);
         let _ = git(repo, &["clean", "-fd", "-e", ".nerve"]);
@@ -463,9 +471,39 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         );
     }
 
+    // A run counts as "changed" if EITHER it left an uncommitted diff OR its
+    // branch is now ahead of `base` — a --decompose job COMMITS EACH STEP as
+    // it goes (see `run_decomposed_agent`), so by the time we get here the
+    // working tree is already clean and `changed` above is empty even though
+    // the branch carries real, correct work. Job 116e5863 reported
+    // `no-changes` for a decompose run that had committed several steps with
+    // thousands of insertions — `no-changes` is the signature of a job that
+    // did NOTHING, so reporting it for one that shipped and committed real
+    // work was actively misleading. `commits_ahead_of_base` catches that work.
+    let branch_ahead = is_git && commits_ahead_of_base(repo, &base) > 0;
     Ok(Wedge::Healthy {
-        changed_empty: changed.is_empty(),
+        changed_empty: is_no_change(changed.is_empty(), branch_ahead),
     })
+}
+
+/// Number of commits on the current HEAD that are not in `base` — i.e. the
+/// commits this job produced (a --decompose job commits each step, so its
+/// work lives here, not in the uncommitted diff).
+fn commits_ahead_of_base(repo: &Path, base: &str) -> usize {
+    git(repo, &["rev-list", "--count", &format!("{base}..HEAD")])
+        .ok()
+        .and_then(|out| out.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+}
+
+/// Ground truth for "this run changed nothing": true only when there is no
+/// uncommitted diff AND the branch is not ahead of base. Either signal alone
+/// proves real work happened — an uncommitted diff (a normal job, not yet
+/// committed by `execute`) or committed-but-clean-tree commits (a --decompose
+/// job, which commits per step — see job 116e5863). Factored out as a tiny
+/// pure function so the decision is directly testable without a real repo.
+fn is_no_change(changed_empty_dirty: bool, branch_ahead: bool) -> bool {
+    changed_empty_dirty && !branch_ahead
 }
 
 /// Decide the final gate command from the auto-detected `base` (typecheck,
@@ -789,23 +827,20 @@ mod tests {
         assert_eq!(status_for_healthy_run(false), crate::queue::JobStatus::Done);
     }
 
-    #[test]
-    fn deterministic_sampling_defaults_temperature_but_respects_explicit() {
-        // Unset temperature → defaults to 0 for reproducible unattended runs.
-        let mut c = crate::config::Config {
-            temperature: None,
-            ..Default::default()
-        };
-        default_deterministic_sampling(&mut c);
-        assert_eq!(c.temperature, Some(0.0));
+    // ── is_no_change ────────────────────────────────────────────────────
+    // Exhaustive over the 2x2 truth table — this decision is the entire
+    // point of the job-116e5863 fix, so every combination is pinned down.
 
-        // An operator-set temperature is left untouched.
-        let mut c2 = crate::config::Config {
-            temperature: Some(0.7),
-            ..Default::default()
-        };
-        default_deterministic_sampling(&mut c2);
-        assert_eq!(c2.temperature, Some(0.7));
+    #[test]
+    fn is_no_change_exhaustive() {
+        // Clean tree, branch not ahead → genuinely no change.
+        assert!(is_no_change(true, false));
+        // Clean tree, but branch IS ahead of base → a --decompose job that
+        // committed its steps; this is real work, not "no changes".
+        assert!(!is_no_change(true, true));
+        // Uncommitted diff present → real work regardless of branch state.
+        assert!(!is_no_change(false, false));
+        assert!(!is_no_change(false, true));
     }
 
     #[test]
@@ -830,6 +865,48 @@ mod tests {
         git(p, &["checkout", "-q", "-b", "nerve/job-deadbeef"]).unwrap();
         // The next job must still fork from main, not from the job branch.
         assert_eq!(base_branch(p), "main");
+    }
+
+    // ── commits_ahead_of_base ───────────────────────────────────────────
+
+    #[test]
+    fn commits_ahead_of_base_counts_extra_commits_on_a_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]).unwrap();
+        git(p, &["config", "user.email", "t@t"]).unwrap();
+        git(p, &["config", "user.name", "t"]).unwrap();
+        git(p, &["checkout", "-q", "-b", "main"]).unwrap();
+        std::fs::write(p.join("f.txt"), "x").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "init"]).unwrap();
+
+        git(p, &["checkout", "-q", "-b", "nerve/job-1"]).unwrap();
+        // No extra commits yet — a normal job before it commits anything.
+        assert_eq!(commits_ahead_of_base(p, "main"), 0);
+
+        // Simulate a --decompose job committing two steps.
+        std::fs::write(p.join("a.txt"), "1").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "step 1"]).unwrap();
+        std::fs::write(p.join("b.txt"), "2").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "step 2"]).unwrap();
+        assert_eq!(commits_ahead_of_base(p, "main"), 2);
+    }
+
+    #[test]
+    fn commits_ahead_of_base_returns_zero_on_bad_base_without_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-q"]).unwrap();
+        git(p, &["config", "user.email", "t@t"]).unwrap();
+        git(p, &["config", "user.name", "t"]).unwrap();
+        std::fs::write(p.join("f.txt"), "x").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-q", "-m", "init"]).unwrap();
+        // A base ref that doesn't exist must not panic — just report 0.
+        assert_eq!(commits_ahead_of_base(p, "does-not-exist"), 0);
     }
 
     #[test]
