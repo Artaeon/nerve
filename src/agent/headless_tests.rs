@@ -3,6 +3,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use super::*;
+use crate::agent::tools::ToolCall;
 use crate::ai::provider::{AiProvider, ModelInfo, StreamEvent};
 use tokio::sync::mpsc;
 
@@ -432,8 +433,8 @@ async fn stops_at_iteration_cap() {
 #[tokio::test]
 async fn nudges_to_implement_after_long_read_only_exploration() {
     // A run that only ever reads (never edits) should, past EXPLORE_NUDGE_AFTER
-    // iterations, get the one-time "start IMPLEMENTING now" nudge — the
-    // token-efficiency guard against endless exploration.
+    // iterations, get the "start IMPLEMENTING now" nudge — the token-efficiency
+    // guard against endless exploration.
     let (provider, nudged) =
         MockProvider::scripted_capturing(&["<tool_call>tool: list_files\npath: .</tool_call>"]);
     let _ = run_headless_agent(&provider, "m", "explore", EXPLORE_NUDGE_AFTER + 3, 5)
@@ -456,6 +457,103 @@ async fn no_explore_nudge_when_work_is_quick() {
         .await
         .unwrap();
     assert!(!*nudged.lock().unwrap(), "should not nudge a quick run");
+}
+
+#[tokio::test]
+async fn explore_nudge_escalates_when_stuck_never_editing() {
+    // THE REGRESSION (job e2915f05): a trivial one-utility-class CSS fix ran
+    // the FULL 40 iterations and made ZERO edits (tool census: run_command 17,
+    // search_code 9, read_lines 7, read_file 6, edit_file 0, write_file 0).
+    // The old nudge was a one-shot `bool` latch: it fired once at iteration 8
+    // and then never again, so the agent explored the remaining 32 iterations
+    // under no further pressure. A run that keeps reading and never edits must
+    // now get the nudge AGAIN every `EXPLORE_NUDGE_INTERVAL` iterations, with
+    // escalating (and DIFFERENT) wording each time.
+    let read_call = "<tool_call>tool: read_file\npath: src/main.rs</tool_call>";
+    let (provider, transcript) = MockProvider::scripted_recording(&[read_call]);
+    let _ = run_headless_agent(&provider, "m", "add one utility class", 22, 5)
+        .await
+        .unwrap();
+
+    let sent = transcript.lock().unwrap().clone();
+    let distinct: std::collections::HashSet<&String> = sent.iter().collect();
+
+    let first_nudge = distinct
+        .iter()
+        .find(|m| m.contains("start IMPLEMENTING now"))
+        .copied();
+    let second_nudge = distinct
+        .iter()
+        .find(|m| m.contains("Make your FIRST edit now"))
+        .copied();
+    let third_nudge = distinct
+        .iter()
+        .find(|m| m.contains("Stop reading. Based on what you already know"))
+        .copied();
+
+    assert!(
+        first_nudge.is_some(),
+        "expected the first (gentle) explore-nudge to fire around iteration 8"
+    );
+    assert!(
+        second_nudge.is_some() || third_nudge.is_some(),
+        "expected the nudge to RE-FIRE at least once more — a one-shot nudge is exactly the bug \
+         job e2915f05 hit (40 iterations, 0 edits)"
+    );
+    if let (Some(a), Some(b)) = (first_nudge, second_nudge) {
+        assert_ne!(
+            a, b,
+            "the re-fired nudge must be worded differently (firmer) than the first"
+        );
+    }
+}
+
+#[tokio::test]
+async fn no_explore_nudge_once_the_agent_has_edited() {
+    // Once `edited` becomes true, the explore-nudge must never fire again —
+    // even if the run keeps going (and re-reading) for many more iterations.
+    let (provider, transcript) = MockProvider::scripted_recording(&[
+        "<tool_call>tool: read_file\npath: src/main.rs</tool_call>",
+        "<tool_call>tool: run_command\ncommand: echo edited</tool_call>",
+        "<tool_call>tool: read_file\npath: src/main.rs</tool_call>",
+    ]);
+    let _ = run_headless_agent(&provider, "m", "task", 22, 5)
+        .await
+        .unwrap();
+    let sent = transcript.lock().unwrap().clone();
+    assert!(
+        !sent.iter().any(|m| m.contains("start IMPLEMENTING now")
+            || m.contains("Make your FIRST edit now")
+            || m.contains("Stop reading. Based on what you already know")),
+        "must never nudge once the agent has already edited"
+    );
+}
+
+#[tokio::test]
+async fn read_only_role_never_nudged_even_when_stuck() {
+    // Planner/reviewer (ReadOnly) roles legitimately finish with prose after
+    // exploring — they must NEVER receive the explore-nudge, no matter how
+    // many read-only iterations they run.
+    let read_call = "<tool_call>tool: read_file\npath: src/main.rs</tool_call>";
+    let (provider, transcript) = MockProvider::scripted_recording(&[read_call]);
+    let _ = run_role(
+        &provider,
+        "m",
+        "sys",
+        ToolPolicy::ReadOnly,
+        "plan the trivial css tweak",
+        22,
+        5,
+    )
+    .await
+    .unwrap();
+    let sent = transcript.lock().unwrap().clone();
+    assert!(
+        !sent.iter().any(|m| m.contains("start IMPLEMENTING now")
+            || m.contains("Make your FIRST edit now")
+            || m.contains("Stop reading. Based on what you already know")),
+        "read-only roles must never be nudged"
+    );
 }
 
 #[test]
@@ -755,6 +853,65 @@ fn compact_context_stubs_old_tool_output_but_keeps_task_reasoning_and_tail() {
     compact_context(&mut messages, 50);
     let after: Vec<String> = messages.iter().map(|m| m.content.clone()).collect();
     assert_eq!(snapshot, after);
+}
+
+#[test]
+fn tool_call_hint_shows_command_for_run_command() {
+    // job e2915f05's log showed "run_command" 17 times with no indication of
+    // WHAT ran — this is what fixes that.
+    let call = ToolCall {
+        tool: "run_command".into(),
+        args: [("command".to_string(), "npm run -s lint".to_string())]
+            .into_iter()
+            .collect(),
+    };
+    assert_eq!(tool_call_hint(&call), "run_command(npm run -s lint)");
+}
+
+#[test]
+fn tool_call_hint_shows_path_for_file_tools() {
+    let call = ToolCall {
+        tool: "edit_file".into(),
+        args: [("path".to_string(), "app/globals.css".to_string())]
+            .into_iter()
+            .collect(),
+    };
+    assert_eq!(tool_call_hint(&call), "edit_file(app/globals.css)");
+}
+
+#[test]
+fn tool_call_hint_shows_pattern_for_search_tools() {
+    let call = ToolCall {
+        tool: "search_code".into(),
+        args: [("pattern".to_string(), "fn foo".to_string())]
+            .into_iter()
+            .collect(),
+    };
+    assert_eq!(tool_call_hint(&call), "search_code(fn foo)");
+}
+
+#[test]
+fn tool_call_hint_truncates_long_commands_and_flattens_newlines() {
+    let long_cmd = format!("echo start\n{}", "x".repeat(100));
+    let call = ToolCall {
+        tool: "run_command".into(),
+        args: [("command".to_string(), long_cmd)].into_iter().collect(),
+    };
+    let hint = tool_call_hint(&call);
+    assert!(hint.starts_with("run_command("));
+    assert!(!hint.contains('\n'), "newlines must be flattened: {hint}");
+    // Not exactly 60 (smart_truncate may break at a word boundary and adds
+    // "..."), but must stay short — not the whole 111-char command.
+    assert!(hint.len() < 90, "hint should stay short: {hint}");
+}
+
+#[test]
+fn tool_call_hint_falls_back_to_bare_name_for_unmapped_tools() {
+    let call = ToolCall {
+        tool: "remember".into(),
+        args: Default::default(),
+    };
+    assert_eq!(tool_call_hint(&call), "remember");
 }
 
 #[test]

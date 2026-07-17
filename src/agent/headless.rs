@@ -60,12 +60,26 @@ const MAX_NUDGES: usize = 2;
 /// stop exploring and start implementing. The single biggest token sink observed
 /// in practice is the model reading/searching a dozen-plus files before it makes
 /// its first change — and because each iteration re-sends the growing context,
-/// exploration cost is roughly quadratic. A one-time act-now nudge cuts the long
-/// read-only prefix without forcing premature action (the model may still read
-/// more if it genuinely needs to). Deliberately framed as "you have enough
-/// context, proceed" — never as a *limit*, which makes the model confabulate a
-/// tool cap and quit (see the anti-confabulation nudge below).
+/// exploration cost is roughly quadratic. Deliberately framed as "you have
+/// enough context, proceed" — never as a *limit*, which makes the model
+/// confabulate a tool cap and quit (see the anti-confabulation nudge below).
+///
+/// This nudge USED to fire only once, ever (a `bool` latch). That was too
+/// weak: job e2915f05 — a trivial one-utility-class CSS fix — got exactly one
+/// gentle nudge at iteration 8, then explored the REMAINING 32 iterations
+/// under no further pressure and finished the full 40-iteration run having
+/// made ZERO edits (tool census: run_command 17, search_code 9, read_lines 7,
+/// read_file 6, edit_file 0, write_file 0). The nudge now RE-FIRES every
+/// `EXPLORE_NUDGE_INTERVAL` iterations for as long as the agent keeps
+/// exploring without editing, escalating its wording each time (see the call
+/// site below) — while still never forcing action or naming a limit.
 const EXPLORE_NUDGE_AFTER: usize = 8;
+
+/// How often the explore-nudge RE-FIRES after its first trigger, as long as
+/// the agent is still exploring without having edited anything. See
+/// `EXPLORE_NUDGE_AFTER` for why a one-shot nudge was not enough (job
+/// e2915f05).
+const EXPLORE_NUDGE_INTERVAL: usize = 6;
 
 /// Bound the running message history so a long job stays token-efficient.
 ///
@@ -380,6 +394,40 @@ fn truncate_output(output: &str) -> String {
     }
 }
 
+/// Short single-line description of one tool call for the per-iteration log:
+/// the tool name plus a short hint of its most identifying argument.
+///
+/// Before this, the per-iteration log showed only tool NAMES (`c.tool`), with
+/// no indication of what actually ran. In job e2915f05 — a trivial
+/// one-utility-class CSS fix that ran the full 40 iterations and made ZERO
+/// edits — the log showed "run_command" 17 times with no way to tell what any
+/// of those 17 commands actually were, so the flailing could not be
+/// diagnosed. This fixes that: `run_command(npm run -s lint)`,
+/// `edit_file(app/globals.css)`, etc.
+///
+/// Deliberately shows only the command/path/pattern — NEVER full file or
+/// command-output CONTENT, which would flood the log and could echo secrets.
+fn tool_call_hint(call: &crate::agent::tools::ToolCall) -> String {
+    let arg = |name: &str| call.args.get(name).map(String::as_str);
+    let hint = match call.tool.as_str() {
+        "run_command" => arg("command").map(|c| {
+            // Flatten to one line first, THEN truncate, so a multi-line
+            // command doesn't break the single-line log format.
+            let flat = c.replace('\n', " ");
+            crate::agent::context::smart_truncate(&flat, 60)
+        }),
+        "read_file" | "read_lines" | "write_file" | "edit_file" | "create_directory" => {
+            arg("path").map(str::to_string)
+        }
+        "search_code" | "find_files" => arg("pattern").map(str::to_string),
+        _ => None,
+    };
+    match hint {
+        Some(h) => format!("{}({h})", call.tool),
+        None => call.tool.clone(),
+    }
+}
+
 /// Format a batch of executed tool results into the feedback message the model
 /// reads next turn — identical shape to the interactive agent runner.
 fn format_results(results: &[ToolResult]) -> String {
@@ -485,9 +533,14 @@ async fn run_role(
     let mut edited = false;
     let mut any_tool_succeeded = false;
     let mut nudges = 0usize;
-    // Whether we have already delivered the one-time "stop exploring, implement
-    // now" nudge, so it fires at most once per run.
-    let mut explore_nudged = false;
+    // Iteration at which the explore-nudge last fired (0 = never fired), and
+    // how many times it has fired — replaces a one-shot `bool` latch so the
+    // nudge can RE-FIRE (with escalating wording) while the agent keeps
+    // exploring without editing. See `EXPLORE_NUDGE_AFTER` for why: a
+    // one-shot nudge let job e2915f05 explore 32 unpressured iterations after
+    // its single nudge and finish having made zero edits.
+    let mut last_explore_nudge = 0usize;
+    let mut explore_nudge_count = 0usize;
     // Fingerprint → content hash of reads already sent verbatim in THIS run, so
     // an identical re-read can be collapsed to a pointer instead of re-sending
     // the file. Dropped whenever compaction stubs old output away.
@@ -558,7 +611,10 @@ async fn run_role(
         }
 
         iterations += 1;
-        let tools_summary: Vec<&str> = tool_calls.iter().map(|c| c.tool.as_str()).collect();
+        // Enriched with a short arg hint (see `tool_call_hint`) — a bare tool
+        // NAME told us nothing when job e2915f05 ran 17 run_commands with no
+        // record of what any of them were.
+        let tools_summary: Vec<String> = tool_calls.iter().map(tool_call_hint).collect();
         tracing::info!(
             "headless iter {iterations}/{max_iterations}: {} tool(s) [{}] (ctx ~{} msgs)",
             tool_calls.len(),
@@ -643,26 +699,53 @@ async fn run_role(
 
         messages.push(ChatMessage::user(format_results(&results)));
 
-        // Token-efficiency: if a full-tool agent has spent many iterations
-        // exploring and still hasn't made a single change, nudge it — ONCE — to
-        // proceed. This trims the long read-only prefix that dominates token
-        // cost (each iteration re-sends the growing context). It never forces
-        // action: the model can keep reading if it truly needs to. Positive
-        // framing only — no mention of any "limit" (that makes the model quit).
+        // Token-efficiency AND anti-flailing: if a full-tool agent has spent
+        // many iterations exploring and still hasn't made a single change, nudge
+        // it to proceed — and if it KEEPS exploring, nudge again, with
+        // increasingly directive wording. This trims the long read-only prefix
+        // that dominates token cost (each iteration re-sends the growing
+        // context). It never FORCES action on the first couple of nudges: the
+        // model can keep reading if it truly needs to. Positive framing only —
+        // NEVER mention any "limit" or an iteration count (naming a limit makes
+        // the model confabulate a cap and quit — see the anti-confabulation
+        // nudge above, which learned that the hard way).
+        //
+        // This escalation exists BECAUSE a one-shot nudge (the old `bool`
+        // latch) was proven too weak: job e2915f05, a trivial one-utility-class
+        // CSS fix, got exactly one gentle nudge at iteration 8, explored the
+        // remaining 32 iterations completely unpressured, and finished the
+        // full 40-iteration run having made ZERO edits (run_command 17,
+        // search_code 9, read_lines 7, read_file 6, edit_file 0, write_file 0).
         if policy == ToolPolicy::Full
             && !edited
-            && !explore_nudged
             && iterations >= EXPLORE_NUDGE_AFTER
+            && iterations - last_explore_nudge >= EXPLORE_NUDGE_INTERVAL
         {
-            explore_nudged = true;
+            last_explore_nudge = iterations;
+            explore_nudge_count += 1;
             tracing::info!(
-                "headless: {iterations} iterations without an edit — nudging to implement"
+                "headless: {iterations} iterations without an edit — nudging to implement \
+                 (nudge #{explore_nudge_count})"
             );
-            messages.push(ChatMessage::user(
-                "You have now gathered plenty of context and have made no changes yet. You almost \
-                 certainly have enough to proceed — start IMPLEMENTING now with \
-                 write_file/edit_file. Read more only if a specific edit truly requires it.",
-            ));
+            let msg = match explore_nudge_count {
+                1 => {
+                    "You have now gathered plenty of context and have made no changes yet. You \
+                     almost certainly have enough to proceed — start IMPLEMENTING now with \
+                     write_file/edit_file. Read more only if a specific edit truly requires it."
+                }
+                2 => {
+                    "You are still exploring and have written nothing. Make your FIRST edit now \
+                     with write_file or edit_file. A small, correct change you can refine beats \
+                     continued reading."
+                }
+                _ => {
+                    "Stop reading. Based on what you already know, write the single most \
+                     important file for this task NOW with write_file. If unsure of the exact \
+                     final form, write your best version — a partial correct edit is far better \
+                     than none."
+                }
+            };
+            messages.push(ChatMessage::user(msg));
         }
 
         if iterations >= max_iterations {
