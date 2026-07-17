@@ -225,3 +225,65 @@ how you drive it:
 - **A human reviews and runs the tests before merging.**
 
 Held to those, it built a real, growing SaaS with very little waste.
+
+---
+
+## 2026-07-17 — cross-language generalization + the protocol bug class
+
+### Generalization: it isn't a TypeScript/Rust trick
+
+Until now every data point above was TypeScript (vollgebucht) or nerve's own
+Rust. Two fresh-language jobs, both auto-gated, tested whether the reliability
+carries over or was an artifact of those two stacks.
+
+- **Python** — a readability toolkit. Idiomatic: type hints, `from __future__
+  import annotations`, docstrings with worked examples, the edge cases the spec
+  required actually handled. The math checked out. Notably, it **reused
+  existing modules by composition** instead of reimplementing them — the same
+  instinct for "does the plumbing already exist?" seen in the vollgebucht
+  decomposition work. 47 tests.
+- **Vanilla JavaScript** — a WCAG contrast checker, no framework. Exact
+  reference values (black/white = 21:1, identical colors = 1:1), built in 5
+  iterations. 17 tests.
+
+**Conclusion:** the success envelope is the task's **shape** — additive, pure,
+prescriptive, testable — not the stack. It transferred cleanly to two languages
+nerve had no prior track record in.
+
+### Auto-gating is the efficiency lever, not just a safety net
+
+Both jobs above ran with a project `.nerve/verify.toml` giving a real pass/fail
+signal, and iteration counts collapsed accordingly (**5–11**) versus the
+~40-iteration flails seen on ungated or open-ended tasks elsewhere in this
+document. Shape:
+
+```toml
+extra = ["python -m pytest -q"]
+```
+
+This now works **standalone** for languages nerve doesn't auto-detect (Python,
+Go) — not only as an add-on appended after an existing Cargo/npm check, as
+described further up. Declare the real test command and the gate becomes a
+signal the agent can actually steer by, in any language.
+
+### The protocol bug class — control plane vs. data plane
+
+Found and fixed 2026-07-17: the tool-call parser used to **re-scan file
+CONTENT as control**, silently corrupting output. Three concrete instances:
+
+1. A markdown code fence *inside written content* was stripped, so nerve
+   couldn't write a doc containing a code example.
+2. A `path:`-shaped line *inside written code* hijacked the write path —
+   producing a junk file named after a line of code (e.g. `['serviceId'],`) —
+   and truncated the real content at that point.
+3. A `tool:`-shaped line *inside a document* could change which tool executed.
+
+All three were **invisible to the gate**: `cargo check` / `cargo test` never
+see a mangled `.md` or `.css` file — they only see Rust. The fix: a multiline
+argument (`content` / `old_text` / `new_text`) is now read **literally** through
+to the tool-call block terminator, never re-interpreted as control.
+
+**The diagnostic signature, stated plainly:** if a trivial, well-specified task
+burns its entire iteration budget, the agent is fighting the harness, not
+failing the task. And a stray junk filename in a diff is a **parser signature**,
+not a shell accident — check the parser before blaming the model.
