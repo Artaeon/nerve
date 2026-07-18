@@ -1,50 +1,108 @@
 use super::ToolCall;
 
+// CONTROL/DATA SEPARATION IS THE WHOLE POINT OF THIS MODULE.
+//
+// Every silent-corruption bug this parser has ever had came from one mistake:
+// treating file CONTENT as if it were protocol CONTROL. The model emits the
+// text of a file it wants written; if the parser scans that text for its own
+// markers, ordinary source code silently changes what nerve does.
+//
+// There used to be a pre-pass here that stripped markdown fences from the
+// WHOLE response before any structure was identified:
+//     text.replace("```xml\n", "").replace("```\n", "").replace("\n```", "")
+// Its stated purpose was to ignore a fence a model had wrapped a tool call in.
+// But a blanket replace cannot tell a fence that WRAPS a call from a fence
+// INSIDE the file being written, so it ate both. Writing this very file's
+// documentation was impossible: ```rust fences vanished and the code inside
+// them became loose prose. Nothing caught it — no gate checks markdown.
+//
+// It is now gone, and nothing replaced it, because it was never needed: a
+// fence that wraps a tool call lies OUTSIDE the `<tool_call>`/`</tool_call>`
+// markers (and outside the braces of the JSON form), so all three strategies
+// below already skip it. The pre-pass only ever had the power to do harm.
 pub fn parse_tool_calls(text: &str) -> Vec<ToolCall> {
-    let cleaned = text
-        .replace("```xml\n", "")
-        .replace("```json\n", "")
-        .replace("```\n", "")
-        .replace("\n```", "");
-
     let mut calls = Vec::new();
 
-    calls.extend(parse_standard_tool_calls(&cleaned));
+    calls.extend(parse_standard_tool_calls(text));
 
     if calls.is_empty() {
-        calls.extend(parse_variant_tool_calls(&cleaned, "<tool>", "</tool>"));
+        calls.extend(parse_variant_tool_calls(text, "<tool>", "</tool>"));
     }
 
     if calls.is_empty() {
-        calls.extend(parse_json_tool_calls(&cleaned));
+        calls.extend(parse_json_tool_calls(text));
     }
 
     calls
 }
 
+const OPEN: &str = "<tool_call>";
+const CLOSE: &str = "</tool_call>";
+
+/// Byte offset, within `body` (the text following an `OPEN` marker), of the
+/// `CLOSE` that ends this block — or `None` if the model never closed it.
+///
+/// Two rules, both there because CONTENT can contain the terminator (nerve
+/// documenting its own tool protocol is a routine task, and every `.nerve/`
+/// memory file does it):
+///
+/// 1. A block never extends past the start of the NEXT call, so the search is
+///    bounded by the next `OPEN`. Without this bound rule 2 would merge two
+///    adjacent calls into one.
+/// 2. Within that window, prefer a `CLOSE` sitting ALONE on its line — that is
+///    how the protocol is taught and how a real terminator appears. An inline
+///    `</tool_call>` is far more likely to be prose being written to a file.
+///    Only if no own-line terminator exists do we fall back to the first inline
+///    one, because models do legitimately emit `path: a.rs</tool_call>`.
+///
+/// This is a heuristic, not a guarantee: content whose own line is exactly
+/// `</tool_call>` still ends the block early. The protocol has no escape
+/// mechanism, so that case is unfixable here — but it is far rarer than the
+/// inline mention this rule rescues.
+fn find_block_terminator(body: &str) -> Option<usize> {
+    let window_end = body.find(OPEN).unwrap_or(body.len());
+    let window = &body[..window_end];
+
+    let mut offset = 0;
+    for line in window.split_inclusive('\n') {
+        if line.trim() == CLOSE {
+            // Point at the marker itself, not at any indentation before it.
+            return Some(offset + (line.len() - line.trim_start().len()));
+        }
+        offset += line.len();
+    }
+
+    window.find(CLOSE)
+}
+
 fn parse_standard_tool_calls(text: &str) -> Vec<ToolCall> {
-    const OPEN: &str = "<tool_call>";
-    const CLOSE: &str = "</tool_call>";
     let mut calls = Vec::new();
     let mut remaining = text;
 
     while let Some(start) = remaining.find(OPEN) {
-        if let Some(end) = remaining[start..].find(CLOSE) {
-            let block = &remaining[start + OPEN.len()..start + end];
-            if let Some(call) = parse_single_tool_call(block) {
-                calls.push(call);
+        let body = &remaining[start + OPEN.len()..];
+
+        match find_block_terminator(body) {
+            Some(end) => {
+                if let Some(call) = parse_single_tool_call(&body[..end]) {
+                    calls.push(call);
+                }
+                remaining = &body[end + CLOSE.len()..];
             }
-            remaining = &remaining[start + end + CLOSE.len()..];
-        } else {
-            let block = &remaining[start + OPEN.len()..];
-            let end = block
-                .find(OPEN)
-                .or_else(|| block.find("\n\n\n"))
-                .unwrap_or(block.len());
-            if let Some(call) = parse_single_tool_call(&block[..end]) {
-                calls.push(call);
+            None => {
+                // Unterminated block. It runs to the next call, or to the end
+                // of the message. There is deliberately no blank-line
+                // heuristic here: the old code ended the block at "\n\n\n",
+                // which silently truncated any content containing two blank
+                // lines — PEP 8 *mandates* those between top-level defs, so it
+                // fired constantly on ordinary Python. Trailing prose swept
+                // into a file is visible; silent truncation is not.
+                let end = body.find(OPEN).unwrap_or(body.len());
+                if let Some(call) = parse_single_tool_call(&body[..end]) {
+                    calls.push(call);
+                }
+                remaining = &body[end..];
             }
-            remaining = &remaining[start + OPEN.len() + end..];
         }
     }
 
@@ -70,6 +128,50 @@ fn parse_variant_tool_calls(text: &str, open: &str, close: &str) -> Vec<ToolCall
     calls
 }
 
+/// True if only whitespace separates `i` from the end of its line.
+///
+/// `i` is only ever the index just past a `}` — ASCII — so the slicing here
+/// can never split a multi-byte character.
+fn is_at_line_end(text: &str, i: usize) -> bool {
+    text[i..]
+        .split('\n')
+        .next()
+        .is_none_or(|seg| seg.trim().is_empty())
+}
+
+/// Last-resort strategy: a bare `{"tool": "...", ...}` object with no
+/// `<tool_call>` wrapper at all.
+///
+/// It runs ONLY when the other two strategies found nothing — which is exactly
+/// the situation where nerve has written a plain final answer and called no
+/// tool. That made an unbounded brace-scan actively dangerous: this sentence
+///
+///     For reference the JSON form looks like
+///     {"tool": "run_command", "command": "rm -rf build"}.
+///
+/// used to parse as a live `run_command`, so nerve explaining its own protocol,
+/// quoting a config file, or echoing a tool result back in prose could execute
+/// it. Content re-read as control, with arbitrary command execution attached.
+///
+/// A candidate object must therefore END ITS LINE: nothing but whitespace may
+/// follow the closing brace. A referenced object is punctuated (`}.`, `}` in a
+/// sentence, `},` in a list); an object the model is actually INVOKING is the
+/// last thing it writes. Multi-line pretty-printed objects still parse, since
+/// only the closing boundary is checked.
+///
+/// Why not also require the object to START its line, which would be stricter?
+/// Because `I'll read that file: {"tool": "read_file", ...}` is a real, tested,
+/// supported shape (see `parse_json_format`), and refusing it would silently
+/// stop executing valid calls — a regression that presents as "nerve did
+/// nothing", which is exactly the class of silent failure this module keeps
+/// producing.
+///
+/// THIS NARROWS THE HOLE, IT DOES NOT SEAL IT. An unpunctuated mention that
+/// happens to end its line still parses; see
+/// `json_mention_ending_its_line_is_a_known_residual_gap`, which pins that
+/// behaviour deliberately so nobody discovers it by accident. Sealing it
+/// properly needs a protocol-level fix (an explicit marker for the bare-JSON
+/// form), not a smarter heuristic here.
 fn parse_json_tool_calls(text: &str) -> Vec<ToolCall> {
     let mut calls = Vec::new();
 
@@ -90,7 +192,7 @@ fn parse_json_tool_calls(text: &str) -> Vec<ToolCall> {
                 j += 1;
             }
 
-            if depth == 0 {
+            if depth == 0 && is_at_line_end(text, j) {
                 let json_str = &text[i..j];
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str)
                     && let Some(found_tool) = value.get("tool").and_then(|v| v.as_str())
@@ -236,6 +338,137 @@ fn is_unindented_new_text_key(raw_line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Control/data separation ------------------------------------------
+    //
+    // Each test below is a REPRODUCTION of a silent corruption that shipped.
+    // Every one of them passed through a green `cargo test` + `cargo clippy`
+    // gate undetected, because nothing in a Rust gate inspects the bytes the
+    // agent writes to a file. These are the only thing standing between the
+    // protocol and the next one.
+
+    /// A markdown code fence inside CONTENT must survive verbatim.
+    ///
+    /// The blanket `.replace("```\n", "")` pre-pass turned this exact input
+    /// into `# Doc\nrust\nfn main() {}\n\nEnd.` — both fences gone and the code
+    /// demoted to prose. It made writing any doc with a code example
+    /// impossible, and burned whole iteration caps: the agent wrote the fence,
+    /// re-read the mangled file, and retried a fight it could not win.
+    #[test]
+    fn fence_inside_content_is_preserved() {
+        let text = "<tool_call>\ntool: write_file\npath: README.md\ncontent: # Doc\n\n```rust\nfn main() {}\n```\n\nEnd.\n</tool_call>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        let content = calls[0].args.get("content").unwrap();
+        assert!(
+            content.contains("```rust"),
+            "opening fence lost: {content:?}"
+        );
+        assert!(
+            content.matches("```").count() == 2,
+            "expected both fences, got: {content:?}"
+        );
+        assert!(content.contains("fn main() {}"));
+    }
+
+    /// A fence WRAPPING the call is still ignored — it lies outside the
+    /// markers, which is why removing the pre-pass cost nothing.
+    #[test]
+    fn fence_wrapping_the_call_is_still_ignored() {
+        let text = "```xml\n<tool_call>\ntool: read_file\npath: a.rs\n</tool_call>\n```";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args.get("path").unwrap(), "a.rs");
+    }
+
+    /// An INLINE `</tool_call>` inside content must not end the block.
+    ///
+    /// This truncated the file to the 4 bytes `Emit` and reported success.
+    /// Directly reachable: nerve documents its own tool protocol in `.nerve/`
+    /// memory files and in this repository's docs.
+    #[test]
+    fn inline_terminator_in_content_does_not_end_the_block() {
+        let text = "<tool_call>\ntool: write_file\npath: docs/protocol.md\ncontent: Emit </tool_call> to end.\nMore text here.\n</tool_call>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        let content = calls[0].args.get("content").unwrap();
+        assert!(
+            content.contains("More text here."),
+            "content truncated at the inline terminator: {content:?}"
+        );
+    }
+
+    /// The own-line preference must not merge two adjacent calls, which is why
+    /// the terminator search is bounded by the next `<tool_call>`.
+    #[test]
+    fn inline_terminator_still_closes_when_no_own_line_one_exists() {
+        let text = "<tool_call>tool: read_file\npath: a.rs</tool_call>\n<tool_call>tool: read_file\npath: b.rs</tool_call>";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args.get("path").unwrap(), "a.rs");
+        assert_eq!(calls[1].args.get("path").unwrap(), "b.rs");
+    }
+
+    /// Two blank lines inside content must not truncate an unterminated block.
+    /// PEP 8 mandates them between top-level defs, so the old `"\n\n\n"`
+    /// heuristic fired on ordinary Python.
+    #[test]
+    fn blank_lines_do_not_truncate_an_unterminated_block() {
+        let text = "<tool_call>\ntool: write_file\npath: a.py\ncontent: def one():\n    pass\n\n\ndef two():\n    pass";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 1);
+        let content = calls[0].args.get("content").unwrap();
+        assert!(
+            content.contains("def two()"),
+            "content truncated at the blank lines: {content:?}"
+        );
+    }
+
+    /// A tool-shaped JSON object MENTIONED IN PROSE must never execute.
+    ///
+    /// This is the one finding whose consequence was arbitrary command
+    /// execution rather than corruption: the JSON strategy runs precisely when
+    /// nerve wrote a final answer and called no tool, and it used to
+    /// brace-scan the entire message. Nerve documents its own tool protocol in
+    /// `.nerve/` memory files, so this is a shape it genuinely writes.
+    #[test]
+    fn json_tool_call_mentioned_in_prose_is_not_executed() {
+        let text = "I did not call any tool. For reference the JSON form looks like {\"tool\": \"run_command\", \"command\": \"rm -rf build\"}.";
+        let calls = parse_tool_calls(text);
+        assert!(
+            calls.is_empty(),
+            "prose mention parsed as a live call: {calls:?}"
+        );
+    }
+
+    /// KNOWN RESIDUAL GAP — pinned deliberately, not an endorsement.
+    ///
+    /// The guard keys on punctuation after the closing brace, so an
+    /// UNPUNCTUATED mention that ends its line is still executed. This test
+    /// exists so the limit is discovered by reading the suite rather than by
+    /// an incident. Closing it needs an explicit protocol marker for the
+    /// bare-JSON form; a cleverer heuristic here would just move the seam.
+    #[test]
+    fn json_mention_ending_its_line_is_a_known_residual_gap() {
+        let text = "For reference the JSON form looks like\n{\"tool\": \"run_command\", \"command\": \"echo hi\"}";
+        let calls = parse_tool_calls(text);
+        assert_eq!(
+            calls.len(),
+            1,
+            "behaviour changed — if this is now empty the gap is CLOSED; \
+             update the docs on parse_json_tool_calls and delete this test"
+        );
+    }
+
+    /// ...but a genuine bare JSON call, owning its line, still parses.
+    #[test]
+    fn bare_json_tool_call_on_its_own_line_still_parses() {
+        let text = "I'll do two things:\n{\"tool\": \"read_file\", \"path\": \"a.rs\"}\n{\"tool\": \"read_file\", \"path\": \"b.rs\"}";
+        let calls = parse_tool_calls(text);
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args.get("path").unwrap(), "a.rs");
+        assert_eq!(calls[1].args.get("path").unwrap(), "b.rs");
+    }
 
     #[test]
     fn parse_basic_tool_call() {
