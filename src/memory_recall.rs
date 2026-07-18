@@ -372,16 +372,23 @@ fn brief_headline(brief: &str, max_chars: usize) -> String {
 /// the header stays tiny.
 fn first_sentence(summary: &str) -> String {
     let flat = summary.split_whitespace().collect::<Vec<_>>().join(" ");
-    let end = flat
-        .find(". ")
-        .map(|i| i + 1)
-        .unwrap_or_else(|| flat.len().min(160));
-    let s = flat[..end.min(flat.len())].trim_end();
+    // When there's no ". " to cut on, cap by CHARACTER count, not byte count —
+    // a raw byte slice at 160 can land inside a multi-byte char (e.g. 'ü') and
+    // panic. `find(". ")` itself is safe to slice on since '.' and ' ' are ASCII.
+    let s = match flat.find(". ").map(|i| i + 1) {
+        Some(end) => flat[..end.min(flat.len())].trim_end().to_string(),
+        None => flat
+            .chars()
+            .take(160)
+            .collect::<String>()
+            .trim_end()
+            .to_string(),
+    };
     if s.chars().count() > 160 {
         let head: String = s.chars().take(160).collect();
         format!("{}…", head.trim_end())
     } else {
-        s.to_string()
+        s
     }
 }
 
@@ -616,5 +623,28 @@ mod tests {
         let h = brief_headline(&"word ".repeat(200), 50);
         assert!(h.chars().count() <= 51); // 50 + ellipsis
         assert!(h.ends_with('…'));
+    }
+
+    #[test]
+    fn first_sentence_does_not_panic_on_multibyte_boundary() {
+        // No ". " anywhere, and byte 160 lands inside a 2-byte 'ü'.
+        let summary = "x".to_string() + &"ü".repeat(200);
+        let out = first_sentence(&summary);
+        assert!(out.chars().count() <= 161, "cap not applied: {out:?}");
+        // Must cut on a CHARACTER boundary — the result must still be valid text
+        // that round-trips, not a mangled prefix.
+        assert!(out.chars().all(|c| c == 'x' || c == 'ü' || c == '…'));
+    }
+
+    #[test]
+    fn first_sentence_cuts_at_first_period_space() {
+        let out = first_sentence("First bit. Second bit that is dropped.");
+        assert_eq!(out, "First bit.");
+    }
+
+    #[test]
+    fn first_sentence_short_summary_is_unchanged() {
+        let out = first_sentence("just a short summary with no period");
+        assert_eq!(out, "just a short summary with no period");
     }
 }
