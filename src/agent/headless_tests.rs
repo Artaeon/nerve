@@ -932,3 +932,66 @@ fn truncate_output_caps_long_output() {
     // Short output is returned verbatim.
     assert_eq!(truncate_output("short"), "short");
 }
+
+#[test]
+fn stuck_on_file_nudge_none_below_threshold_some_at_threshold() {
+    // Exact boundary, referenced via the constant so this test still means
+    // something (and still fails loudly) if STUCK_ON_FILE_THRESHOLD ever changes.
+    let mut accesses = std::collections::HashMap::new();
+    accesses.insert("src/remote.rs".to_string(), STUCK_ON_FILE_THRESHOLD - 1);
+    assert!(
+        stuck_on_file_nudge(&accesses).is_none(),
+        "one below the threshold must not nudge"
+    );
+
+    accesses.insert("src/remote.rs".to_string(), STUCK_ON_FILE_THRESHOLD);
+    assert!(
+        stuck_on_file_nudge(&accesses).is_some(),
+        "exactly at the threshold must nudge"
+    );
+}
+
+#[test]
+fn stuck_on_file_nudge_message_names_the_offending_path() {
+    // The whole point of this nudge over the generic explore-nudge is that it
+    // NAMES the file — a generic "stop exploring" nudge already existed and did
+    // not help (see job 5029e587), so assert the path text actually appears.
+    let mut accesses = std::collections::HashMap::new();
+    accesses.insert("src/remote.rs".to_string(), STUCK_ON_FILE_THRESHOLD);
+    let (path, message) = stuck_on_file_nudge(&accesses).expect("threshold crossed");
+    assert_eq!(path, "src/remote.rs");
+    assert!(
+        message.contains("src/remote.rs"),
+        "message must name the offending path: {message}"
+    );
+}
+
+#[test]
+fn stuck_on_file_nudge_picks_the_highest_count_when_several_are_over() {
+    let mut accesses = std::collections::HashMap::new();
+    accesses.insert("src/a.rs".to_string(), STUCK_ON_FILE_THRESHOLD);
+    accesses.insert("src/b.rs".to_string(), STUCK_ON_FILE_THRESHOLD + 5);
+    accesses.insert("src/c.rs".to_string(), STUCK_ON_FILE_THRESHOLD + 1);
+    let (path, _) = stuck_on_file_nudge(&accesses).expect("at least one over threshold");
+    assert_eq!(
+        path, "src/b.rs",
+        "must pick the single MOST-read path, not just any path over threshold"
+    );
+}
+
+#[test]
+fn stuck_on_file_nudge_ignores_a_path_well_under_threshold() {
+    // Two different paths must not interfere with each other's counts: only the
+    // one actually over the threshold is reported.
+    let mut accesses = std::collections::HashMap::new();
+    accesses.insert("src/hot.rs".to_string(), STUCK_ON_FILE_THRESHOLD + 2);
+    accesses.insert("src/cold.rs".to_string(), 1);
+    let (path, _) = stuck_on_file_nudge(&accesses).expect("hot.rs is over threshold");
+    assert_eq!(path, "src/hot.rs");
+}
+
+#[test]
+fn stuck_on_file_nudge_none_for_empty_map() {
+    let accesses = std::collections::HashMap::new();
+    assert!(stuck_on_file_nudge(&accesses).is_none());
+}
