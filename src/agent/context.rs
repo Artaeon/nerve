@@ -5,13 +5,26 @@ pub struct ContextManager {
     max_tokens: usize,
 }
 
+/// Appended whenever `smart_truncate` actually cuts text, so a truncated
+/// prefix can never be mistaken for the complete original — by the model
+/// reading it, or by a human grepping logs/output. The sentence-boundary
+/// branch below used to return a clean, punctuation-terminated prefix with NO
+/// marker at all: a partial fact read exactly like a whole one, and the
+/// regression test guarding this only checked `!contains("...")`, which never
+/// fires on that branch (it doesn't add "..." either) — so the bug shipped
+/// silently. See `project_context.rs` for where the caps this backs are set.
+pub const TRUNCATION_MARKER: &str = "[...truncated]";
+
 /// Truncate text intelligently at a sentence boundary when possible.
 ///
 /// `max_chars` is measured in characters, not bytes, and truncation always
 /// happens on a character boundary so multi-byte UTF-8 (CJK, emoji, accents)
-/// never panics.
+/// never panics. Every path that actually removes content marks the result —
+/// see [`TRUNCATION_MARKER`].
 pub fn smart_truncate(text: &str, max_chars: usize) -> String {
-    // Fast path: short strings (by char count) are returned verbatim.
+    // Fast path: short strings (by char count) are returned verbatim, with NO
+    // marker — this is the "not actually truncated" case and must stay
+    // byte-for-byte identical to the input.
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
@@ -26,17 +39,22 @@ pub fn smart_truncate(text: &str, max_chars: usize) -> String {
     if let Some(pos) = truncated.rfind(['.', '!', '?'])
         && pos >= truncated.len() / 2
     {
-        // Include the punctuation character itself.
-        return truncated[..=pos].to_string();
+        // Include the punctuation character itself, then mark the cut. This
+        // branch is reached only when `text` is longer than `max_chars` (the
+        // fast path above already returned otherwise), so some content was
+        // always dropped here — the marker is not optional.
+        return format!("{} {TRUNCATION_MARKER}", &truncated[..=pos]);
     }
 
-    // Fall back to a word boundary.
+    // Fall back to a word boundary. Marked the same way as the sentence-
+    // boundary branch above — every path that reaches here has already
+    // established `text` is longer than `max_chars`, so content was dropped.
     if let Some(pos) = truncated.rfind(' ') {
-        return format!("{}...", &truncated[..pos]);
+        return format!("{} {TRUNCATION_MARKER}", &truncated[..pos]);
     }
 
-    // Last resort: hard cut.
-    format!("{truncated}...")
+    // Last resort: hard cut (no sentence or word boundary found at all).
+    format!("{truncated} {TRUNCATION_MARKER}")
 }
 
 impl ContextManager {
@@ -350,15 +368,18 @@ mod tests {
     fn smart_truncate_at_sentence_boundary() {
         let text = "First sentence. Second sentence that goes on and on and on.";
         let result = smart_truncate(text, 20);
-        // Should break at the period after "First sentence."
-        assert_eq!(result, "First sentence.");
+        // Should break at the period after "First sentence." AND carry the
+        // marker — this is the exact branch that used to return a clean,
+        // punctuation-terminated prefix with no signal that "Second
+        // sentence..." had been silently dropped.
+        assert_eq!(result, format!("First sentence. {TRUNCATION_MARKER}"));
     }
 
     #[test]
     fn smart_truncate_at_word_boundary() {
         let text = "no period here just words going on and on and on and on";
         let result = smart_truncate(text, 20);
-        assert!(result.ends_with("..."));
+        assert!(result.ends_with(TRUNCATION_MARKER));
     }
 
     #[test]
@@ -458,7 +479,7 @@ mod tests {
     fn smart_truncate_no_spaces() {
         let text = "abcdefghijklmnopqrstuvwxyz";
         let result = smart_truncate(text, 10);
-        assert_eq!(result, "abcdefghij...");
+        assert_eq!(result, format!("abcdefghij {TRUNCATION_MARKER}"));
     }
 
     #[test]
@@ -468,12 +489,15 @@ mod tests {
         // must always return valid UTF-8.
         let cjk = "あいうえお".repeat(50); // 250 multi-byte chars
         let r = smart_truncate(&cjk, 150);
-        assert!(r.chars().count() <= 153); // up to 150 chars + "..."
-        assert!(cjk.starts_with(r.trim_end_matches('.')));
+        let marker_suffix = format!(" {TRUNCATION_MARKER}");
+        assert!(r.chars().count() <= 150 + marker_suffix.chars().count());
+        let content_only = r.strip_suffix(&marker_suffix).unwrap_or(&r);
+        assert!(cjk.starts_with(content_only));
 
         let emoji = "🎉🎊✨".repeat(80);
         let r2 = smart_truncate(&emoji, 100);
         assert!(!r2.is_empty()); // valid, no panic
+        assert!(r2.contains(TRUNCATION_MARKER));
 
         // Mixed ASCII + multibyte with the boundary mid-codepoint.
         let mixed = format!("hello {}", "λ".repeat(200));
@@ -669,7 +693,10 @@ mod tests {
     fn smart_truncate_one_over() {
         let text = "Hello world.X"; // 13 chars, limit 12
         let result = smart_truncate(text, 12);
-        assert_eq!(result, "Hello world."); // Breaks at period
+        // Breaks at period, but the trailing "X" WAS dropped, so the marker
+        // must be present — this is the case that used to return a clean
+        // "Hello world." indistinguishable from a complete, untruncated string.
+        assert_eq!(result, format!("Hello world. {TRUNCATION_MARKER}"));
     }
 
     // === Stress tests ===
