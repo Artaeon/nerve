@@ -20,8 +20,20 @@ use crate::knowledge::store::{Chunk, Document, KnowledgeBase};
 use crate::project::ProjectStore;
 
 /// Minimum relevance score for a memory entry to be auto-injected on a turn.
-/// A single solid keyword match on a short fact scores ~3; this keeps unrelated
-/// memory out of the prompt while still surfacing genuine matches. Tunable.
+///
+/// The scoring engine ([`crate::knowledge::search`]) is BM25-style: a single
+/// exact word-boundary match on a term that is NOT near-universal in the
+/// corpus scores roughly `10 * idf * saturation`, which lands in the ~5-12
+/// range for anything but the most generic word — and, thanks to saturating
+/// length normalisation rather than an unbounded log penalty, a long and
+/// genuinely relevant entry scores just as well as a short one on the same
+/// match. A term that appears in nearly every entry collapses towards IDF≈0
+/// regardless of length. A fuzzy-only near-miss (no real word match at all)
+/// is capped an order of magnitude below an exact match. 2.5 therefore sits
+/// well below "one genuine exact match" and well above "fuzzy noise only" —
+/// unchanged from before because BOTH scales happen to straddle it the same
+/// way, but re-verify with `a_long_relevant_entry_clears_the_auto_recall_threshold`
+/// in `knowledge::search` if either constant changes. Tunable.
 pub const AUTO_RECALL_MIN_SCORE: f64 = 2.5;
 
 /// Longest brief headline (chars) kept in the always-on header.

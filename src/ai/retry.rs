@@ -184,10 +184,9 @@ fn parse_wall_clock(s: &str) -> Option<(u32, u32)> {
     let lower = s.to_lowercase();
     let (digits, is_pm) = if let Some(d) = lower.strip_suffix("am") {
         (d, false)
-    } else if let Some(d) = lower.strip_suffix("pm") {
-        (d, true)
     } else {
-        return None;
+        let d = lower.strip_suffix("pm")?;
+        (d, true)
     };
     let digits = digits.trim();
     let (hour_str, minute_str) = digits.split_once(':').unwrap_or((digits, "0"));
