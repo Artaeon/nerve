@@ -224,6 +224,178 @@ fn update_missing_job_returns_none() {
     assert!(q.mark_done("ghost").unwrap().is_none());
 }
 
+// ── claim_next: race safety ─────────────────────────────────────────────
+// The whole point of this task: a sequential loop over `claim_next` would
+// pass even against the OLD racy read-then-write implementation (each call
+// runs to completion before the next starts, so there is nothing to race).
+// These tests spawn real OS threads and use a `Barrier` to force them to all
+// call `claim_next` at (as close to) the same instant as possible, so the
+// filesystem's `O_EXCL` guarantee is what has to save us, not accidental
+// ordering.
+
+#[test]
+fn claim_next_concurrent_threads_exactly_one_wins_a_single_job() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/r", "only job").unwrap();
+    let q = std::sync::Arc::new(q);
+
+    const THREADS: usize = 16;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let q = std::sync::Arc::clone(&q);
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait(); // line every thread up, then release together
+                q.claim_next().unwrap()
+            })
+        })
+        .collect();
+
+    let results: Vec<Option<Job>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let winners: Vec<&Job> = results.iter().filter_map(|r| r.as_ref()).collect();
+    assert_eq!(
+        winners.len(),
+        1,
+        "exactly one thread must claim the single queued job, got {}",
+        winners.len()
+    );
+    assert_eq!(winners[0].id, job.id);
+    assert_eq!(
+        results.iter().filter(|r| r.is_none()).count(),
+        THREADS - 1,
+        "every other thread must get None, not a duplicate claim"
+    );
+    // The job is left Running exactly once — not corrupted by concurrent writers.
+    assert_eq!(q.get(&job.id).unwrap().unwrap().status, JobStatus::Running);
+}
+
+#[test]
+fn claim_next_concurrent_threads_each_job_claimed_exactly_once() {
+    let (_d, q) = temp_queue();
+    const N: usize = 12;
+    let ids: Vec<String> = (0..N)
+        .map(|i| q.enqueue("/r", &format!("job {i}")).unwrap().id)
+        .collect();
+    let q = std::sync::Arc::new(q);
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(N));
+    let handles: Vec<_> = (0..N)
+        .map(|_| {
+            let q = std::sync::Arc::clone(&q);
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                q.claim_next().unwrap()
+            })
+        })
+        .collect();
+
+    let claimed: Vec<String> = handles
+        .into_iter()
+        .map(|h| h.join().unwrap())
+        .map(|r| {
+            r.expect("with N jobs and N claimers, every claimer should get one")
+                .id
+        })
+        .collect();
+
+    let claimed_set: std::collections::HashSet<&str> = claimed.iter().map(|s| s.as_str()).collect();
+    assert_eq!(
+        claimed_set.len(),
+        N,
+        "every job must be claimed exactly once — no duplicates, none missed"
+    );
+    let expected_set: std::collections::HashSet<&str> = ids.iter().map(|s| s.as_str()).collect();
+    assert_eq!(claimed_set, expected_set);
+
+    // All N are now Running, none left Queued.
+    assert!(q.next_queued().unwrap().is_none());
+    for id in &ids {
+        assert_eq!(q.get(id).unwrap().unwrap().status, JobStatus::Running);
+    }
+}
+
+#[test]
+fn claim_next_picks_oldest_first() {
+    let (_d, q) = temp_queue();
+    let a = q.enqueue("/r", "a").unwrap();
+    q.enqueue("/r", "b").unwrap();
+    // `created_at` is coarse (whole seconds), so two jobs enqueued back to
+    // back in a fast test can land in the same second — force `a` distinctly
+    // older so this test proves ordering rather than getting lucky/unlucky on
+    // wall-clock granularity (same caveat `list_returns_all_jobs_sorted_oldest_first`
+    // already documents).
+    let mut older = q.get(&a.id).unwrap().unwrap();
+    older.created_at = older.created_at.saturating_sub(60);
+    q.save(&older).unwrap();
+    // Both are eligible; claim_next must hand out the older one first, same
+    // ordering guarantee `next_queued` already provided.
+    let claimed = q.claim_next().unwrap().expect("a queued job exists");
+    assert_eq!(claimed.id, a.id);
+    assert_eq!(claimed.status, JobStatus::Running);
+}
+
+#[test]
+fn claim_next_skips_deferred_jobs_until_due() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/r", "needs quota").unwrap();
+    q.defer(&job.id, super::now_secs() + 3600, "deferred")
+        .unwrap();
+    assert!(q.claim_next().unwrap().is_none());
+    // Still Queued — claim_next must not have touched it.
+    assert_eq!(q.get(&job.id).unwrap().unwrap().status, JobStatus::Queued);
+}
+
+#[test]
+fn claim_next_none_when_all_terminal_or_running() {
+    let (_d, q) = temp_queue();
+    let a = q.enqueue("/r", "a").unwrap();
+    q.mark_running(&a.id).unwrap();
+    q.mark_done(&a.id).unwrap();
+    assert!(q.claim_next().unwrap().is_none());
+}
+
+#[test]
+fn claim_ticket_persists_while_running_then_clears_when_the_job_finishes() {
+    let (_d, q) = temp_queue();
+    let job = q.enqueue("/r", "x").unwrap();
+    q.claim_next().unwrap();
+    // While `Running`, the ticket MUST still be on disk — that is exactly
+    // what stops a straggler thread (already mid-`list()` before this claim
+    // landed) from recreating it and double-claiming the same job. It is
+    // only released once the job's status actually moves away from
+    // `Running` (see `update()`).
+    let dir = tempfile_dir_of(&q);
+    let has_ticket = |dir: &Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| e.file_name().to_string_lossy().contains("claim"))
+    };
+    assert!(
+        has_ticket(&dir),
+        "claim ticket for {} must still exist while Running",
+        job.id
+    );
+    q.mark_done(&job.id).unwrap();
+    assert!(
+        !has_ticket(&dir),
+        "claim ticket for {} must be released once the job leaves Running",
+        job.id
+    );
+}
+
+/// Test-only helper to reach the queue's root dir for `.claim` bookkeeping
+/// assertions — `Queue` doesn't expose its root publicly since callers should
+/// only need `job_path`-relative operations, but tests need to inspect the
+/// directory's raw contents to prove tickets don't leak or persist wrongly.
+fn tempfile_dir_of(q: &Queue) -> PathBuf {
+    // Rather than add a public accessor just for this, reuse `claim_path`'s
+    // parent via a throwaway id — `claim_path` always returns `root/.<id>.claim`.
+    q.claim_path("probe").parent().unwrap().to_path_buf()
+}
+
 #[test]
 fn status_labels_and_terminal() {
     assert_eq!(JobStatus::Queued.label(), "queued");

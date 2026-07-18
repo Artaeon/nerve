@@ -177,6 +177,15 @@ impl Queue {
         self.root.join(format!("{id}.context.json"))
     }
 
+    /// Path of a job's claim ticket — a hidden marker file whose atomic
+    /// creation (see [`Queue::try_claim_ticket`]) is the sole arbiter of "who
+    /// gets to claim this job". Named like the existing `.{id}.tmp` write-temp
+    /// files (a leading dot, no `.json` extension) so `list()` never sees it
+    /// and it can't be mistaken for a job file.
+    fn claim_path(&self, id: &str) -> PathBuf {
+        self.root.join(format!(".{id}.claim"))
+    }
+
     /// Add a new single-agent job in the `Queued` state and persist it.
     pub fn enqueue(&self, repo: &str, prompt: &str) -> anyhow::Result<Job> {
         self.enqueue_inner(repo, prompt, false, false)
@@ -297,8 +306,14 @@ impl Queue {
     // that lands so the -D warnings gate stays green.
 
     /// The oldest job still `Queued` and due to run now — the next one the worker
-    /// should pick up. Jobs deferred into the future (`not_before` past `now`,
+    /// WOULD pick up. Jobs deferred into the future (`not_before` past `now`,
     /// e.g. waiting out a provider quota reset) are skipped until their time.
+    ///
+    /// This is a READ ONLY peek — it does not claim the job. Two concurrent
+    /// callers can both get the same answer from this alone; that is exactly
+    /// the race [`Queue::claim_next`] exists to close. The worker calls
+    /// `claim_next`, not this, to actually pick up work. Kept (and still
+    /// tested) as the plain selection-rule primitive `claim_next` is built on.
     #[allow(dead_code)]
     pub fn next_queued(&self) -> anyhow::Result<Option<Job>> {
         let now = now_secs();
@@ -306,6 +321,78 @@ impl Queue {
             .list()?
             .into_iter()
             .find(|j| j.status == JobStatus::Queued && j.not_before.is_none_or(|t| t <= now)))
+    }
+
+    /// Atomically find the oldest eligible `Queued` job and flip it to
+    /// `Running` — ONE indivisible step, safe for concurrent callers. This
+    /// replaces the read-then-write race of calling `next_queued` and then
+    /// `mark_running` separately: with two callers racing, both could see the
+    /// same job as `Queued` and both start running it — the same task
+    /// executed twice, on the same branch, in the same repo.
+    ///
+    /// The atomicity primitive is `OpenOptions::create_new` on a per-job
+    /// `<id>.claim` marker file: `create_new` opens with `O_EXCL` on POSIX, so
+    /// the KERNEL — not a check-then-write in our own code — guarantees at
+    /// most one caller can successfully create a given path. Every other
+    /// caller gets `AlreadyExists` and moves on to try the next-oldest
+    /// candidate (or returns `None` if none remain). This is the same class
+    /// of guarantee `rename` gives `save()` elsewhere in this file.
+    ///
+    /// Selection rules are identical to `next_queued`: oldest first, deferred
+    /// jobs skipped until due.
+    pub fn claim_next(&self) -> anyhow::Result<Option<Job>> {
+        let now = now_secs();
+        for job in self
+            .list()?
+            .into_iter()
+            .filter(|j| j.status == JobStatus::Queued && j.not_before.is_none_or(|t| t <= now))
+        {
+            if !self.try_claim_ticket(&job.id)? {
+                // Lost the race for this job to another caller — try the
+                // next-oldest candidate instead of giving up outright.
+                continue;
+            }
+            // Won the ticket: only this caller may transition the job now.
+            // Deliberately do NOT delete the ticket here — it must stay in
+            // place for as long as the job is `Running` (released by
+            // `update()` only when the status later moves away from
+            // `Running`). If it were removed right after this claim, a
+            // straggler thread that snapshotted the job as `Queued` in its
+            // own `list()` call — before this transition landed — could
+            // recreate the ticket and win a SECOND claim on the same job,
+            // since `update()` sets status unconditionally rather than
+            // checking "is this still Queued". A crash between winning the
+            // ticket and this update leaves the ticket behind with the job
+            // still `Queued`; `reclaim_orphaned_running`'s stale-ticket sweep
+            // recognises and clears exactly that case at the next startup.
+            let claimed = self.update(&job.id, |j| {
+                j.status = JobStatus::Running;
+                j.started_at = Some(now_secs());
+            })?;
+            if claimed.is_some() {
+                return Ok(claimed);
+            }
+            // Job vanished between winning the ticket and the update (e.g.
+            // deleted out from under us) — fall through and try the next.
+        }
+        Ok(None)
+    }
+
+    /// Try to win the claim ticket for job `id`. Returns `true` if THIS call
+    /// created it (the caller now owns the claim and must follow up by
+    /// transitioning the job and removing the ticket), `false` if another
+    /// caller already holds it.
+    fn try_claim_ticket(&self, id: &str) -> anyhow::Result<bool> {
+        std::fs::create_dir_all(&self.root)?;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.claim_path(id))
+        {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Defer a job to run no earlier than `until` (Unix seconds), keeping it
@@ -401,10 +488,17 @@ impl Queue {
     /// which it is marked failed so a job that reliably hangs/crashes the worker
     /// can't strand the queue forever. Returns the ids that were requeued.
     ///
-    /// Without this, a restart left a `Running` job orphaned indefinitely and
-    /// the worker skipped straight past it to the next `Queued` job — silently
-    /// dropping work.
+    /// Also sweeps stale claim tickets left behind by `claim_next` (see
+    /// [`Queue::sweep_stale_claim_tickets`]) — without this, a crash between
+    /// winning a claim and persisting `Running` would leave a `<id>.claim`
+    /// file that permanently blocks that job from ever being claimed again
+    /// (`create_new` can never re-win an already-existing path).
+    ///
+    /// Without the `Running` reclaim, a restart left a `Running` job orphaned
+    /// indefinitely and the worker skipped straight past it to the next
+    /// `Queued` job — silently dropping work.
     pub fn reclaim_orphaned_running(&self, max_attempts: u32) -> anyhow::Result<Vec<String>> {
+        self.sweep_stale_claim_tickets()?;
         let mut requeued = Vec::new();
         for job in self.list()?.into_iter() {
             if job.status != JobStatus::Running {
@@ -424,6 +518,41 @@ impl Queue {
         Ok(requeued)
     }
 
+    /// Remove any `<id>.claim` ticket whose job is NOT `Running`. A ticket is
+    /// only ever supposed to be transient: `claim_next` creates it, then
+    /// immediately persists `Running` and deletes it. If a ticket exists but
+    /// its job's status is something other than `Running`, the claimant that
+    /// created it died in between — the ticket is a stale leftover, not a
+    /// real claim, and left alone it would make that job unclaimable forever.
+    /// Runs once at worker startup (via `reclaim_orphaned_running`), before
+    /// any live claiming, so there is no genuinely in-flight claim to mistake
+    /// for orphaned here.
+    fn sweep_stale_claim_tickets(&self) -> anyhow::Result<()> {
+        if !self.root.exists() {
+            return Ok(());
+        }
+        for entry in std::fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            let Some(id) = name
+                .strip_prefix('.')
+                .and_then(|s| s.strip_suffix(".claim"))
+            else {
+                continue;
+            };
+            let is_running = self
+                .get(id)?
+                .map(|j| j.status == JobStatus::Running)
+                .unwrap_or(false);
+            if !is_running {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        Ok(())
+    }
+
     /// Cancel a job. Only jobs that haven't started yet can be cancelled;
     /// returns `true` if the job was queued and is now cancelled.
     pub fn cancel(&self, id: &str) -> anyhow::Result<bool> {
@@ -438,12 +567,27 @@ impl Queue {
 
     /// Load a job, apply `f`, and persist it. No-op (returns `None`) if the job
     /// doesn't exist.
+    ///
+    /// Also owns claim-ticket cleanup: whenever a job's status ends up
+    /// something OTHER than `Running` (done, failed, no-changes, needs-review,
+    /// cancelled, or requeued/deferred back to `Queued`), its `.claim` ticket
+    /// (if any) is removed here. Centralising this means every exit from
+    /// `Running` — regardless of which `mark_*`/`requeue`/`defer` call got it
+    /// there — releases the ticket, so a job can be claimed again later
+    /// without leaking a ticket file per cycle. The ticket is deliberately
+    /// NOT removed while `status == Running`: see `claim_next`, which relies
+    /// on the ticket outliving the instant of the claim to stop a straggler
+    /// thread (one that snapshotted the job as `Queued` before the winner
+    /// acted) from recreating it and double-claiming.
     fn update<F: FnOnce(&mut Job)>(&self, id: &str, f: F) -> anyhow::Result<Option<Job>> {
         let Some(mut job) = self.get(id)? else {
             return Ok(None);
         };
         f(&mut job);
         self.save(&job)?;
+        if job.status != JobStatus::Running {
+            let _ = std::fs::remove_file(self.claim_path(id));
+        }
         Ok(Some(job))
     }
 }

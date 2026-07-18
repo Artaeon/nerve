@@ -70,7 +70,10 @@ pub async fn run_worker() {
     }
     let mut completed = 0usize;
     loop {
-        match queue.next_queued() {
+        // `claim_next` atomically finds-and-marks-Running in one step, so two
+        // workers can never both pick up the same job — see its doc comment
+        // for why that matters even though this loop is still single-threaded.
+        match queue.claim_next() {
             Ok(Some(job)) => {
                 run_one(&queue, job).await;
                 completed += 1;
