@@ -9,7 +9,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 
@@ -623,21 +623,131 @@ async fn run_in_repo(
     }
 }
 
+/// How long a verify command may run before it is killed. Deliberately NOT
+/// `command_timeout_secs` (30s, see `headless.rs`): `.nerve/verify.toml` lets a
+/// project append arbitrary steps (typically `npm run build`) to the verify
+/// gate, and a real production build can legitimately take minutes — reusing
+/// the 30s tool timeout would fail every good build. But it must still be
+/// bounded: the worker is sequential, so a command that hangs (waiting on a
+/// prompt, a lock, a dead network mirror) would otherwise block this one job
+/// forever and take the entire queue down with it. 15 minutes is generous
+/// enough not to punish a slow-but-healthy build, while still guaranteeing the
+/// queue keeps moving.
+const VERIFY_TIMEOUT_SECS: u64 = 15 * 60;
+
 /// Run a verify command (a shell string like `cargo check` / `npm run -s lint`)
-/// in `repo`, returning (success, combined stdout+stderr).
+/// in `repo`, returning (success, combined stdout+stderr). Bounded by
+/// `VERIFY_TIMEOUT_SECS` — see `run_verify_with_timeout` for why.
 fn run_verify(repo: &Path, cmd: &str) -> (bool, String) {
-    match std::process::Command::new("sh")
+    run_verify_with_timeout(repo, cmd, VERIFY_TIMEOUT_SECS)
+}
+
+/// Run a verify command with an explicit `timeout_secs` deadline (split out
+/// from `run_verify` so tests can use a tiny deadline instead of waiting out
+/// the real 15-minute budget).
+///
+/// We spawn the child with piped stdout/stderr and hand those pipes to a
+/// background thread that reads them to completion via `.output()` — that
+/// thread cannot deadlock the poll loop below because it never touches
+/// `child`; it just blocks on the pipes, which is fine since it runs on its
+/// own thread. Meanwhile we poll `child.try_wait()` on a short interval until
+/// either the child exits or the deadline passes. On timeout we kill the
+/// child (reaping it with `.wait()` so it doesn't linger as a zombie) and
+/// return a failure message that names the cause, since this string is fed
+/// straight back to the agent as a verify failure and must tell it what to do.
+fn run_verify_with_timeout(repo: &Path, cmd: &str, timeout_secs: u64) -> (bool, String) {
+    use std::process::Stdio;
+
+    let mut cmd_builder = std::process::Command::new("sh");
+    cmd_builder
         .arg("-c")
         .arg(cmd)
         .current_dir(repo)
-        .output()
-    {
-        Ok(o) => {
-            let mut combined = String::from_utf8_lossy(&o.stdout).into_owned();
-            combined.push_str(&String::from_utf8_lossy(&o.stderr));
-            (o.status.success(), combined)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // `sh -c cmd` (e.g. `npm run build`) typically forks further children.
+    // Killing only the immediate `sh` pid leaves those children running and
+    // holding our pipes open, so the reader thread below would block forever
+    // even after a "successful" kill. Put the whole tree in its own process
+    // group so a timeout can take it all out at once, exactly as
+    // `shell::run_command_with_timeout` does for the agent's own tools.
+    #[cfg(unix)]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd_builder.pre_exec(|| {
+            libc::setpgid(0, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = match cmd_builder.spawn() {
+        Ok(c) => c,
+        Err(e) => return (false, format!("could not run verify command: {e}")),
+    };
+
+    // Take the pipes now so the reader thread owns them; `child` keeps only
+    // the handle we need for `try_wait`/`kill`.
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut out = String::new();
+        if let Some(s) = stdout.as_mut() {
+            let _ = s.read_to_string(&mut out);
         }
-        Err(e) => (false, format!("could not run verify command: {e}")),
+        if let Some(s) = stderr.as_mut() {
+            let _ = s.read_to_string(&mut out);
+        }
+        out
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => {
+                return (false, format!("could not wait on verify command: {e}"));
+            }
+        }
+    };
+
+    match status {
+        Some(status) => {
+            let combined = reader.join().unwrap_or_default();
+            (status.success(), combined)
+        }
+        None => {
+            // Timed out: kill the whole process group (not just the shell)
+            // and reap it so it doesn't linger as a zombie, then join the
+            // reader thread — it will hit EOF as soon as the pipes close,
+            // which happens once every process holding them is gone.
+            #[cfg(unix)]
+            unsafe {
+                let pid = child.id() as libc::pid_t;
+                libc::kill(-pid, libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = child.kill();
+            }
+            let _ = child.wait();
+            let combined = reader.join().unwrap_or_default();
+            (
+                false,
+                format!(
+                    "verify command timed out after {timeout_secs}s (killed): {cmd}\n\
+                     this usually means a declared verify step hangs — check the extra \
+                     steps in `.nerve/verify.toml`\n{combined}"
+                ),
+            )
+        }
     }
 }
 
@@ -917,6 +1027,54 @@ mod tests {
         let (ok, out) = run_verify(dir.path(), "echo boom >&2; exit 1");
         assert!(!ok);
         assert!(out.contains("boom"));
+    }
+
+    /// The gate must not be able to hang the queue.
+    ///
+    /// This test existed once already. `fb87069` added the timeout and this
+    /// test; `86fd517` — a commit about not deleting `.nerve/` — rewrote
+    /// `worker.rs` wholesale (+112/−140 for a one-line change) and silently
+    /// deleted both. The gate then ran unbounded for a full day while two
+    /// later commits documented their own behaviour as resting on it.
+    ///
+    /// The assertion is on ELAPSED TIME, not just the message: a `sleep 30`
+    /// under a 1s deadline returns in ~1s if the child is genuinely killed,
+    /// and takes the full 30s if the deadline is decorative. A test that only
+    /// checked the returned string would pass either way.
+    #[test]
+    fn run_verify_kills_a_hanging_command_promptly() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::time::Instant::now();
+        let (ok, out) = run_verify_with_timeout(dir.path(), "sleep 30", 1);
+        let elapsed = start.elapsed();
+        assert!(!ok);
+        assert!(out.contains("timed out"));
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "expected the hung command to be killed promptly, took {elapsed:?}"
+        );
+    }
+
+    /// A timeout must kill the whole process GROUP, not just the shell.
+    ///
+    /// `sh -c "npm run build"` forks children that hold our stdout/stderr
+    /// pipes. Killing only the immediate `sh` pid leaves them running and the
+    /// reader thread blocked on pipes that never close — so the "successful"
+    /// kill would hang exactly the code meant to prevent hangs. Here the
+    /// grandchild outlives the shell by 30s; if it is not group-killed, the
+    /// reader thread pins this test for the full 30s.
+    #[cfg(unix)]
+    #[test]
+    fn run_verify_timeout_kills_the_whole_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let start = std::time::Instant::now();
+        let (ok, _) = run_verify_with_timeout(dir.path(), "sleep 30 & sleep 30", 1);
+        let elapsed = start.elapsed();
+        assert!(!ok);
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "a forked grandchild survived the kill and held the pipes: {elapsed:?}"
+        );
     }
 
     #[test]
