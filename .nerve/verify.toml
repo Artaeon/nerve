@@ -1,0 +1,25 @@
+# nerve's gate for its OWN jobs.
+#
+# Without this file the gate is only what `detect_verify_command` infers from
+# Cargo.toml — `cargo check && cargo test`. That is NOT this project's standard.
+# The standard is clippy-clean at `-D warnings` and rustfmt-clean, enforced in
+# CI and in the Justfile, and a job that satisfies the inferred gate can still
+# fail it.
+#
+# That is not hypothetical. Job 5029e587 added a `mark_needs_review` method and
+# never called it. `cargo check` and `cargo test` both passed, so the job
+# reported `done` — while `cargo clippy --all-targets -- -D warnings` failed
+# with "method `mark_needs_review` is never used". Dead code compiles; only
+# clippy catches it, and clippy was not in the gate.
+#
+# Dead code is exactly the signature of a HALF-WIRED fix — a helper added and
+# never called is the machine-checkable form of "wrote the scaffolding, never
+# connected it", which is this agent's most common failure mode. Putting clippy
+# in the gate turns that failure mode into a red gate the agent must fix before
+# it can report success.
+#
+# fmt is checked rather than applied so a job cannot quietly reformat the tree.
+extra = [
+  "cargo clippy --all-targets -- -D warnings",
+  "cargo fmt --check",
+]
