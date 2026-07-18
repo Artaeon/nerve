@@ -136,6 +136,7 @@ async fn run_one(queue: &Queue, job: Job) {
             changed_empty,
             verify,
             verify_summary,
+            hit_iteration_cap,
         }) => {
             // Ground truth (the `changed` diff computed in `execute`, folded
             // together with `commits_ahead_of_base` — not the agent's
@@ -147,7 +148,7 @@ async fn run_one(queue: &Queue, job: Job) {
             // reported `done` identically to a job that shipped real work.
             // Trusting the agent's own claim is exactly how those slipped
             // through, so only the actual diff/commits decide this.
-            match status_for_run(changed_empty, verify) {
+            match status_for_run(changed_empty, verify, hit_iteration_cap) {
                 crate::queue::JobStatus::NoChanges => {
                     let _ = queue.mark_no_changes(&id);
                     tracing::warn!(
@@ -324,9 +325,25 @@ impl VerifyReport {
 /// that actually ran AND passed earns `Done`. Everything else — the gate said
 /// no, or nothing ever checked — is `NeedsReview`: the work is real and a
 /// human has to look at it.
-fn status_for_run(changed_empty: bool, verify: VerifyOutcome) -> crate::queue::JobStatus {
+fn status_for_run(
+    changed_empty: bool,
+    verify: VerifyOutcome,
+    hit_iteration_cap: bool,
+) -> crate::queue::JobStatus {
     if changed_empty {
         return crate::queue::JobStatus::NoChanges;
+    }
+    // Stopping at the cap means the agent ran out of steps MID-TASK. The gate
+    // can still pass, because what it wrote compiles and lints — job d755d1bd
+    // wrote 342 lines of a feature's library layer and no page, no tests and
+    // no wiring, and reported `done`. The gate cannot see absence.
+    //
+    // The commit message already carries an [INCOMPLETE] marker, but a marker
+    // buried in `git log` is not a status: anyone scanning `nerve --jobs` read
+    // the same word as for a finished job. Real work exists on the branch, so
+    // this is not a failure — it is exactly "a human has to look at it".
+    if hit_iteration_cap {
+        return crate::queue::JobStatus::NeedsReview;
     }
     match verify {
         VerifyOutcome::Passed => crate::queue::JobStatus::Done,
@@ -352,6 +369,9 @@ enum Wedge {
         /// The gate summary, so `run_one` can record WHY a job needs review
         /// instead of leaving the user to go read the journal.
         verify_summary: String,
+        /// Whether the agent stopped at the iteration cap — i.e. ran out of
+        /// steps mid-task. Ground truth from the run, not a self-report.
+        hit_iteration_cap: bool,
     },
     Wedged,
 }
@@ -591,6 +611,7 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
         changed_empty: is_no_change(changed.is_empty(), branch_ahead),
         verify: verify.outcome,
         verify_summary: verify.summary,
+        hit_iteration_cap: outcome.hit_max_iterations,
     })
 }
 
@@ -1094,12 +1115,12 @@ mod tests {
         // nothing, because the agent's own belief that it had acted was
         // trusted instead of the actual diff.
         assert_eq!(
-            status_for_run(true, VerifyOutcome::Passed),
+            status_for_run(true, VerifyOutcome::Passed, false),
             crate::queue::JobStatus::NoChanges
         );
         // Non-empty changed set + a gate that PASSED → Done.
         assert_eq!(
-            status_for_run(false, VerifyOutcome::Passed),
+            status_for_run(false, VerifyOutcome::Passed, false),
             crate::queue::JobStatus::Done
         );
     }
@@ -1114,7 +1135,7 @@ mod tests {
     /// system overrode it.
     #[test]
     fn a_failed_gate_is_never_reported_as_done() {
-        let s = status_for_run(false, VerifyOutcome::Failed);
+        let s = status_for_run(false, VerifyOutcome::Failed, false);
         assert_ne!(s, crate::queue::JobStatus::Done);
         assert_ne!(s, crate::queue::JobStatus::NoChanges);
         assert_eq!(s, crate::queue::JobStatus::NeedsReview);
@@ -1123,7 +1144,7 @@ mod tests {
     #[test]
     fn a_passing_gate_with_changes_is_done() {
         assert_eq!(
-            status_for_run(false, VerifyOutcome::Passed),
+            status_for_run(false, VerifyOutcome::Passed, false),
             crate::queue::JobStatus::Done
         );
     }
@@ -1138,8 +1159,34 @@ mod tests {
             VerifyOutcome::NoGate,
             VerifyOutcome::NotRun,
         ] {
-            assert_eq!(status_for_run(true, v), crate::queue::JobStatus::NoChanges);
+            assert_eq!(
+                status_for_run(true, v, false),
+                crate::queue::JobStatus::NoChanges
+            );
         }
+    }
+
+    /// A job that ran out of steps MID-TASK must not read as finished.
+    ///
+    /// Job d755d1bd wrote 342 lines of a feature's library layer — no page, no
+    /// tests, no wiring — and reported `done`, because unused library code
+    /// lints and compiles so the gate passed. The gate cannot see absence.
+    #[test]
+    fn hitting_the_iteration_cap_is_never_reported_as_done() {
+        // Even with a gate that PASSED, stopping at the cap means incomplete.
+        let s = status_for_run(false, VerifyOutcome::Passed, true);
+        assert_ne!(s, crate::queue::JobStatus::Done);
+        assert_eq!(s, crate::queue::JobStatus::NeedsReview);
+    }
+
+    /// ...but a job that changed nothing is still NoChanges, cap or not: there
+    /// is no work on the branch for a human to review.
+    #[test]
+    fn iteration_cap_does_not_override_no_changes() {
+        assert_eq!(
+            status_for_run(true, VerifyOutcome::Passed, true),
+            crate::queue::JobStatus::NoChanges
+        );
     }
 
     /// The absence of a green light is not the presence of one. A project with
@@ -1148,12 +1195,12 @@ mod tests {
     #[test]
     fn absent_gate_is_not_treated_as_a_passing_gate() {
         assert_ne!(
-            status_for_run(false, VerifyOutcome::NoGate),
-            status_for_run(false, VerifyOutcome::Passed)
+            status_for_run(false, VerifyOutcome::NoGate, false),
+            status_for_run(false, VerifyOutcome::Passed, false)
         );
         assert_ne!(
-            status_for_run(false, VerifyOutcome::NotRun),
-            status_for_run(false, VerifyOutcome::Passed)
+            status_for_run(false, VerifyOutcome::NotRun, false),
+            status_for_run(false, VerifyOutcome::Passed, false)
         );
     }
 
