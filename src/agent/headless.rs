@@ -184,6 +184,67 @@ fn content_hash(s: &str) -> u64 {
     h.finish()
 }
 
+/// Read-shaped tools whose PATH argument is worth tracking for the
+/// stuck-on-one-file detector below. Deliberately broader than
+/// `CACHEABLE_READS`: that dedupe only helps on a byte-identical repeat
+/// (same tool, same args), so `read_file(a.rs)` then `read_lines(a.rs, 10,
+/// 30)` then `read_lines(a.rs, 40, 60)` — three DIFFERENT fingerprints —
+/// never trips it, yet is exactly the "reading the same file three ways"
+/// loop observed in job 5029e587. `run_command` is deliberately excluded:
+/// extracting a path out of an arbitrary shell command (e.g. `sed -n
+/// '10,30p' src/remote.rs`) would need a real shell parser to do safely, and
+/// a wrong guess (flagging the wrong file, or crashing on quoting) is worse
+/// than the gap of simply not counting it. So a run that reads a file only
+/// via `run_command` will not trip this — a known, accepted blind spot.
+const PATH_TRACKED_READS: &[&str] = &["read_file", "read_lines", "search_code", "find_files"];
+
+/// After a single file has been accessed (by path, across ANY read-shaped
+/// tool) this many times in one run, the agent is almost certainly stuck
+/// re-reading it rather than acting on it — job 5029e587 read `src/remote.rs`
+/// four different ways (read_file, read_lines twice, a `sed` run_command)
+/// across 20+ iterations and never opened the third file it was asked to
+/// change, shipping a half-wired fix. Small enough to catch the loop while
+/// it is still cheap to correct, large enough that a legitimate "read the
+/// whole file, then re-check two different line ranges" pattern doesn't
+/// false-fire.
+const STUCK_ON_FILE_THRESHOLD: usize = 4;
+
+/// How often the stuck-on-file nudge RE-FIRES once tripped, mirroring
+/// `EXPLORE_NUDGE_INTERVAL`: prod, don't nag. Without spacing, a run that
+/// keeps re-reading the same file past the threshold would get the nudge
+/// appended every single iteration, drowning out the rest of the tool
+/// feedback.
+const STUCK_ON_FILE_NUDGE_INTERVAL: usize = 6;
+
+/// Pure decision function: given how many times each file path has been
+/// accessed so far in this run (via any [`PATH_TRACKED_READS`] tool), decide
+/// whether to nudge about the single most-read path, and what to say. Kept
+/// free of any provider/agent-loop dependency so it is unit-testable without
+/// a mock provider — the counting and the trip decision are the whole
+/// behaviour under test.
+///
+/// Returns `None` when nothing has crossed the threshold. Otherwise returns
+/// the offending path and a message that NAMES it — a generic "stop
+/// exploring" already exists as the explore-nudge and, per job 5029e587,
+/// does not help once `edited` is already true (see the call site).
+fn stuck_on_file_nudge(
+    accesses: &std::collections::HashMap<String, usize>,
+) -> Option<(String, String)> {
+    let (path, &count) = accesses
+        .iter()
+        .filter(|&(_, &c)| c >= STUCK_ON_FILE_THRESHOLD)
+        .max_by_key(|&(_, &c)| c)?;
+    Some((
+        path.clone(),
+        format!(
+            "You have now accessed `{path}` {count} times in this run. The information you need \
+             from it is almost certainly already in front of you — either make the edit to \
+             `{path}` now, or if you already have, move on to another file this task needs. Do \
+             not read `{path}` again without a specific new reason."
+        ),
+    ))
+}
+
 /// Assemble the repo's persisted `.nerve/` knowledge into a compact block so a
 /// headless job honors the project's conventions, design system, and prior
 /// decisions — AND, unlike before, actually recalls memory relevant to this
@@ -546,6 +607,17 @@ async fn run_role(
     // the file. Dropped whenever compaction stubs old output away.
     let mut read_cache: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     let mut deduped_reads = 0usize;
+    // Per-PATH access counter across EVERY read-shaped tool in `PATH_TRACKED_READS`
+    // — not per-tool, not per-argument. See `stuck_on_file_nudge`: this is what
+    // catches job 5029e587, where `read_cache` above (keyed on tool+args) never
+    // deduped `read_file(a.rs)` against `read_lines(a.rs, 10, 30)` against
+    // `read_lines(a.rs, 40, 60)` because each is a distinct fingerprint.
+    let mut file_access_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    // Iteration at which the stuck-on-file nudge last fired (0 = never), spaced
+    // out the same way as `last_explore_nudge` so it prods once per interval
+    // rather than nagging every iteration once tripped.
+    let mut last_stuck_file_nudge = 0usize;
     // Assigned on every loop iteration before any break, so it is always set by
     // the time we read it after the loop.
     let mut final_response;
@@ -640,6 +712,7 @@ async fn run_role(
                 // into the blocking task.
                 let fingerprint = call_fingerprint(call);
                 let tool_name = call.tool.clone();
+                let path_arg = call.args.get("path").cloned();
                 let call = call.clone();
                 let mut result =
                     tokio::task::spawn_blocking(move || execute_tool(&call, command_timeout_secs))
@@ -680,6 +753,20 @@ async fn run_role(
                     } else {
                         read_cache.insert(fingerprint, hash);
                     }
+                }
+
+                // Count this access against its PATH (not tool+args) so
+                // `read_file(a.rs)`, `read_lines(a.rs, 10, 30)` and
+                // `read_lines(a.rs, 40, 60)` all count toward the SAME file —
+                // see `PATH_TRACKED_READS` for why this is a separate, broader
+                // set than `CACHEABLE_READS` above. `run_command` reads (e.g. a
+                // `sed`/`cat` one-liner) are a known, accepted gap — see the
+                // comment on `PATH_TRACKED_READS`.
+                if result.success
+                    && PATH_TRACKED_READS.contains(&tool_name.as_str())
+                    && let Some(path) = &path_arg
+                {
+                    *file_access_counts.entry(path.clone()).or_insert(0) += 1;
                 }
                 // Separately, track whether the TOOL LAYER worked at all -- this is
                 // deliberately NOT the same condition as `edited` above. A
@@ -745,6 +832,23 @@ async fn run_role(
                      than none."
                 }
             };
+            messages.push(ChatMessage::user(msg));
+        }
+
+        // Stuck-on-one-file detector (job 5029e587): deliberately INDEPENDENT of
+        // `edited` — unlike the explore-nudge above, this must keep firing AFTER
+        // the first edit, because that is exactly when job 5029e587 got stuck:
+        // it edited one file at iteration 14, then spent its ENTIRE remaining
+        // budget re-reading a SECOND file four different ways (read_file,
+        // read_lines twice, a `sed` run_command) and never opened the third
+        // file it was asked to change, shipping a half-wired fix. Spaced out
+        // like the explore-nudge (`STUCK_ON_FILE_NUDGE_INTERVAL`) so it prods
+        // rather than nags once tripped.
+        if let Some((path, msg)) = stuck_on_file_nudge(&file_access_counts)
+            && iterations - last_stuck_file_nudge >= STUCK_ON_FILE_NUDGE_INTERVAL
+        {
+            last_stuck_file_nudge = iterations;
+            tracing::info!("headless: stuck re-reading {path} — nudging to act or move on");
             messages.push(ChatMessage::user(msg));
         }
 
