@@ -264,17 +264,68 @@ pub(super) fn normalize_path(path: &Path) -> PathBuf {
 /// creating junk.
 ///
 /// We reject a path containing a newline, a single quote, a double quote,
-/// `(`, `)`, `[`, `]`, `{`, `}`, `;`, `,`, or `=`. In a real code repository,
+/// `(`, `)`, `{`, `}`, `;`, `,`, or `=`. In a real code repository,
 /// filenames containing these are vanishingly rare, whereas every known
-/// mis-parse contained several. This deliberately trades a theoretical
-/// false rejection (some exotic filename with a bracket in it) for catching
-/// a silent corruption that has already happened twice. Dots, dashes,
-/// underscores, nested slashes, and spaces are all fine -- real files use
-/// them constantly (`next.config.mjs`, `my-file_v2.test.ts`,
-/// `docs/A GUIDE.md`, `.nerve/verify.toml`).
+/// mis-parse contained several. Dots, dashes, underscores, nested slashes,
+/// and spaces are all fine -- real files use them constantly
+/// (`next.config.mjs`, `my-file_v2.test.ts`, `docs/A GUIDE.md`,
+/// `.nerve/verify.toml`).
+///
+/// `[` and `]` are NOT blanket-rejected like the characters above -- that
+/// was tried and it was a real bug, not a theoretical trade-off. The main
+/// project this agent builds is Next.js, whose App Router convention for
+/// dynamic routes IS a bracketed path segment (`app/s/[slug]/page.tsx`,
+/// `[...slug]` catch-alls, `[[...slug]]` optional catch-alls). Rejecting
+/// every bracket made every dynamic-route file unwritable and, live, made
+/// a job abandon `write_file` for `printf`/heredoc/`python3` shell
+/// workarounds to get a file onto disk at all. So a bracket is allowed
+/// only when it forms a WHOLE path segment shaped exactly like a Next.js
+/// dynamic segment -- starts with `[`, ends with `]`, and the inside is a
+/// plain name (letters/digits/underscore/dash/dot), optionally preceded
+/// by `...`. Anything else with a bracket -- `['serviceId'],`,
+/// `app/foo[bar/page.tsx`, `const x = arr[0];` -- still fails that shape
+/// check and stays rejected.
 pub(crate) fn looks_like_code_fragment(path: &str) -> bool {
-    const SUSPICIOUS: [char; 11] = ['\n', '\'', '"', '(', ')', '[', ']', '{', '}', ';', ','];
-    path.contains(SUSPICIOUS.as_slice()) || path.contains('=')
+    const SUSPICIOUS: [char; 9] = ['\n', '\'', '"', '(', ')', '{', '}', ';', ','];
+    if path.contains(SUSPICIOUS.as_slice()) || path.contains('=') {
+        return true;
+    }
+    if path.contains('[') || path.contains(']') {
+        return !path
+            .split('/')
+            .all(|seg| !(seg.contains('[') || seg.contains(']')) || is_dynamic_route_segment(seg));
+    }
+    false
+}
+
+/// True when `segment` is exactly a Next.js dynamic-route path segment:
+/// `[name]`, `[...name]` (catch-all), or `[[...name]]` (optional
+/// catch-all), where `name` is a plain identifier. See
+/// `looks_like_code_fragment` for why this carve-out exists and what it
+/// must keep rejecting.
+fn is_dynamic_route_segment(segment: &str) -> bool {
+    fn is_plain_name(s: &str) -> bool {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    }
+    fn is_name_or_catch_all(s: &str) -> bool {
+        match s.strip_prefix("...") {
+            Some(rest) => is_plain_name(rest),
+            None => is_plain_name(s),
+        }
+    }
+
+    if let Some(inner) = segment
+        .strip_prefix("[[")
+        .and_then(|s| s.strip_suffix("]]"))
+    {
+        return is_name_or_catch_all(inner);
+    }
+    if let Some(inner) = segment.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return is_name_or_catch_all(inner);
+    }
+    false
 }
 
 pub(super) fn validate_write_path(path: &str, tool: &str) -> Result<PathBuf, ToolResult> {

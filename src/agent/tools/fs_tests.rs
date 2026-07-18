@@ -733,6 +733,38 @@ fn looks_like_code_fragment_allows_normal_paths() {
 }
 
 #[test]
+fn nextjs_dynamic_route_segments_are_allowed() {
+    assert!(!looks_like_code_fragment("app/s/[slug]/page.tsx"));
+    assert!(!looks_like_code_fragment("app/termin/[token]/page.tsx"));
+    assert!(!looks_like_code_fragment(
+        "app/dashboard/services/[id]/edit/page.tsx"
+    ));
+    assert!(!looks_like_code_fragment("app/blog/[...slug]/page.tsx"));
+    assert!(!looks_like_code_fragment(
+        "app/shop/[[...filters]]/page.tsx"
+    ));
+}
+
+#[test]
+fn mis_parsed_code_fragments_are_still_rejected() {
+    // The two REAL incidents this guard exists for — both must stay rejected.
+    assert!(looks_like_code_fragment("['serviceId'],"));
+    assert!(looks_like_code_fragment("text('path').notNull(),"));
+    // A bracket that is not a clean whole segment is still suspicious.
+    assert!(looks_like_code_fragment("app/foo[bar/page.tsx"));
+    assert!(looks_like_code_fragment("const x = arr[0];"));
+    assert!(looks_like_code_fragment("app/[id/page.tsx"));
+}
+
+#[test]
+fn ordinary_paths_are_unaffected() {
+    assert!(!looks_like_code_fragment("src/main.rs"));
+    assert!(!looks_like_code_fragment("next.config.mjs"));
+    assert!(!looks_like_code_fragment("docs/A GUIDE.md"));
+    assert!(!looks_like_code_fragment(".nerve/verify.toml"));
+}
+
+#[test]
 fn execute_write_file_rejects_code_fragment_path() {
     reset_tool_counter();
     let dir = tempfile::tempdir().unwrap();
