@@ -1136,6 +1136,13 @@ pub async fn run_decomposed_agent(
 /// step, so progress survives a mid-run wedge + requeue. Best-effort: any git
 /// failure is ignored (the worker still commits any remaining dirt at the end).
 /// Assumes CWD is the repo (the worker sets it before the run).
+///
+/// Stages explicit paths rather than `git add -A` so generated build/cache
+/// output (`__pycache__`, `target/`, `node_modules/`, etc. — see
+/// `worker::is_generated_artifact`) never reaches the commit, even though a
+/// step may legitimately have written such files as a side effect (e.g.
+/// running a Python test suite). Skipped paths are logged so a reviewer
+/// never wonders why a file a step touched is absent from the commit.
 fn commit_step(step: usize, total: usize, title: &str) {
     let run = |args: &[&str]| {
         std::process::Command::new("git")
@@ -1143,7 +1150,44 @@ fn commit_step(step: usize, total: usize, title: &str) {
             .args(args)
             .output()
     };
-    let _ = run(&["add", "-A"]);
+    let status = run(&["status", "--porcelain"])
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default();
+    let mut kept = Vec::new();
+    let mut skipped = Vec::new();
+    for line in status.lines() {
+        let Some(rest) = line.get(3..).map(str::trim) else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        // For a rename/copy the porcelain is "old -> new"; keep the new path.
+        let path = rest.rsplit(" -> ").next().unwrap_or(rest).trim_matches('"');
+        if crate::worker::is_generated_artifact(path) {
+            skipped.push(path.to_string());
+        } else {
+            kept.push(path.to_string());
+        }
+    }
+    if !skipped.is_empty() {
+        tracing::info!(
+            "decompose step {step}/{total} ({title}): excluded {} generated artifact \
+             path(s) from the commit: {}",
+            skipped.len(),
+            skipped.join(", ")
+        );
+    }
+    if kept.is_empty() {
+        // Nothing real to commit — e.g. the step's only side effect was
+        // writing to a cache dir. Leave the tree as-is; a step with no real
+        // commit here simply contributes no commit to `commits_ahead_of_base`.
+        return;
+    }
+    let mut add = vec!["add", "--"];
+    add.extend(kept.iter().map(String::as_str));
+    let _ = run(&add);
     let msg = format!("decompose step {step}/{total}: {title}");
     // --no-verify so a repo's pre-commit hook can't block the autonomous run.
     let _ = run(&["commit", "--no-verify", "-m", &msg]);

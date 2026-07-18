@@ -411,8 +411,27 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     // Commit ONLY the paths this job newly touched, on its own branch, for
     // review — leaving any pre-existing unrelated changes untouched. The changed
     // set is also journaled below, so compute it whenever the job edited.
+    //
+    // Generated build/cache output (`__pycache__`, `target/`,
+    // `node_modules/`, etc. — see `is_generated_artifact`) is filtered OUT
+    // here, never staged, even though the agent may legitimately have
+    // written it as a side effect of running tests/builds while working.
+    // Logged so a reviewer never wonders why a file the agent touched is
+    // absent from the commit — silence there would be its own bug.
     let changed: Vec<String> = if outcome.edited && is_git {
-        dirty_paths(repo).difference(&pre_dirty).cloned().collect()
+        let raw: Vec<String> = dirty_paths(repo).difference(&pre_dirty).cloned().collect();
+        let (kept, skipped): (Vec<String>, Vec<String>) =
+            raw.into_iter().partition(|p| !is_generated_artifact(p));
+        if !skipped.is_empty() {
+            tracing::info!(
+                "job {}: excluded {} generated artifact path(s) from the commit \
+                 (build/cache output, never staged): {}",
+                job.id,
+                skipped.len(),
+                skipped.join(", ")
+            );
+        }
+        kept
     } else {
         Vec::new()
     };
@@ -807,6 +826,56 @@ fn parse_status_path(line: &str) -> Option<String> {
     Some(path.trim_matches('"').to_string())
 }
 
+/// Directory names that, wherever they appear as a WHOLE path segment, mark
+/// everything beneath them as generated build/cache output rather than
+/// authored source. Covers the ecosystems nerve actually works in: Python
+/// (`__pycache__`, `.pytest_cache`), Rust (`target`), Node
+/// (`node_modules`, `.next`, `dist`, `build`).
+const EXCLUDED_DIR_SEGMENTS: &[&str] = &[
+    "__pycache__",
+    ".pytest_cache",
+    "target",
+    "node_modules",
+    ".next",
+    "dist",
+    "build",
+];
+
+/// Whether `path` (a repo-relative path as reported by `git status
+/// --porcelain`) names generated build output, a cache, or editor/OS noise
+/// that must NEVER be staged into a job's commit.
+///
+/// Real incident: a job on a Python project left `__pycache__/*.pyc`
+/// bytecode dirty after running the test suite, `dirty_paths()` reported it
+/// like any other change, and the commit step staged it verbatim — bytecode
+/// landed in a reviewed branch. This function is the single source of truth
+/// for what gets filtered out of that staged set (see the call site in
+/// `execute` and `agent::headless::commit_step`). It does NOT restrict what
+/// the agent is allowed to *write* — a job may legitimately create files
+/// inside a build directory while working; this only governs what reaches
+/// the commit.
+///
+/// Matches on path SEGMENTS, never substrings: `my_target_notes.md` and a
+/// directory `src/building/` must NOT match despite containing "target" and
+/// "build" as substrings — only an exact segment equal to `target` or
+/// `build` counts. Matches at any depth (`a/b/__pycache__/c.pyc`).
+pub(crate) fn is_generated_artifact(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments
+        .iter()
+        .any(|seg| EXCLUDED_DIR_SEGMENTS.contains(seg))
+    {
+        return true;
+    }
+    match segments.last() {
+        Some(file) => {
+            let lower = file.to_ascii_lowercase();
+            lower.ends_with(".pyc") || lower.ends_with(".pyo") || lower == ".ds_store"
+        }
+        None => false,
+    }
+}
+
 /// The branch each job should be forked from — a clean base, never a prior
 /// job's result branch. Prefers `main`, then `master`; otherwise falls back to
 /// the branch currently checked out (unless that is itself a `nerve/job-*`
@@ -1126,6 +1195,64 @@ mod tests {
         );
         assert_eq!(parse_status_path(""), None);
         assert_eq!(parse_status_path(" M "), None);
+    }
+
+    // ── is_generated_artifact ───────────────────────────────────────────
+    // Real incident: a Python job left __pycache__/*.pyc dirty and it was
+    // staged verbatim into a reviewed branch. Segment-matching (not
+    // substring) is the entire point — a file/dir that merely CONTAINS an
+    // excluded name as a substring (e.g. "my_target_notes.md", "src/building/")
+    // must NOT be treated as generated output.
+
+    #[test]
+    fn is_generated_artifact_matches_python_cache_output() {
+        assert!(is_generated_artifact("__pycache__/foo.cpython-311.pyc"));
+        assert!(is_generated_artifact("a/b/__pycache__/c.pyc"));
+        assert!(is_generated_artifact("pkg/mod.pyc"));
+        assert!(is_generated_artifact("pkg/mod.pyo"));
+        assert!(is_generated_artifact(".pytest_cache/v/cache/lastfailed"));
+    }
+
+    #[test]
+    fn is_generated_artifact_matches_rust_target_dir() {
+        assert!(is_generated_artifact("target/debug/deps/nerve-abc123"));
+        assert!(is_generated_artifact("crate/target/release/nerve"));
+    }
+
+    #[test]
+    fn is_generated_artifact_matches_node_output() {
+        assert!(is_generated_artifact("node_modules/lodash/index.js"));
+        assert!(is_generated_artifact("frontend/.next/cache/x"));
+        assert!(is_generated_artifact("dist/bundle.js"));
+        assert!(is_generated_artifact("app/build/main.js"));
+    }
+
+    #[test]
+    fn is_generated_artifact_matches_editor_and_os_noise() {
+        assert!(is_generated_artifact(".DS_Store"));
+        assert!(is_generated_artifact("a/b/.DS_Store"));
+    }
+
+    #[test]
+    fn is_generated_artifact_rejects_substring_near_misses() {
+        // Contains "target" as a substring but is not the segment "target".
+        assert!(!is_generated_artifact("my_target_notes.md"));
+        assert!(!is_generated_artifact("src/my_target_notes.md"));
+        // A directory named "building", not "build".
+        assert!(!is_generated_artifact("src/building/plan.md"));
+        assert!(!is_generated_artifact("src/building/mod.rs"));
+        // Contains "dist" as a substring.
+        assert!(!is_generated_artifact("src/distance_calc.rs"));
+        // Contains "node_modules" as a substring but isn't the segment.
+        assert!(!is_generated_artifact("my_node_modules_doc.md"));
+    }
+
+    #[test]
+    fn is_generated_artifact_rejects_ordinary_source_files() {
+        assert!(!is_generated_artifact("src/main.rs"));
+        assert!(!is_generated_artifact("README.md"));
+        assert!(!is_generated_artifact("lib/foo.ts"));
+        assert!(!is_generated_artifact("a file.ts"));
     }
 
     fn make_job(prompt: &str, has_context: bool) -> Job {
