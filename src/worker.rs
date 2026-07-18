@@ -132,7 +132,11 @@ async fn run_one(queue: &Queue, job: Job) {
     let id = job.id.clone();
     let _ = queue.mark_running(&id);
     match execute(&job).await {
-        Ok(Wedge::Healthy { changed_empty }) => {
+        Ok(Wedge::Healthy {
+            changed_empty,
+            verify,
+            verify_summary,
+        }) => {
             // Ground truth (the `changed` diff computed in `execute`, folded
             // together with `commits_ahead_of_base` — not the agent's
             // self-reported `outcome.edited`) decides the status. That
@@ -143,17 +147,47 @@ async fn run_one(queue: &Queue, job: Job) {
             // reported `done` identically to a job that shipped real work.
             // Trusting the agent's own claim is exactly how those slipped
             // through, so only the actual diff/commits decide this.
-            if status_for_healthy_run(changed_empty) == crate::queue::JobStatus::NoChanges {
-                let _ = queue.mark_no_changes(&id);
-                tracing::warn!(
-                    "job {id} completed but changed NO files — reporting no-changes, not done; \
-                     likely causes: the agent replied without acting (e.g. treated a malformed \
-                     tool call as a final answer), or its edits were reverted externally \
-                     mid-run"
-                );
-            } else {
-                let _ = queue.mark_done(&id);
-                tracing::info!("job {id} done");
+            match status_for_run(changed_empty, verify) {
+                crate::queue::JobStatus::NoChanges => {
+                    let _ = queue.mark_no_changes(&id);
+                    tracing::warn!(
+                        "job {id} completed but changed NO files — reporting no-changes, not \
+                         done; likely causes: the agent replied without acting (e.g. treated a \
+                         malformed tool call as a final answer), or its edits were reverted \
+                         externally mid-run"
+                    );
+                }
+                // The gate did not green-light this code. It is committed on
+                // the branch and it is REAL work, so this is not a failure —
+                // but nobody has confirmed it is correct, so it must not read
+                // as `done`. The reason travels with the job so a user seeing
+                // `needs-review` does not have to go digging in the journal.
+                crate::queue::JobStatus::NeedsReview => {
+                    let _ = queue.mark_needs_review(&id, &verify_summary);
+                    tracing::warn!(
+                        "job {id} changed code but the verify gate did not approve it \
+                         ({verify_summary}) — reporting needs-review, not done"
+                    );
+                }
+                crate::queue::JobStatus::Done => {
+                    let _ = queue.mark_done(&id);
+                    tracing::info!("job {id} done");
+                }
+                // `status_for_run` is total over these three; the remaining
+                // variants describe a job that never got here (still queued or
+                // running) or one this arm does not decide (failed/cancelled).
+                // Listed explicitly rather than with a catch-all so adding a
+                // status breaks the compile here on purpose.
+                crate::queue::JobStatus::Queued
+                | crate::queue::JobStatus::Running
+                | crate::queue::JobStatus::Failed
+                | crate::queue::JobStatus::Cancelled => {
+                    let _ = queue.mark_done(&id);
+                    tracing::error!(
+                        "job {id}: status_for_run returned an unexpected status; recorded as \
+                         done — this is a bug"
+                    );
+                }
             }
         }
         Ok(Wedge::Wedged) => {
@@ -243,17 +277,62 @@ fn quota_defer_until(now: u64, parsed_reset_secs: Option<u64>) -> u64 {
     }
 }
 
-/// Whether a completed (non-wedged) run should be reported as `Done` or
-/// `NoChanges`, based purely on the GROUND-TRUTH diff/commit signal
-/// (`changed_empty` in `execute`, which already folds in
-/// `commits_ahead_of_base` — see the comment there) — never the agent's
-/// self-reported `outcome.edited`. See the comment in `run_one` for why that
-/// distinction is the entire point.
-fn status_for_healthy_run(changed_empty: bool) -> crate::queue::JobStatus {
+/// What the verify gate actually concluded about this job's code.
+///
+/// These four are deliberately distinct. Collapsing any pair of them is how a
+/// job whose gate REJECTED its code came to be reported with the same word as
+/// a job the gate approved. In particular `NoGate` must never read as
+/// `Passed`: one is the absence of a green light, not the presence of one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerifyOutcome {
+    /// The gate ran and the code passed it (possibly after fix rounds).
+    Passed,
+    /// The gate ran and the code still failed it after every fix round.
+    Failed,
+    /// There was no gate to run: no verify command could be detected for this
+    /// project and `.nerve/verify.toml` declared none either.
+    NoGate,
+    /// The gate was not reached — the agent edited nothing, or auto-verify is
+    /// switched off in config.
+    NotRun,
+}
+
+/// The gate's verdict plus the human-readable line recorded in the journal.
+struct VerifyReport {
+    outcome: VerifyOutcome,
+    summary: String,
+}
+
+impl VerifyReport {
+    fn new(outcome: VerifyOutcome, summary: impl Into<String>) -> Self {
+        Self {
+            outcome,
+            summary: summary.into(),
+        }
+    }
+}
+
+/// The final status for a run that did not wedge.
+///
+/// Pure and exhaustively tested, in the same style as `is_no_change` — the
+/// status a user reads must be derivable from ground truth alone, never from
+/// the agent's self-report.
+///
+/// `changed_empty` wins over everything: if the job changed nothing there is
+/// no code to accept or reject, and `NoChanges` is the honest answer whatever
+/// the gate said. Otherwise real work exists on the branch, and only a gate
+/// that actually ran AND passed earns `Done`. Everything else — the gate said
+/// no, or nothing ever checked — is `NeedsReview`: the work is real and a
+/// human has to look at it.
+fn status_for_run(changed_empty: bool, verify: VerifyOutcome) -> crate::queue::JobStatus {
     if changed_empty {
-        crate::queue::JobStatus::NoChanges
-    } else {
-        crate::queue::JobStatus::Done
+        return crate::queue::JobStatus::NoChanges;
+    }
+    match verify {
+        VerifyOutcome::Passed => crate::queue::JobStatus::Done,
+        VerifyOutcome::Failed | VerifyOutcome::NoGate | VerifyOutcome::NotRun => {
+            crate::queue::JobStatus::NeedsReview
+        }
     }
 }
 
@@ -266,6 +345,13 @@ enum Wedge {
     /// distinction is the entire point of `JobStatus::NoChanges`.
     Healthy {
         changed_empty: bool,
+        /// What the gate concluded. Before this existed, the gate's verdict
+        /// was computed, logged, journaled — and then dropped, so a job whose
+        /// gate failed reported `done`.
+        verify: VerifyOutcome,
+        /// The gate summary, so `run_one` can record WHY a job needs review
+        /// instead of leaving the user to go read the journal.
+        verify_summary: String,
     },
     Wedged,
 }
@@ -398,7 +484,8 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     if let Some(prev) = prev_cwd {
         let _ = std::env::set_current_dir(prev);
     }
-    let (outcome, verify_summary) = in_repo?;
+    let (outcome, verify) = in_repo?;
+    let verify_summary = verify.summary.clone();
 
     // Wedge check: if every tool call failed, the worker process is in a bad
     // state that only a fresh restart clears. Nothing was written (all writes
@@ -502,6 +589,8 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     let branch_ahead = is_git && commits_ahead_of_base(repo, &base) > 0;
     Ok(Wedge::Healthy {
         changed_empty: is_no_change(changed.is_empty(), branch_ahead),
+        verify: verify.outcome,
+        verify_summary: verify.summary,
     })
 }
 
@@ -564,7 +653,7 @@ async fn run_in_repo(
     config: &crate::config::Config,
     repo: &Path,
     job: &Job,
-) -> anyhow::Result<(crate::agent::headless::HeadlessOutcome, String)> {
+) -> anyhow::Result<(crate::agent::headless::HeadlessOutcome, VerifyReport)> {
     // Multi-agent workflow (planner → coder → reviewer) when requested, else a
     // single agent. The verify gate below applies to both.
     let mut outcome = if job.workflow {
@@ -588,7 +677,7 @@ async fn run_in_repo(
     };
 
     if !outcome.edited || !config.auto_verify {
-        return Ok((outcome, "not run".to_string()));
+        return Ok((outcome, VerifyReport::new(VerifyOutcome::NotRun, "not run")));
     }
     // The auto-detected base gate: the project's type-check, chained with its
     // test suite (a lint-only gate once let a job commit a *failing test* that
@@ -607,7 +696,10 @@ async fn run_in_repo(
     // or Go — the ONLY gate it has) from `.nerve/verify.toml`.
     let extras = crate::verify_project::load_project_verify(repo).extra;
     let Some(cmd) = resolve_gate(base, &extras) else {
-        return Ok((outcome, "no verify command".to_string()));
+        return Ok((
+            outcome,
+            VerifyReport::new(VerifyOutcome::NoGate, "no verify command"),
+        ));
     };
 
     let mut rounds: u8 = 0;
@@ -619,13 +711,16 @@ async fn run_in_repo(
             } else {
                 format!("{cmd} → passed after {rounds} fix round(s)")
             };
-            return Ok((outcome, note));
+            return Ok((outcome, VerifyReport::new(VerifyOutcome::Passed, note)));
         }
         rounds += 1;
         if rounds > crate::verify::MAX_VERIFY_ROUNDS {
             return Ok((
                 outcome,
-                format!("{cmd} → STILL FAILING after {} rounds", rounds - 1),
+                VerifyReport::new(
+                    VerifyOutcome::Failed,
+                    format!("{cmd} → STILL FAILING after {} rounds", rounds - 1),
+                ),
             ));
         }
         tracing::info!("job verify failed (round {rounds}); asking the agent to fix");
@@ -992,18 +1087,74 @@ mod tests {
     }
 
     #[test]
-    fn status_for_healthy_run_uses_ground_truth_changed_set() {
+    fn status_for_run_uses_ground_truth_changed_set() {
         // Empty changed set → NoChanges, never Done — this is the entire point
         // of the fix: three same-day incidents (jobs db33f59e, 44558bc6,
         // b3a4cf8a's predecessor) each reported `done` for a run that changed
         // nothing, because the agent's own belief that it had acted was
         // trusted instead of the actual diff.
         assert_eq!(
-            status_for_healthy_run(true),
+            status_for_run(true, VerifyOutcome::Passed),
             crate::queue::JobStatus::NoChanges
         );
-        // Non-empty changed set → Done, unchanged behaviour.
-        assert_eq!(status_for_healthy_run(false), crate::queue::JobStatus::Done);
+        // Non-empty changed set + a gate that PASSED → Done.
+        assert_eq!(
+            status_for_run(false, VerifyOutcome::Passed),
+            crate::queue::JobStatus::Done
+        );
+    }
+
+    /// THE LIE THIS FIX EXISTS TO KILL.
+    ///
+    /// `run_in_repo` computed the gate's verdict, logged it and journaled it —
+    /// and then dropped it. Only `changed_empty` crossed back to `run_one`, so
+    /// a job whose `cargo check && cargo test` FAILED, which then burned every
+    /// fix round and still failed, committed that code and reported `done`.
+    /// That is worse than an unverified job: the gate ran, said no, and the
+    /// system overrode it.
+    #[test]
+    fn a_failed_gate_is_never_reported_as_done() {
+        let s = status_for_run(false, VerifyOutcome::Failed);
+        assert_ne!(s, crate::queue::JobStatus::Done);
+        assert_ne!(s, crate::queue::JobStatus::NoChanges);
+        assert_eq!(s, crate::queue::JobStatus::NeedsReview);
+    }
+
+    #[test]
+    fn a_passing_gate_with_changes_is_done() {
+        assert_eq!(
+            status_for_run(false, VerifyOutcome::Passed),
+            crate::queue::JobStatus::Done
+        );
+    }
+
+    /// Nothing changed → `NoChanges` whatever the gate said, because there is
+    /// no code to accept or reject.
+    #[test]
+    fn no_changes_wins_over_any_gate_result() {
+        for v in [
+            VerifyOutcome::Passed,
+            VerifyOutcome::Failed,
+            VerifyOutcome::NoGate,
+            VerifyOutcome::NotRun,
+        ] {
+            assert_eq!(status_for_run(true, v), crate::queue::JobStatus::NoChanges);
+        }
+    }
+
+    /// The absence of a green light is not the presence of one. A project with
+    /// no detectable gate and no `.nerve/verify.toml` produces code nothing
+    /// checked, and that must be visibly different from code that passed.
+    #[test]
+    fn absent_gate_is_not_treated_as_a_passing_gate() {
+        assert_ne!(
+            status_for_run(false, VerifyOutcome::NoGate),
+            status_for_run(false, VerifyOutcome::Passed)
+        );
+        assert_ne!(
+            status_for_run(false, VerifyOutcome::NotRun),
+            status_for_run(false, VerifyOutcome::Passed)
+        );
     }
 
     // ── is_no_change ────────────────────────────────────────────────────

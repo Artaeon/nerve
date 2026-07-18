@@ -16,6 +16,10 @@ pub struct RemoteStatus {
     pub done: usize,
     /// Finished cleanly but changed no files — see the match in `summarize`.
     pub no_changes: usize,
+    /// Changed code but the verify gate never gave it a green light (rejected
+    /// it, or there was nothing to run it at all) — real work sitting on the
+    /// branch that a human needs to look at. See `JobStatus::NeedsReview`.
+    pub needs_review: usize,
     pub failed: usize,
     pub total: usize,
 }
@@ -55,6 +59,11 @@ pub fn summarize(jobs: &[Job]) -> RemoteStatus {
             // agent that believed it acted and didn't, so folding it into
             // `done` would hide exactly what this status exists to surface.
             JobStatus::NoChanges => s.no_changes += 1,
+            // Real work exists on the branch but the gate never approved it —
+            // counted apart from `done` for the same reason as `NoChanges`
+            // above: folding it in would hide exactly what this status
+            // exists to surface (see `JobStatus::NeedsReview`).
+            JobStatus::NeedsReview => s.needs_review += 1,
             JobStatus::Failed => s.failed += 1,
             JobStatus::Cancelled => {}
         }

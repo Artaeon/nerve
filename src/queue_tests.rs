@@ -282,3 +282,60 @@ fn summary_line_truncates_long_prompt() {
     // The prompt is truncated well under its original length.
     assert!(line.len() < 200);
 }
+
+#[test]
+fn needs_review_round_trips_through_the_on_disk_format() {
+    // Jobs are serde-persisted as JSON on disk. A new status must survive the
+    // round trip, or the queue silently loses jobs in that state.
+    // NOTE the on-disk form is NOT the display label: `#[serde(rename_all =
+    // "lowercase")]` yields "needsreview", while `label()` yields
+    // "needs-review". That split is pre-existing (NoChanges is "nochanges" on
+    // disk, "no-changes" on screen) and must NOT be "tidied" to match — the
+    // serde form is the persisted format, and changing it would orphan every
+    // job file already sitting in the queue.
+    let json = serde_json::to_string(&JobStatus::NeedsReview).unwrap();
+    assert_eq!(json, "\"needsreview\"");
+    assert_eq!(JobStatus::NeedsReview.label(), "needs-review");
+    let back: JobStatus = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, JobStatus::NeedsReview);
+    assert!(back.is_terminal());
+}
+
+#[test]
+fn a_job_file_written_by_the_older_binary_still_loads() {
+    // BACKWARD COMPATIBILITY: adding a variant must not orphan jobs already
+    // sitting in the queue. A `done` job written before NeedsReview existed
+    // must still deserialize to exactly `Done`.
+    let older: JobStatus = serde_json::from_str("\"done\"").unwrap();
+    assert_eq!(older, JobStatus::Done);
+    for (raw, expected) in [
+        ("\"queued\"", JobStatus::Queued),
+        ("\"running\"", JobStatus::Running),
+        ("\"nochanges\"", JobStatus::NoChanges),
+        ("\"failed\"", JobStatus::Failed),
+        ("\"cancelled\"", JobStatus::Cancelled),
+    ] {
+        let got: JobStatus = serde_json::from_str(raw).unwrap();
+        assert_eq!(got, expected, "old on-disk value {raw} no longer loads");
+    }
+}
+
+#[test]
+fn mark_needs_review_records_the_reason() {
+    let (_dir, q) = temp_queue();
+    let job = q.enqueue("task", "/tmp/repo").unwrap();
+    q.mark_needs_review(&job.id, "cargo check → STILL FAILING after 2 rounds")
+        .unwrap();
+    let reloaded = q.get(&job.id).unwrap().unwrap();
+    assert_eq!(reloaded.status, JobStatus::NeedsReview);
+    // The reason must travel with the job — a user seeing `needs-review`
+    // should not have to go digging in the journal to find out why.
+    assert!(
+        reloaded
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("STILL FAILING")
+    );
+    assert!(reloaded.finished_at.is_some());
+}

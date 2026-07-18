@@ -41,6 +41,18 @@ pub enum JobStatus {
     /// identically to a job that shipped real work, and only a manual diff of
     /// the empty branch caught it.
     NoChanges,
+    /// The job changed code, but the verify gate did not give it a green
+    /// light: either it ran and REJECTED the code (still failing after every
+    /// fix round), or there was no gate to run at all (no verify command
+    /// detected, no `.nerve/verify.toml`, or the gate was skipped because
+    /// auto-verify is off). This is NOT a failure to run: the agent
+    /// completed and, if a gate existed, it ran to completion. It is also NOT
+    /// a clean success: nobody has confirmed the code is correct. The work
+    /// is real and sits committed on the job's branch; it needs a HUMAN to
+    /// review it before it's trusted. Added because a job whose gate said no
+    /// was, up to this point, committed and reported `done` identically to a
+    /// job the gate actually approved.
+    NeedsReview,
     /// Failed — see [`Job::error`].
     Failed,
     /// Cancelled by the user before it ran.
@@ -55,6 +67,7 @@ impl JobStatus {
             JobStatus::Running => "running",
             JobStatus::Done => "done",
             JobStatus::NoChanges => "no-changes",
+            JobStatus::NeedsReview => "needs-review",
             JobStatus::Failed => "failed",
             JobStatus::Cancelled => "cancelled",
         }
@@ -65,7 +78,11 @@ impl JobStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            JobStatus::Done | JobStatus::NoChanges | JobStatus::Failed | JobStatus::Cancelled
+            JobStatus::Done
+                | JobStatus::NoChanges
+                | JobStatus::NeedsReview
+                | JobStatus::Failed
+                | JobStatus::Cancelled
         )
     }
 }
@@ -332,6 +349,21 @@ impl Queue {
         self.update(id, |job| {
             job.status = JobStatus::NoChanges;
             job.finished_at = Some(now_secs());
+        })
+    }
+
+    /// Mark a job `NeedsReview` and stamp `finished_at`, recording why the
+    /// gate never gave the code a green light (the failing verify command's
+    /// output, or a note that nothing verified it). The worker uses this
+    /// instead of `mark_done` when the job changed code but the gate didn't
+    /// approve it — see [`JobStatus::NeedsReview`] for why this must never
+    /// collapse into `Done`.
+    pub fn mark_needs_review(&self, id: &str, note: &str) -> anyhow::Result<Option<Job>> {
+        let note = note.to_string();
+        self.update(id, move |job| {
+            job.status = JobStatus::NeedsReview;
+            job.finished_at = Some(now_secs());
+            job.error = Some(note);
         })
     }
 
