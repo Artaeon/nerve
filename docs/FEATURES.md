@@ -12,8 +12,8 @@ memory in `.nerve/`, pull-based memory retrieval, per-turn model routing, a loca
 knowledge base, a 196-entry prompt library, project scaffolding, a design linter,
 automations, and a sandbox-lite plugin system.
 
-**Headline numbers (from source):** ~53,300 lines of Rust across ~90 files ·
-**2,003 tests** passing (1 ignored), clippy+fmt clean · **102 catalogued slash
+**Headline numbers (from source):** ~59,000 lines of Rust across ~90 files ·
+**2,100+ tests** passing (1 ignored), clippy+fmt clean · **102 catalogued slash
 commands** (+~12 dispatched but uncatalogued) · **13 agent tools** · **6 provider
 names via 3 impls** · **196 prompts** · **10 themes** · **8 scaffold templates** ·
 **3 design presets** · **5 automations** · v0.2.0, MIT, rust 1.85.
@@ -25,7 +25,7 @@ names via 3 impls** · **196 prompts** · **10 themes** · **8 scaffold template
 - **`[prompt]`** (positional) — runs non-interactively (prints response, exits). No prompt → interactive TUI.
 - **`-m/--model`**, **`-p/--provider`** (`claude_code`/`openai`/`ollama`/`openrouter`/`copilot`) — an explicit provider is never silently switched; if unavailable, nerve errors with setup guidance.
 - **`--stdin`** — pipe mode; **`--list-models`**; **`-n/--non-interactive`**; **`-c/--continue`** (resume last session); **`--no-splash`**; **`--completions <SHELL>`**.
-- **Server/queue (Unix):** **`--daemon`** (start server + worker), **`--stop-daemon`**, **`--query <Q>`**, **`--submit <PROMPT>`** (repo = cwd), **`--with-session`** (attach full session), **`--repo-path <PATH>`**, **`--workflow`** (multi-agent), **`--jobs`** (+ **`--json`**), **`--cancel-job <ID>`**.
+- **Server/queue (Unix):** **`--daemon`** (start server + worker), **`--stop-daemon`**, **`--query <Q>`**, **`--submit <PROMPT>`** (repo = cwd), **`--with-session`** (attach full session), **`--repo-path <PATH>`**, **`--workflow`** (multi-agent), **`--decompose`** (used with `--submit`: a planner first splits the task into small sub-tasks executed one at a time, each committed separately — best for cross-cutting or multi-file changes a single agent run would thrash on), **`--jobs`** (+ **`--json`**), **`--cancel-job <ID>`**. 
 - **Startup:** loads config → provider health-check with auto-fallback (only when provider wasn't explicit) → workspace detect → plugins → verify-command resolve → (`-c`) restore session.
 
 ## 2. Slash commands (`src/commands/catalog.rs` — single source of truth)
@@ -91,7 +91,7 @@ All plain-text/JSONL, inspectable, atomic writes, one-line-sanitized (can't forg
 
 ## 9. Testing
 
-`cargo test` → **1,991 passing, 1 ignored** (single binary). Companion `*_tests.rs` for app/config/main/queue/remote/shell/headless/fs; inline `mod tests` elsewhere. Covers security (SSRF, denylist, protected paths), compaction/truncation multibyte edges, the queue state machine, intent detection, model routing, workflow verdict logic. CI enforces clippy/fmt.
+`cargo test` → **2,100+ passing, 1 ignored** (single binary). Companion `*_tests.rs` for app/config/main/queue/remote/shell/headless/fs; inline `mod tests` elsewhere. Covers security (SSRF, denylist, protected paths), compaction/truncation multibyte edges, the queue state machine, intent detection, model routing, workflow verdict logic. CI enforces clippy/fmt.
 
 ---
 
