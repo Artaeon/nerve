@@ -54,6 +54,24 @@ All are unit-tested in `src/agent/headless_tests.rs` and `src/worker.rs`.
 
 ---
 
+## 2a. `NeedsReview`: the honest status when the gate can't vouch for the code
+
+The harness guards above funnel a run toward a *verified* outcome, but on any
+single run three things have to hold for a job to be trusted automatically:
+real edits exist (ground truth diff, never the agent's self-report), a verify
+gate exists for the project, and it passed. `status_for_run` (`worker.rs`)
+returns `NeedsReview` whenever edits exist but that chain breaks — the gate
+failed, no gate is configured (`NoGate`), or it never ran (e.g. the agent hit
+the iteration cap mid-task, so later steps like tests or wiring may be
+missing). This is deliberately not `Failed`: real work landed on the branch,
+so a human needs to look at it, not discard it. On disk (`queue.rs`) the
+status serializes as `needsreview`; `nerve --jobs` displays it as
+`needs-review`. A job that changed nothing at all reports `NoChanges`
+instead, decided the same way — from the ground-truth diff, never from what
+the agent believes it did.
+
+---
+
 ## 3. Sampling: pinned where the provider allows it
 
 - **OpenAI-compatible providers** (`openai`, `ollama`, `openrouter`, custom):
