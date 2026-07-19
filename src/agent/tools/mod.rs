@@ -142,9 +142,19 @@ pub fn available_tools() -> Vec<Tool> {
 /// `pwd` just to orient itself, and once sweeping `find /` across the whole
 /// filesystem — every one of those a wasted iteration out of a tight budget.
 pub fn tools_system_prompt() -> String {
-    let cwd = std::env::current_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| ".".into());
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    tools_system_prompt_for_dir(&cwd)
+}
+
+/// Same as [`tools_system_prompt`] but takes the working directory explicitly.
+///
+/// Split out so tests can prove the prompt is derived from its input without
+/// mutating the process-global CWD via `std::env::set_current_dir` — doing
+/// that from a test is a parallelism hazard, since every test on every
+/// thread shares the same CWD and `tools_system_prompt_contains_current_working_directory`
+/// would intermittently observe the switched-to directory instead.
+pub(crate) fn tools_system_prompt_for_dir(dir: &std::path::Path) -> String {
+    let cwd = dir.display().to_string();
     let mut prompt = String::from(
 "You are Nerve, an AI coding assistant with direct access to the user's filesystem and terminal. You can read files, write code, edit existing files, run commands, and search the codebase.
 
@@ -357,23 +367,21 @@ mod tests {
 
     #[test]
     fn tools_system_prompt_derives_dir_from_input_not_hardcoded() {
-        // Build a prompt from a different CWD and confirm that OTHER path
-        // shows up — this proves the value is threaded through, not a
-        // hardcoded string that happens to match the dev machine.
-        let original = std::env::current_dir().unwrap();
+        // Feed an arbitrary directory in directly rather than mutating the
+        // process-global CWD via `std::env::set_current_dir` — that used to
+        // be how this test proved derivation, but tests run on parallel
+        // threads share one CWD, so switching it was a latent flake for any
+        // other test reading `std::env::current_dir()` (e.g.
+        // `tools_system_prompt_contains_current_working_directory` above).
         let tmp = std::env::temp_dir().join("nerve_cwd_prompt_test");
         std::fs::create_dir_all(&tmp).unwrap();
-        // Canonicalize so the path we compare against matches what
-        // `std::env::current_dir()` reports back after the `cd`.
         let tmp = tmp.canonicalize().unwrap();
 
-        std::env::set_current_dir(&tmp).unwrap();
-        let prompt = tools_system_prompt();
-        std::env::set_current_dir(&original).unwrap();
+        let prompt = tools_system_prompt_for_dir(&tmp);
 
         assert!(
             prompt.contains(&tmp.display().to_string()),
-            "prompt should reflect the CWD it was built in, not a fixed path"
+            "prompt should reflect the CWD it was built with, not a fixed path"
         );
     }
 
