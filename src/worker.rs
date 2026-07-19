@@ -664,6 +664,23 @@ fn resolve_gate(base: Option<String>, extra: &[String]) -> Option<String> {
     ))
 }
 
+/// Compose the auto-detected base gate from the project's type-check command
+/// and its test command. Before this existed, the composition was a single
+/// `.map()` chained off `typecheck` — so when a project had ONLY a detectable
+/// test command (e.g. a `package.json` with a `test` script but none of
+/// typecheck/type-check/lint/check), the `.map` never ran, `base` was `None`,
+/// and the detectable test suite was silently dropped: the job reported "no
+/// verify command" even though `npm test` was right there (job 2c71e278).
+/// Now every combination is covered explicitly.
+fn compose_base_gate(typecheck: Option<String>, test: Option<String>) -> Option<String> {
+    match (typecheck, test) {
+        (Some(t), Some(s)) => Some(format!("{t} && {s}")),
+        (Some(t), None) => Some(t),
+        (None, Some(s)) => Some(s),
+        (None, None) => None,
+    }
+}
+
 /// Run the agent for `task`, then — if it edited files and auto-verify is on —
 /// run the project's verify command and feed any failure back to the agent to
 /// self-correct (up to `MAX_VERIFY_ROUNDS`), exactly like the interactive gate.
@@ -707,14 +724,12 @@ async fn run_in_repo(
     // test suite (a lint-only gate once let a job commit a *failing test* that
     // only human review caught). `None` when the project has no recognized
     // Cargo.toml/package.json shape at all.
-    let base = config
+    let typecheck = config
         .verify_command
         .clone()
-        .or_else(|| crate::verify::detect_verify_command(repo))
-        .map(|typecheck| match crate::verify::detect_test_command(repo) {
-            Some(test) => format!("{typecheck} && {test}"),
-            None => typecheck,
-        });
+        .or_else(|| crate::verify::detect_verify_command(repo));
+    let test = crate::verify::detect_test_command(repo);
+    let base = compose_base_gate(typecheck, test);
     // Project-declared extra verify steps (e.g. `npm run build`, or — for a
     // project `detect_verify_command` doesn't recognize at all, like Python
     // or Go — the ONLY gate it has) from `.nerve/verify.toml`.
@@ -1167,6 +1182,45 @@ mod tests {
                 crate::queue::JobStatus::NoChanges
             );
         }
+    }
+
+    // ── compose_base_gate ───────────────────────────────────────────────
+
+    #[test]
+    fn compose_base_gate_chains_typecheck_and_test() {
+        assert_eq!(
+            compose_base_gate(Some("cargo check".into()), Some("cargo test".into())),
+            Some("cargo check && cargo test".to_string())
+        );
+    }
+
+    #[test]
+    fn compose_base_gate_typecheck_only() {
+        assert_eq!(
+            compose_base_gate(Some("cargo check".into()), None),
+            Some("cargo check".to_string())
+        );
+    }
+
+    /// THE REGRESSION: a project with ONLY a detectable test command (e.g. a
+    /// `package.json` with a `test` script but none of
+    /// typecheck/type-check/lint/check) must still get that test command as
+    /// its gate. Under the old `.map()`-chained-off-`typecheck` composition,
+    /// `typecheck` being `None` meant the `.map` never ran, `base` was
+    /// `None`, and the detectable test suite was silently dropped — the job
+    /// reported "no verify command" even though `npm test` was available
+    /// (job 2c71e278). This test fails against that old composition.
+    #[test]
+    fn compose_base_gate_test_only_is_not_dropped() {
+        assert_eq!(
+            compose_base_gate(None, Some("npm test".into())),
+            Some("npm test".to_string())
+        );
+    }
+
+    #[test]
+    fn compose_base_gate_neither_is_none() {
+        assert_eq!(compose_base_gate(None, None), None);
     }
 
     /// A job that ran out of steps MID-TASK must not read as finished.
