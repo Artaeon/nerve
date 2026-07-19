@@ -5,7 +5,7 @@ so we never lose context and can keep improving deliberately. Pairs with
 [FEATURES.md](FEATURES.md) (what nerve can do) and [../SERVER.md](../SERVER.md)
 (the 24/7 server).
 
-**Last updated:** 2026-07-15 · **Unit tests:** 2,026 passing (`cargo test`),
+**Last updated:** 2026-07-15 · **Unit tests:** 2,100+ passing (`cargo test`),
 clippy clean, fmt clean.
 
 Legend: ✅ proven end-to-end · 🧪 unit-tested only · 💨 smoke-tested · ❔ not
@@ -65,7 +65,7 @@ remains a real reliability gap for edit-existing tasks.
 
 ---
 
-## 🧪 Unit-tested (1,990 tests, all green)
+## 🧪 Unit-tested (2,100+ tests, all green)
 
 Well-covered by companion `*_tests.rs`: the agent context manager & compaction,
 tool-call parser, headless runner (mock provider), the job queue & state machine,

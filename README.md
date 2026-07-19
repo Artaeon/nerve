@@ -17,7 +17,7 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-**47K lines of Rust | 1,970+ tests | 196 prompts | 13 agent tools | 6 providers | per-project memory | multi-agent /workflow | 24/7 server | 6.8 MB binary**
+**59K+ lines of Rust | 2,100+ tests | 196 prompts | 13 agent tools | 6 providers | per-project memory | multi-agent /workflow | 24/7 server | 6.8 MB binary**
 
 [Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 
@@ -297,8 +297,8 @@ enabled = false
 | Metric | Value |
 |--------|-------|
 | Language | 100% Rust |
-| Lines of code | 47,000+ |
-| Tests | 1,840 passing |
+| Lines of code | 59,000+ |
+| Tests | 2,100+ passing |
 | Clippy | 0 warnings |
 | Unsafe code | 0 blocks |
 | Binary (release) | 6.8 MB (LTO + stripped) |
@@ -398,7 +398,7 @@ Contributions welcome. Please open an issue first to discuss changes.
 ```bash
 git clone https://github.com/Artaeon/nerve.git
 cd nerve
-cargo test          # 1,840 tests
+cargo test          # 2,100+ tests
 cargo clippy        # 0 warnings
 cargo fmt --check   # format check
 ```
