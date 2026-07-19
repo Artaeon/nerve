@@ -577,14 +577,22 @@ async fn execute(job: &Job) -> anyhow::Result<Wedge> {
     } else {
         verify_summary.clone()
     };
-    let _ = crate::project::ProjectStore::for_workspace(repo).record_activity_full(
+    if let Err(e) = crate::project::ProjectStore::for_workspace(repo).record_activity_full(
         &job.prompt,
         outcome.edited,
         &journal_verify,
         &outcome.final_response,
         &changed,
         outcome.iterations,
-    );
+    ) {
+        // Best-effort journaling must never fail the job, but a silent failure
+        // here is exactly how past journal wipes went unnoticed for weeks —
+        // make it loud so it's at least visible in the log.
+        tracing::warn!(
+            "job {} could NOT be journaled to activity.jsonl: {e}",
+            job.id
+        );
+    }
 
     tracing::info!(
         "job {} finished in {} iteration(s) [verify: {}]: {}",
