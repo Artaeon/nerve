@@ -207,7 +207,7 @@ scripts or when you want the fastest possible launch).
 For long-running workflows, keep Nerve resident in the background:
 
 ```bash
-# Start the daemon (listens on /tmp/nerve.sock via Unix socket IPC)
+# Start the daemon (listens on ~/.nerve/nerve.sock via Unix socket IPC)
 nerve --daemon
 
 # Send queries to the running daemon
@@ -1713,7 +1713,7 @@ command_bar = "ctrl+space"
 | `~/.config/nerve/prompts/*.toml` | Custom prompt templates | TOML |
 | `~/.config/nerve/automations/*.toml` | Custom automation pipelines | TOML |
 | `~/.local/share/nerve/history/*.json` | Conversation history | JSON |
-| `/tmp/nerve.sock` | Daemon socket (when running) | Unix socket |
+| `~/.nerve/nerve.sock` | Daemon socket (when running, dir 0700 / socket 0600) | Unix socket |
 
 Nerve follows the XDG Base Directory Specification for config and data paths. If you
 have custom `XDG_CONFIG_HOME` or `XDG_DATA_HOME` set, Nerve respects those.
