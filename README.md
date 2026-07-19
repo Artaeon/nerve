@@ -17,7 +17,7 @@
 /_/ |_/\___/_/    |___/\___/
 ```
 
-**47K lines of Rust | 1,970+ tests | 196 prompts | 12 agent tools | 6 providers | per-project memory | multi-agent /workflow | 24/7 server | 6.8 MB binary**
+**47K lines of Rust | 1,970+ tests | 196 prompts | 13 agent tools | 6 providers | per-project memory | multi-agent /workflow | 24/7 server | 6.8 MB binary**
 
 [Install](#install) | [Quick Start](#quick-start) | [Features](#features) | [Agent Mode](#agent-mode) | [Manifesto](MANIFESTO.md)
 
@@ -25,7 +25,7 @@
 
 ---
 
-Nerve is a fast, open-source AI coding assistant built entirely in Rust. It runs in your terminal, connects to 6 AI providers, ships 196 expert prompts, and includes a full coding agent with 12 tools plus a multi-agent (planner -> coder -> reviewer) `/workflow` pipeline -- all in a single 6.8 MB binary with zero runtime dependencies. It works out of the box: it health-checks your providers on startup, auto-activates the agent inside a project, and remembers what it learns about your repo across sessions in a per-project `.nerve/` directory.
+Nerve is a fast, open-source AI coding assistant built entirely in Rust. It runs in your terminal, connects to 6 AI providers, ships 196 expert prompts, and includes a full coding agent with 13 tools plus a multi-agent (planner -> coder -> reviewer) `/workflow` pipeline -- all in a single 6.8 MB binary with zero runtime dependencies. It works out of the box: it health-checks your providers on startup, auto-activates the agent inside a project, and remembers what it learns about your repo across sessions in a per-project `.nerve/` directory.
 
 It is designed for developers who think in keystrokes, not clicks.
 
@@ -106,7 +106,7 @@ Open Nerve in a project and just describe what you want -- no setup ritual:
 
 ### Agent Mode
 
-Describe a task in a project and Nerve works autonomously (or type `/agent on` anywhere). The agent has 12 tools:
+Describe a task in a project and Nerve works autonomously (or type `/agent on` anywhere). The agent has 13 tools:
 
 | Tool | What it does |
 |------|-------------|
@@ -118,9 +118,10 @@ Describe a task in a project and Nerve works autonomously (or type `/agent on` a
 | `list_files` | Browse directory contents |
 | `search_code` | Ripgrep-powered code search |
 | `find_files` | Glob pattern file search |
-| `create_dir` | Create directories |
+| `create_directory` | Create directories |
 | `web_search` | Search the web via DuckDuckGo |
 | `remember` | Persist a project fact to `.nerve/memory.md` |
+| `recall` | Search the project's `.nerve/` memory on demand |
 | `update_tasks` | Maintain the persistent task backlog |
 
 Every agent write is recorded to a change journal (`/changes`). Roll back with `/agent undo`. Inspect changes with `/agent diff`. `/agent commit` runs your project's tests first and refuses to commit on red (`/agent commit force` overrides).
@@ -179,8 +180,13 @@ laptop's TUI you connect to it and schedule work — then walk away:
 `/server submit` rsyncs your whole project to the server (with `.git` history and
 `.nerve/` project memory — nothing lost), queues a job, and runs it on its own
 `nerve/job-<id>` branch, committing the result for you to review. The transport
-is plain **SSH** — no new ports, no new auth. See **[SERVER.md](SERVER.md)** for
-the full setup and workflow.
+is plain **SSH** — no new ports, no new auth.
+
+Add `--decompose` to have a planner split the task into small sub-tasks first,
+executed one at a time and each committed separately (`/server submit --decompose
+refactor the auth module and add tests`). Best for cross-cutting or multi-file
+changes that a single agent run would otherwise thrash on. See
+**[SERVER.md](SERVER.md)** for the full setup and workflow.
 
 ### Developer Workflow
 
@@ -275,7 +281,7 @@ enabled = false
 | Terminal-native | Yes | Yes | No | Yes |
 | Multi-provider | 6 | 1 | Limited | Multi |
 | Local/offline | Ollama | No | No | Ollama |
-| Agent tools | 12 | Yes | Yes | Yes |
+| Agent tools | 13 | Yes | Yes | Yes |
 | Per-project memory | `.nerve/` | CLAUDE.md | No | No |
 | Persistent task backlog | Yes | No | No | No |
 | Plan-approval gate | Yes | Yes | No | No |
