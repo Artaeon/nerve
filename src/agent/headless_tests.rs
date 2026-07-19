@@ -388,6 +388,27 @@ fn project_memory_context_is_none_without_nerve_memory() {
     assert!(project_memory_context_from(&store, "some task text").is_none());
 }
 
+#[test]
+fn project_memory_context_advertises_recall_like_the_interactive_path_does() {
+    // Regression test: `recall` was called 0 times across 2,362 real tool
+    // calls because headless jobs never saw `memory_recall::always_on_context`
+    // — the header that tells the model the `recall` tool exists at all. The
+    // advertisement line only appears once there is at least one fact/decision
+    // on file (see `always_on_context`'s `fact_count` gate), so a brief alone
+    // isn't enough to exercise it — remember a fact too.
+    let dir = tempfile::tempdir().unwrap();
+    let store = crate::project::ProjectStore::for_workspace(dir.path());
+    store
+        .save_brief("Vollgebucht is a booking assistant.")
+        .unwrap();
+    store
+        .remember("Buttons use the terracotta accent.")
+        .unwrap();
+    let ctx =
+        project_memory_context_from(&store, "some task text").expect("should assemble a context");
+    assert!(ctx.contains("`recall` tool"));
+}
+
 #[tokio::test]
 async fn all_tools_failed_is_false_when_a_tool_succeeds() {
     // A successful read-only tool then done → not wedged.

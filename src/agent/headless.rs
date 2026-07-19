@@ -273,18 +273,35 @@ pub(crate) fn project_memory_context_from(
     store: &crate::project::ProjectStore,
     task: &str,
 ) -> Option<String> {
+    // The tiny always-on header advertises the `recall` tool itself. Without
+    // it, a headless job is never told `recall` exists at all — measured
+    // result before this fix: `recall` was called 0 times across 2,362 real
+    // tool calls. The interactive TUI has always injected this (see
+    // `conversation.rs`); headless jobs did not, which is the actual bug.
+    let header = crate::memory_recall::always_on_context(store, 1200);
+
     let opts = crate::project_context::ContextOptions {
         recall_query: Some(task),
         include_design: true,
     };
     let sections = crate::project_context::build(store, &opts);
-    if sections.is_empty() {
+
+    if sections.is_empty() && header.is_none() {
         return None;
     }
+
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(header) = header {
+        parts.push(header);
+    }
+    if !sections.is_empty() {
+        parts.push(sections.join("\n\n"));
+    }
+
     Some(format!(
         "PROJECT KNOWLEDGE (from this repo's .nerve/ memory — honor it so your work stays \
          consistent with the project's conventions, design system, and decisions):\n\n{}",
-        sections.join("\n\n")
+        parts.join("\n\n")
     ))
 }
 
