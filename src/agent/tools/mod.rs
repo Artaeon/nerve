@@ -132,8 +132,19 @@ pub fn available_tools() -> Vec<Tool> {
     ]
 }
 
-/// Generate the tools description for the system prompt
+/// Generate the tools description for the system prompt.
+///
+/// States the absolute working directory up front (taken from the process
+/// CWD, which the worker sets via `std::env::set_current_dir` before a run —
+/// see `worker.rs`). Without this the agent has no anchor and burns
+/// iterations guessing it: observed inventing a plausible-looking but wrong
+/// path, wrapping its own commands in `cd real || cd guess` fallbacks, running
+/// `pwd` just to orient itself, and once sweeping `find /` across the whole
+/// filesystem — every one of those a wasted iteration out of a tight budget.
 pub fn tools_system_prompt() -> String {
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".into());
     let mut prompt = String::from(
 "You are Nerve, an AI coding assistant with direct access to the user's filesystem and terminal. You can read files, write code, edit existing files, run commands, and search the codebase.
 
@@ -151,6 +162,14 @@ You may use multiple tools per response. After tool execution, you will receive 
 AVAILABLE TOOLS:
 
 ");
+
+    prompt = prompt.replacen(
+        "IMPORTANT — HOW TOOLS WORK HERE:",
+        &format!(
+            "WORKING DIRECTORY: {cwd}\nAll tool calls operate in this directory. Relative paths in `path:` arguments (e.g. `src/main.rs`) are resolved from here — there is no need to construct an absolute path. `run_command` already starts in this directory, so prefixing commands with `cd` is unnecessary.\n\nIMPORTANT — HOW TOOLS WORK HERE:"
+        ),
+        1,
+    );
 
     for tool in available_tools() {
         prompt.push_str(&format!(
@@ -316,5 +335,56 @@ mod tests {
     #[test]
     fn recall_tool_is_registered() {
         assert!(available_tools().iter().any(|t| t.name == "recall"));
+    }
+
+    // ── Working directory in the system prompt ──────────────────────────
+    //
+    // The agent had no anchor for the CWD tools operate in and burned
+    // iterations guessing it (inventing wrong absolute paths, wrapping
+    // commands in `cd real || cd guess`, running `pwd` just to orient
+    // itself). `tools_system_prompt` now states it plainly, derived from
+    // the process CWD — prove it's really derived, not hardcoded.
+
+    #[test]
+    fn tools_system_prompt_contains_current_working_directory() {
+        let prompt = tools_system_prompt();
+        let cwd = std::env::current_dir().unwrap().display().to_string();
+        assert!(
+            prompt.contains(&cwd),
+            "prompt should state the actual process CWD"
+        );
+    }
+
+    #[test]
+    fn tools_system_prompt_derives_dir_from_input_not_hardcoded() {
+        // Build a prompt from a different CWD and confirm that OTHER path
+        // shows up — this proves the value is threaded through, not a
+        // hardcoded string that happens to match the dev machine.
+        let original = std::env::current_dir().unwrap();
+        let tmp = std::env::temp_dir().join("nerve_cwd_prompt_test");
+        std::fs::create_dir_all(&tmp).unwrap();
+        // Canonicalize so the path we compare against matches what
+        // `std::env::current_dir()` reports back after the `cd`.
+        let tmp = tmp.canonicalize().unwrap();
+
+        std::env::set_current_dir(&tmp).unwrap();
+        let prompt = tools_system_prompt();
+        std::env::set_current_dir(&original).unwrap();
+
+        assert!(
+            prompt.contains(&tmp.display().to_string()),
+            "prompt should reflect the CWD it was built in, not a fixed path"
+        );
+    }
+
+    #[test]
+    fn tools_system_prompt_still_has_anchor_phrases() {
+        // Guard against the working-directory addition accidentally
+        // clobbering the rest of the prompt.
+        let prompt = tools_system_prompt();
+        assert!(prompt.contains("You are Nerve"));
+        assert!(prompt.contains("TOOL FORMAT"));
+        assert!(prompt.contains("tool_call"));
+        assert!(prompt.contains("AVAILABLE TOOLS"));
     }
 }
