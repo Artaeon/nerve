@@ -26,3 +26,4 @@ Facts and conventions for working on nerve's OWN Rust source. Read before changi
 - Prescriptive, single-target, ≤2-file tasks succeed cheaply. Open-ended "find a good place to…" tasks burn the whole iteration budget on search — decompose or name the exact target.
 - `src/agent/headless.rs` is the most-edited file and the base-drift magnet: when two jobs both touch it, one will fork from an older base and silently REVERT the other. Before taking any file a job changed outside its stated scope, check it descends from the current tip.
 - Never edit `.nerve/` from agent tools — it is write-protected on purpose.
+- The memory-DB substrate (SQLite + FTS5 + link graph, OUTSIDE the repo at ~/.nerve/projects/<hash>/memory.db) is fully specified in docs/MEMORY-DB-SPEC.md. Build it in the 6 sequenced steps there — never as one big job, and never before checking the spec's acceptance tests.
